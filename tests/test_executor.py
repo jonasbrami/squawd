@@ -59,3 +59,13 @@ async def test_goto_relative_outside_geofence_blocked():
     result = await ex.goto_relative(north_m=500.0, east_m=0.0, up_m=0.0)
     assert result.ok is False
     assert not any(c[0] == "goto" for c in fake.calls if isinstance(c, tuple))
+
+
+async def test_arm_blocked_when_disconnected():
+    fake = FakeController()
+    store = StateStore()
+    store.set_connection(False)
+    ex = CommandExecutor(fake, store, SafetyGuard(LIMITS))
+    result = await ex.arm()
+    assert result.ok is False
+    assert "arm" not in fake.calls

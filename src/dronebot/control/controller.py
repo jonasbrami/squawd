@@ -24,11 +24,20 @@ class DroneController:
     def __init__(self, drone: "System") -> None:
         self._drone = drone
 
-    async def connect(self, system_address: str) -> None:
+    async def connect(self, system_address: str, timeout_s: float = 30.0) -> None:
         await self._drone.connect(system_address=system_address)
-        async for state in self._drone.core.connection_state():
-            if state.is_connected:
-                return
+
+        async def _await_connected() -> None:
+            async for state in self._drone.core.connection_state():
+                if state.is_connected:
+                    return
+
+        try:
+            await asyncio.wait_for(_await_connected(), timeout=timeout_s)
+        except asyncio.TimeoutError as exc:
+            raise ControllerError(
+                f"connection to {system_address} timed out after {timeout_s}s"
+            ) from exc
 
     async def _with_timeout(self, coro, what: str):
         try:
