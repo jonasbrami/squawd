@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from io import BytesIO
 from queue import Empty, Queue
+
+from PIL import Image as PILImage  # JPEG-encode raw camera frames for the agent's vision
 
 from dronebot.perception.provider import (
     Obstacle, PerceptionProvider, PerceptionSnapshot,
@@ -65,15 +68,26 @@ class GazeboPerception(PerceptionProvider):
         self._depth_topic = depth_topic
         self._node = Node()
         self._queue: "Queue[tuple[bytes | None, list[Obstacle]]]" = Queue(maxsize=4)
+        self._latest_rgb: tuple[bytes, int, int] | None = None  # (data, width, height)
         self._latest_jpeg: bytes | None = None
         self._latest_obstacles: list[Obstacle] = []
         self._poller: asyncio.Task | None = None
         self._running = False
 
     def _on_rgb(self, msg: Image) -> None:
-        # Store raw bytes; JPEG-encode lazily in the poller thread to keep
-        # the Gazebo callback cheap.
-        self._latest_jpeg = bytes(msg.data)
+        # Cheap: just stash raw bytes + dims; encode later in the poller.
+        self._latest_rgb = (bytes(msg.data), msg.width, msg.height)
+
+    def _encode_jpeg(self, raw: tuple[bytes, int, int]) -> bytes | None:
+        data, width, height = raw
+        if width <= 0 or height <= 0 or len(data) < width * height * 3:
+            return None
+        # Assumes RGB8. Confirm the sim's pixel format with `gz topic -e`; adjust
+        # the mode ('RGB') if the camera publishes a different format.
+        img = PILImage.frombytes("RGB", (width, height), data[: width * height * 3])
+        buf = BytesIO()
+        img.save(buf, format="JPEG")
+        return buf.getvalue()
 
     def _on_depth(self, msg) -> None:
         self._latest_obstacles = _depth_to_obstacles(msg)
@@ -86,6 +100,9 @@ class GazeboPerception(PerceptionProvider):
 
     async def _poll(self) -> None:
         while self._running:
+            raw = self._latest_rgb
+            if raw is not None:
+                self._latest_jpeg = self._encode_jpeg(raw)
             snap = PerceptionSnapshot(
                 timestamp=time.monotonic(),
                 jpeg_frame=self._latest_jpeg,
