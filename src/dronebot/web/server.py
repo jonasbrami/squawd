@@ -53,9 +53,13 @@ async def chat(ws: WebSocket) -> None:
                 continue
             if user.lower() in _ABORT_WORDS:
                 stack.log.record("abort", {"trigger": user})
-                await stack.agent.interrupt()
-                result = await stack.executor.hold()
-                await ws.send_text(f"[ABORT] {result.message}")
+                try:
+                    await stack.agent.interrupt()
+                    result = await stack.executor.hold()
+                    await ws.send_text(f"[ABORT] {result.message}")
+                except Exception as exc:  # abort must always respond
+                    stack.log.record("abort_error", {"error": str(exc)})
+                    await ws.send_text(f"[ABORT] hold command errored: {exc}")
                 continue
             stack.log.record("utterance", {"text": user})
             async for message in stack.agent.ask(user):
@@ -98,4 +102,5 @@ async def camera():
     )
 
 
+_STATIC.mkdir(parents=True, exist_ok=True)
 app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
