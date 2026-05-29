@@ -1,0 +1,18 @@
+services:
+  dronebot:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        RENDER_GID: "${RENDER_GID:-992}"
+        VIDEO_GID: "${VIDEO_GID:-44}"
+    devices:
+      - "/dev/dri:/dev/dri"
+    volumes:
+      - "${HOME}/.claude:/home/dev/.claude"
+      - ".:/workspace"
+    ports:
+      - "8000:8000"
+      - "6080:6080"
+    stdin_open: true
+    tty: true
