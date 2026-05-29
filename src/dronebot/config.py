@@ -20,7 +20,12 @@ class Config:
 
 def _envf(name: str, default: float) -> float:
     raw = os.environ.get(name)
-    return float(raw) if raw is not None else default
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"invalid value for {name}: {raw!r}") from exc
 
 
 def load_config() -> Config:

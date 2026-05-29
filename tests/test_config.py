@@ -1,3 +1,4 @@
+import pytest
 from dronebot.config import load_config, Config
 from dronebot.control.safety import SafetyLimits
 
@@ -22,3 +23,9 @@ def test_connection_url_default(monkeypatch):
     monkeypatch.delenv("DRONEBOT_CONNECTION_URL", raising=False)
     cfg = load_config()
     assert cfg.connection_url == "udp://:14540"
+
+
+def test_invalid_numeric_env_raises_clear_error(monkeypatch):
+    monkeypatch.setenv("DRONEBOT_MAX_ALTITUDE_M", "thirty")
+    with pytest.raises(ValueError, match="DRONEBOT_MAX_ALTITUDE_M"):
+        load_config()

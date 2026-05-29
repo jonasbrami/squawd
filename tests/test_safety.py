@@ -90,3 +90,10 @@ def test_goto_ok_within_all_limits():
     guard = SafetyGuard(LIMITS)
     target = offset_point(HOME, 10.0, 10.0, 10.0)
     guard.check_goto(target, flying_snapshot())  # no raise
+
+
+def test_goto_rejected_when_disarmed():
+    guard = SafetyGuard(LIMITS)
+    target = offset_point(HOME, 10.0, 0.0, 10.0)
+    with pytest.raises(SafetyError):
+        guard.check_goto(target, flying_snapshot(is_armed=False))

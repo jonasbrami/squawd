@@ -7,6 +7,10 @@
 Local-tangent-plane (equirectangular) approximation about the reference
 point. Sub-meter accurate for offsets up to several hundred meters (the v1
 envelope). NOT valid near the poles or across the antimeridian.
+
+Altitude note: `absolute_altitude_m` is AMSL; callers building a goto
+target offset the drone's current absolute altitude, and the safety layer
+compares (target_abs_alt - home_abs_alt) against the altitude cap.
 """
 from __future__ import annotations
 

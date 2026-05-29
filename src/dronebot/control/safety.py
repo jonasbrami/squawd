@@ -75,6 +75,8 @@ class SafetyGuard:
             raise SafetyError("cannot move: not connected")
         if not snap.in_air:
             raise SafetyError("cannot move: not in the air")
+        if not snap.is_armed:
+            raise SafetyError("cannot move: not armed")
         if not snap.has_position or snap.position is None or snap.home is None:
             raise SafetyError("cannot move: no position fix")
         if snap.flight_mode in _AUTOPILOT_CONTROLLED:
