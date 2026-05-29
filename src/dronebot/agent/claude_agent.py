@@ -5,6 +5,7 @@ the current turn (the hard safety abort is separate and bypasses this).
 """
 from __future__ import annotations
 
+import os
 from typing import AsyncIterator
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -18,11 +19,14 @@ from dronebot.perception.store import PerceptionStore
 class DroneAgent:
     def __init__(self, executor: CommandExecutor, perception: PerceptionStore, model: str) -> None:
         server = build_flight_server(executor, perception)
+        os.makedirs("/tmp/dronebot-agent", exist_ok=True)
         self._options = ClaudeAgentOptions(
             model=model,
             system_prompt=SYSTEM_PROMPT,
             mcp_servers={"flight": server},
             allowed_tools=ALLOWED_TOOLS,
+            setting_sources=[],          # do NOT load user/project/local settings
+            cwd="/tmp/dronebot-agent",   # clean cwd: no project CLAUDE.md / hooks
         )
         self._client: ClaudeSDKClient | None = None
 
