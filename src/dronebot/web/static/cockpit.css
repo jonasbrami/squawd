@@ -1,0 +1,25 @@
+:root { --bg:#0b0f14; --panel:#121922; --line:#1f2a37; --fg:#cfe3f7; --accent:#3ddc97; --warn:#ff5c5c; --mono:"JetBrains Mono",ui-monospace,monospace; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--mono); }
+header { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); }
+.logo { color:var(--accent); font-weight:700; letter-spacing:.5px; }
+.badge { font-size:12px; padding:3px 8px; border:1px solid var(--line); border-radius:10px; }
+.badge.online { color:var(--accent); border-color:var(--accent); }
+main { display:grid; grid-template-columns:320px 1fr 300px; gap:10px; padding:10px; height:calc(100vh - 53px); }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; overflow:hidden; display:flex; flex-direction:column; }
+.panel h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#7da2c7; }
+.chat-log { flex:1; overflow-y:auto; font-size:13px; line-height:1.5; }
+.chat-log .you { color:#9fd0ff; } .chat-log .drone { color:var(--accent); } .chat-log .sys { color:var(--warn); }
+#chat-form { display:flex; gap:6px; margin-top:8px; }
+#msg { flex:1; background:#0b0f14; border:1px solid var(--line); color:var(--fg); padding:8px; border-radius:6px; font-family:var(--mono); }
+button { background:var(--accent); border:none; color:#06121b; font-weight:700; padding:8px 10px; border-radius:6px; cursor:pointer; }
+button.abort { background:var(--warn); color:#fff; }
+.view { padding:0; }
+.view h2 { padding:10px 10px 0; }
+#sim { width:100%; flex:1; border:0; background:#000; }
+.camera-row { display:flex; gap:8px; padding:8px; border-top:1px solid var(--line); align-items:center; }
+#camera { width:220px; height:140px; object-fit:cover; background:#000; border:1px solid var(--line); border-radius:4px; }
+.obstacle { font-size:13px; color:#ffd479; }
+.telemetry { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:13px; margin:0 0 14px; }
+.telemetry dt { color:#7da2c7; } .telemetry dd { margin:0; text-align:right; }
+#map { background:#06121b; border:1px solid var(--line); border-radius:6px; }
