@@ -24,10 +24,15 @@ class DroneController:
     def __init__(self, drone: "System") -> None:
         self._drone = drone
 
-    async def connect(self, system_address: str, timeout_s: float = 90.0) -> None:
+    async def connect(self, system_address: str | None, timeout_s: float = 90.0) -> None:
         # 90s default: a cold container boots PX4 SITL + Gazebo before the
         # vehicle heartbeats; 30s was too tight for first-run startup.
-        await self._drone.connect(system_address=system_address)
+        # system_address is None when using an external mavsdk_server (it owns
+        # the MAVLink endpoint); then connect() just attaches the gRPC client.
+        if system_address:
+            await self._drone.connect(system_address=system_address)
+        else:
+            await self._drone.connect()
 
         async def _await_connected() -> None:
             async for state in self._drone.core.connection_state():

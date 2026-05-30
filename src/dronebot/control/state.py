@@ -36,6 +36,10 @@ class StateStore:
 
     def set_position(self, point: GeoPoint) -> None:
         self._position = point
+        # Capture home from the first known fix (the software sim can take
+        # minutes to converge, so we don't block startup waiting for it).
+        if self._home is None:
+            self._home = point
 
     def set_battery(self, remaining: float) -> None:
         self.battery_remaining = remaining

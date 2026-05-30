@@ -57,6 +57,12 @@ RUN git clone --depth 1 --recurse-submodules \
 # The Gazebo launch happens at runtime in scripts/start-all.sh, where Xvfb exists.
 RUN cd PX4-Autopilot && make px4_sitl_default
 
+# xdotool: used by start-all.sh to resize the Gazebo GUI to fill the display.
+# (Late layer so it doesn't invalidate the PX4 build cache above.)
+RUN sudo apt-get update \
+    && sudo apt-get install -y --no-install-recommends xdotool \
+    && sudo rm -rf /var/lib/apt/lists/*
+
 # --- Python deps + dronebot (editable) ---
 COPY --chown=${USERNAME}:${USERNAME} . /workspace
 WORKDIR /workspace

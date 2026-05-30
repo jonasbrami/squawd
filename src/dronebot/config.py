@@ -16,6 +16,10 @@ class Config:
     model: str
     limits: SafetyLimits
     telemetry_rate_hz: float
+    # If set ("host:port"), connect to an EXTERNAL mavsdk_server over gRPC
+    # instead of the in-process bundled one. Required when the agent forks
+    # subprocesses (the Claude CLI), which kills an in-process server.
+    mavsdk_server_address: str | None
 
 
 def _envf(name: str, default: float) -> float:
@@ -33,6 +37,7 @@ def load_config() -> Config:
         connection_url=os.environ.get("DRONEBOT_CONNECTION_URL", "udpin://0.0.0.0:14540"),
         model=os.environ.get("DRONEBOT_MODEL", "claude-opus-4-8"),
         telemetry_rate_hz=_envf("DRONEBOT_TELEMETRY_RATE_HZ", 4.0),
+        mavsdk_server_address=os.environ.get("DRONEBOT_MAVSDK_SERVER") or None,
         limits=SafetyLimits(
             max_altitude_m=_envf("DRONEBOT_MAX_ALTITUDE_M", 30.0),
             geofence_radius_m=_envf("DRONEBOT_GEOFENCE_RADIUS_M", 100.0),

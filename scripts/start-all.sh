@@ -5,6 +5,8 @@ set -uo pipefail
 
 export DISPLAY=:99
 PX4_DIR="${PX4_DIR:-$HOME/PX4-Autopilot}"
+SCREEN="${DRONEBOT_SCREEN:-1920x1080x24}"   # noVNC resolution (WxHxDepth)
+SCREEN_W="${SCREEN%%x*}"; SCREEN_H="$(echo "$SCREEN" | cut -dx -f2)"
 PIDS=()
 
 cleanup() {
@@ -15,7 +17,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # 1. Virtual display
-Xvfb :99 -screen 0 1600x900x24 >/tmp/xvfb.log 2>&1 &
+Xvfb :99 -screen 0 "$SCREEN" >/tmp/xvfb.log 2>&1 &
 PIDS+=($!)
 sleep 2
 
@@ -29,15 +31,28 @@ fi
 ( cd "$PX4_DIR" && HEADLESS=0 make px4_sitl gz_x500_depth >/tmp/px4.log 2>&1 ) &
 PIDS+=($!)
 
-# 2b. Gazebo GUI client -> renders the 3D world to :99 for noVNC.
-# PX4 only launches the headless server, so we attach the GUI ourselves once
-# the server's transport is up.
+# 2b. mavsdk_server as its OWN process (NOT a child of the forking web app).
+# The Claude Agent SDK spawns subprocesses (the claude CLI); an in-process
+# bundled mavsdk_server gets killed by that fork (zombie -> "socket closed").
+# Running it standalone keeps the MAVLink/gRPC link alive across agent turns.
+MAVSDK_SERVER="$(python3 -c 'import mavsdk,os;print(os.path.join(os.path.dirname(mavsdk.__file__),"bin","mavsdk_server"))')"
+"$MAVSDK_SERVER" udpin://0.0.0.0:14540 -p 50051 >/tmp/mavsdk_server.log 2>&1 &
+PIDS+=($!)
+
+# 2c. Gazebo GUI client -> renders the 3D world to :99 for noVNC, then resize
+# it to fill the screen. PX4 only launches the headless server.
 (
   for _ in $(seq 1 60); do gz topic -l >/dev/null 2>&1 && break; sleep 1; done
-  # Force the pure-software Mesa driver (llvmpipe) for the GUI. ogre2 probes
-  # the hardware (iris) driver through EGL and SEGFAULTs in a container;
-  # MESA_LOADER_DRIVER_OVERRIDE makes Mesa skip hardware entirely. Sensors keep
-  # their own GPU/EGL path (separate process, unaffected).
+  # Once the GUI window appears, stretch it to fill the (high-res) display.
+  ( for _ in $(seq 1 90); do
+      if xdotool search --name "Gazebo Sim" >/dev/null 2>&1; then
+        xdotool search --name "Gazebo Sim" windowsize "$SCREEN_W" "$SCREEN_H" windowmove 0 0
+        break
+      fi
+      sleep 1
+    done ) &
+  # Pure-software Mesa (llvmpipe): /dev/dri is not passed through, so there is
+  # no hardware EGL device for ogre2 to grab and segfault on.
   LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
     gz sim -g >/tmp/gzgui.log 2>&1
 ) &

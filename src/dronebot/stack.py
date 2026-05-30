@@ -40,7 +40,11 @@ class Stack:
 
 
 def build_stack(config: Config) -> Stack:
-    drone = System()
+    if config.mavsdk_server_address:
+        host, _, port = config.mavsdk_server_address.partition(":")
+        drone = System(mavsdk_server_address=host, port=int(port or "50051"))
+    else:
+        drone = System()
     controller = DroneController(drone)
     state = StateStore()
     perception_store = PerceptionStore()
@@ -56,14 +60,14 @@ def build_stack(config: Config) -> Stack:
 
 
 async def start_stack(stack: Stack) -> None:
-    await stack.controller.connect(stack.config.connection_url)
+    # With an external mavsdk_server the MAVLink endpoint is owned by the
+    # server (its CLI arg), so connect() takes no system_address.
+    sysaddr = None if stack.config.mavsdk_server_address else stack.config.connection_url
+    await stack.controller.connect(sysaddr)
     stack.state.set_connection(True)
     stack.telemetry_tasks = start_telemetry(stack.drone, stack.state)
-    for _ in range(40):  # wait for a position fix, then set home
-        if stack.state.position is not None:
-            stack.state.set_home(stack.state.position)
-            break
-        await asyncio.sleep(0.25)
+    # Home is captured from the first GPS fix (see StateStore.set_position) —
+    # not blocked here, since the software sim can take minutes to converge.
     await stack.perception.start()
 
 
