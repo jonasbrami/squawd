@@ -8,8 +8,11 @@ services:
         VIDEO_GID: "${VIDEO_GID:-44}"
         USER_UID: "${USER_UID:-1000}"
         USER_GID: "${USER_GID:-1000}"
-    devices:
-      - "/dev/dri:/dev/dri"
+    # NOTE: /dev/dri intentionally NOT passed through. With it, ogre2 grabs the
+    # hardware EGL device and the GUI segfaults under Xvfb ("Not allowed to force
+    # software rendering when API explicitly selects a hardware device"). Pure
+    # software (llvmpipe) renders both the GUI and the sensors fine. Re-add the
+    # device + nvidia-container-toolkit only if you later want GPU acceleration.
     environment:
       # x500_depth model sensor topics (confirmed via `gz topic -l`)
       DRONEBOT_RGB_TOPIC: "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
