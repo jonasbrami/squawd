@@ -14,11 +14,19 @@ services:
     # software (llvmpipe) renders both the GUI and the sensors fine. Re-add the
     # device + nvidia-container-toolkit only if you later want GPU acceleration.
     environment:
+      # Gazebo world for PX4 SITL. PX4 reads PX4_GZ_WORLD; the x500 airframe
+      # defaults to "default" (empty gray plane). Swap freely — local worlds
+      # (walls/lawn/aruco/windy) need no download; baylands/forest pull large
+      # meshes from Gazebo Fuel on first boot (needs internet, lower RTF on
+      # software rendering). Override from the host: `PX4_GZ_WORLD=baylands docker compose up -d`.
+      PX4_GZ_WORLD: "${PX4_GZ_WORLD:-walls}"
       # Connect to the standalone mavsdk_server (started in start-all.sh) so the
       # agent's subprocess forks can't kill an in-process server.
       DRONEBOT_MAVSDK_SERVER: "127.0.0.1:50051"
-      # x500_depth model sensor topics (confirmed via `gz topic -l`)
-      DRONEBOT_RGB_TOPIC: "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
+      # x500_depth model sensor topics (confirmed via `gz topic -l`). The RGB
+      # topic embeds the WORLD NAME, which equals PX4_GZ_WORLD for PX4's worlds,
+      # so it must track the same variable or the camera feed goes blank.
+      DRONEBOT_RGB_TOPIC: "/world/${PX4_GZ_WORLD:-walls}/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
       DRONEBOT_DEPTH_TOPIC: "/depth_camera"
     volumes:
       - "${HOME}/.claude:/home/dev/.claude"
