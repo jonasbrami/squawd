@@ -6,6 +6,11 @@ SHELL ["/bin/bash", "-c"]
 ARG RENDER_GID=992
 ARG VIDEO_GID=44
 ARG USERNAME=dev
+# Match the host user's UID/GID so the bind-mounted repo and ~/.claude OAuth
+# creds (mode 0600) are readable/writable. ubuntu:24.04 squats on uid 1000,
+# so we remove it and recreate our user at the host UID.
+ARG USER_UID=1000
+ARG USER_GID=1000
 
 # --- base + rendering + vnc + python + node ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,10 +35,13 @@ RUN curl -fsSL https://packages.osrfoundation.org/gazebo.gpg \
     && apt-get update && apt-get install -y gz-harmonic \
     && rm -rf /var/lib/apt/lists/*
 
-# --- non-root user with render/video access ---
-RUN groupadd -g ${RENDER_GID} render2 2>/dev/null || true \
-    && groupmod -g ${VIDEO_GID} video 2>/dev/null || true \
-    && useradd -m -s /bin/bash ${USERNAME} \
+# --- non-root user at the host UID/GID, with render/video access ---
+RUN (userdel -r ubuntu 2>/dev/null || true) \
+    && (groupdel ubuntu 2>/dev/null || true) \
+    && (groupadd -g ${RENDER_GID} render2 2>/dev/null || true) \
+    && (groupmod -g ${VIDEO_GID} video 2>/dev/null || true) \
+    && groupadd -g ${USER_GID} ${USERNAME} \
+    && useradd -m -u ${USER_UID} -g ${USER_GID} -s /bin/bash ${USERNAME} \
     && usermod -aG sudo,video,render2 ${USERNAME} \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME}
 USER ${USERNAME}
@@ -57,5 +65,7 @@ RUN pip3 install --break-system-packages -e ".[dev]" \
 
 ENV PX4_DIR=/home/${USERNAME}/PX4-Autopilot
 ENV DRONEBOT_CONNECTION_URL=udp://:14540
+# Write runtime flight logs to a container-owned path, not the bind-mounted repo.
+ENV DRONEBOT_LOG_DIR=/home/${USERNAME}/flight_logs
 EXPOSE 8000 6080
 CMD ["bash", "scripts/start-all.sh"]

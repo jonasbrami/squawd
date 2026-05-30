@@ -48,8 +48,9 @@ def build_stack(config: Config) -> Stack:
     guard = SafetyGuard(config.limits)
     executor = CommandExecutor(controller, state, guard)
     agent = DroneAgent(executor, perception_store, config.model)
-    os.makedirs("flight_logs", exist_ok=True)
-    log = FlightLog("flight_logs/session.jsonl")
+    log_dir = os.environ.get("DRONEBOT_LOG_DIR", "flight_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log = FlightLog(os.path.join(log_dir, "session.jsonl"))
     return Stack(config, drone, controller, state, perception_store,
                  perception, executor, agent, log)
 

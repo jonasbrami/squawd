@@ -6,6 +6,8 @@ services:
       args:
         RENDER_GID: "${RENDER_GID:-992}"
         VIDEO_GID: "${VIDEO_GID:-44}"
+        USER_UID: "${USER_UID:-1000}"
+        USER_GID: "${USER_GID:-1000}"
     devices:
       - "/dev/dri:/dev/dri"
     volumes:
