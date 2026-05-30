@@ -30,7 +30,7 @@ def _envf(name: str, default: float) -> float:
 
 def load_config() -> Config:
     return Config(
-        connection_url=os.environ.get("DRONEBOT_CONNECTION_URL", "udpin://:14540"),
+        connection_url=os.environ.get("DRONEBOT_CONNECTION_URL", "udpin://0.0.0.0:14540"),
         model=os.environ.get("DRONEBOT_MODEL", "claude-opus-4-8"),
         telemetry_rate_hz=_envf("DRONEBOT_TELEMETRY_RATE_HZ", 4.0),
         limits=SafetyLimits(

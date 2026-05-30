@@ -22,7 +22,7 @@ def test_env_overrides_limit(monkeypatch):
 def test_connection_url_default(monkeypatch):
     monkeypatch.delenv("DRONEBOT_CONNECTION_URL", raising=False)
     cfg = load_config()
-    assert cfg.connection_url == "udpin://:14540"
+    assert cfg.connection_url == "udpin://0.0.0.0:14540"
 
 
 def test_invalid_numeric_env_raises_clear_error(monkeypatch):

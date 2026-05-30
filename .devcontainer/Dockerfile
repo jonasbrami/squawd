@@ -66,7 +66,7 @@ RUN pip3 install --break-system-packages -e ".[dev]" \
     && pip3 install --break-system-packages fastapi "uvicorn[standard]"
 
 ENV PX4_DIR=/home/${USERNAME}/PX4-Autopilot
-ENV DRONEBOT_CONNECTION_URL=udpin://:14540
+ENV DRONEBOT_CONNECTION_URL=udpin://0.0.0.0:14540
 # Write runtime flight logs to a container-owned path, not the bind-mounted repo.
 ENV DRONEBOT_LOG_DIR=/home/${USERNAME}/flight_logs
 EXPOSE 8000 6080
