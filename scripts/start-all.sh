@@ -35,8 +35,10 @@ PIDS+=($!)
 websockify --web=/usr/share/novnc 6080 localhost:5900 >/tmp/novnc.log 2>&1 &
 PIDS+=($!)
 
-# 4. Web app (FastAPI) on port 8000
-uvicorn dronebot.web.server:app --host 0.0.0.0 --port 8000 >/tmp/web.log 2>&1 &
+# 4. Web app (FastAPI) on port 8000.
+# `python3 -m uvicorn` (not the `uvicorn` script): pip --user puts console
+# scripts in ~/.local/bin, which isn't on PATH in the container.
+python3 -m uvicorn dronebot.web.server:app --host 0.0.0.0 --port 8000 >/tmp/web.log 2>&1 &
 PIDS+=($!)
 
 echo "dronebot up: cockpit http://localhost:8000  noVNC http://localhost:6080/vnc.html"

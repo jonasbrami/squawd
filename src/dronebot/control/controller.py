@@ -24,7 +24,9 @@ class DroneController:
     def __init__(self, drone: "System") -> None:
         self._drone = drone
 
-    async def connect(self, system_address: str, timeout_s: float = 30.0) -> None:
+    async def connect(self, system_address: str, timeout_s: float = 90.0) -> None:
+        # 90s default: a cold container boots PX4 SITL + Gazebo before the
+        # vehicle heartbeats; 30s was too tight for first-run startup.
         await self._drone.connect(system_address=system_address)
 
         async def _await_connected() -> None:
