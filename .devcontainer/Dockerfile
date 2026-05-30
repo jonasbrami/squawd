@@ -60,11 +60,13 @@ RUN cd PX4-Autopilot && make px4_sitl_default
 # --- Python deps + dronebot (editable) ---
 COPY --chown=${USERNAME}:${USERNAME} . /workspace
 WORKDIR /workspace
+# uvicorn[standard] pulls a WebSocket backend (websockets) — required for the
+# cockpit's /chat and /telemetry WS endpoints; plain `uvicorn` has none.
 RUN pip3 install --break-system-packages -e ".[dev]" \
-    && pip3 install --break-system-packages fastapi uvicorn
+    && pip3 install --break-system-packages fastapi "uvicorn[standard]"
 
 ENV PX4_DIR=/home/${USERNAME}/PX4-Autopilot
-ENV DRONEBOT_CONNECTION_URL=udp://:14540
+ENV DRONEBOT_CONNECTION_URL=udpin://:14540
 # Write runtime flight logs to a container-owned path, not the bind-mounted repo.
 ENV DRONEBOT_LOG_DIR=/home/${USERNAME}/flight_logs
 EXPOSE 8000 6080
