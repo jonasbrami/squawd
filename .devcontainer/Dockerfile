@@ -43,8 +43,11 @@ WORKDIR /home/${USERNAME}
 RUN git clone --depth 1 --recurse-submodules \
         https://github.com/PX4/PX4-Autopilot.git \
     && bash PX4-Autopilot/Tools/setup/ubuntu.sh --no-nuttx
-# Prebuild the gz_x500_depth target so first run is fast (DONT_RUN avoids launch).
-RUN cd PX4-Autopilot && DONT_RUN=1 make px4_sitl gz_x500_depth || true
+# Compile the SITL binary ONLY (this target builds and exits; it does NOT launch
+# a simulator). Do NOT run a gz_* run-target here: launching Gazebo at build time
+# hangs forever (no display, gz-transport loops on "Interrupted system call").
+# The Gazebo launch happens at runtime in scripts/start-all.sh, where Xvfb exists.
+RUN cd PX4-Autopilot && make px4_sitl_default
 
 # --- Python deps + dronebot (editable) ---
 COPY --chown=${USERNAME}:${USERNAME} . /workspace
