@@ -25,8 +25,19 @@ if ! glxinfo -B >/dev/null 2>&1; then
   export LIBGL_ALWAYS_SOFTWARE=1
 fi
 
-# 2. PX4 SITL + Gazebo (renders to :99)
+# 2. PX4 SITL + Gazebo SERVER (PX4 starts gz with -s = headless server only)
 ( cd "$PX4_DIR" && HEADLESS=0 make px4_sitl gz_x500_depth >/tmp/px4.log 2>&1 ) &
+PIDS+=($!)
+
+# 2b. Gazebo GUI client -> renders the 3D world to :99 for noVNC.
+# PX4 only launches the headless server, so we attach the GUI ourselves once
+# the server's transport is up.
+(
+  for _ in $(seq 1 60); do gz topic -l >/dev/null 2>&1 && break; sleep 1; done
+  # Force software GL for the GUI: Xvfb provides no hardware GLX, so a
+  # hardware attempt would crash. Sensors keep their own (EGL/GPU) path.
+  LIBGL_ALWAYS_SOFTWARE=1 gz sim -g >/tmp/gzgui.log 2>&1
+) &
 PIDS+=($!)
 
 # 3. noVNC: expose the virtual display over the browser (port 6080)
