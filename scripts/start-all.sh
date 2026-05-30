@@ -34,9 +34,12 @@ PIDS+=($!)
 # the server's transport is up.
 (
   for _ in $(seq 1 60); do gz topic -l >/dev/null 2>&1 && break; sleep 1; done
-  # Force software GL for the GUI: Xvfb provides no hardware GLX, so a
-  # hardware attempt would crash. Sensors keep their own (EGL/GPU) path.
-  LIBGL_ALWAYS_SOFTWARE=1 gz sim -g >/tmp/gzgui.log 2>&1
+  # Force the pure-software Mesa driver (llvmpipe) for the GUI. ogre2 probes
+  # the hardware (iris) driver through EGL and SEGFAULTs in a container;
+  # MESA_LOADER_DRIVER_OVERRIDE makes Mesa skip hardware entirely. Sensors keep
+  # their own GPU/EGL path (separate process, unaffected).
+  LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+    gz sim -g >/tmp/gzgui.log 2>&1
 ) &
 PIDS+=($!)
 

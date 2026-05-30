@@ -10,6 +10,10 @@ services:
         USER_GID: "${USER_GID:-1000}"
     devices:
       - "/dev/dri:/dev/dri"
+    environment:
+      # x500_depth model sensor topics (confirmed via `gz topic -l`)
+      DRONEBOT_RGB_TOPIC: "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image"
+      DRONEBOT_DEPTH_TOPIC: "/depth_camera"
     volumes:
       - "${HOME}/.claude:/home/dev/.claude"
       - ".:/workspace"
