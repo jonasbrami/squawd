@@ -15,6 +15,8 @@ class FakeController:
     async def arm(self): self.calls.append("arm")
     async def takeoff(self, alt): self.calls.append(("takeoff", alt))
     async def land(self): self.calls.append("land")
+    async def hold(self): self.calls.append("hold")
+    async def return_to_launch(self): self.calls.append("rtl")
     async def goto(self, target, yaw_deg=float("nan")): self.calls.append(("goto", target))
 
 
@@ -69,3 +71,60 @@ async def test_arm_blocked_when_disconnected():
     result = await ex.arm()
     assert result.ok is False
     assert "arm" not in fake.calls
+
+
+def _goto_calls(fake):
+    return sum(1 for c in fake.calls if isinstance(c, tuple) and c[0] == "goto")
+
+
+async def test_second_goto_blocked_while_first_in_progress():
+    # droneserver's crash class: don't stack positioning commands.
+    fake = FakeController()
+    store = armed_store(in_air=True)
+    ex = CommandExecutor(fake, store, SafetyGuard(LIMITS))
+    first = await ex.goto_relative(10.0, 0.0, 0.0)
+    assert first.ok is True
+    # drone has NOT reached the target (still at HOME)
+    second = await ex.goto_relative(0.0, 10.0, 0.0)
+    assert second.ok is False
+    assert "still executing" in second.message
+    assert _goto_calls(fake) == 1
+
+
+async def test_goto_allowed_after_reaching_target():
+    fake = FakeController()
+    store = armed_store(in_air=True)
+    ex = CommandExecutor(fake, store, SafetyGuard(LIMITS))
+    await ex.goto_relative(10.0, 0.0, 0.0)
+    # simulate arrival ~10 m north of home
+    store.set_position(GeoPoint(HOME.latitude_deg + 10.0 / 111320.0,
+                                HOME.longitude_deg, HOME.absolute_altitude_m))
+    second = await ex.goto_relative(0.0, 10.0, 0.0)
+    assert second.ok is True
+    assert _goto_calls(fake) == 2
+
+
+async def test_hold_clears_interlock():
+    fake = FakeController()
+    store = armed_store(in_air=True)
+    ex = CommandExecutor(fake, store, SafetyGuard(LIMITS))
+    await ex.goto_relative(10.0, 0.0, 0.0)
+    await ex.hold()  # override / terminator clears the interlock
+    again = await ex.goto_relative(0.0, 10.0, 0.0)  # still at HOME, but hold cleared it
+    assert again.ok is True
+
+
+async def test_goto_blocked_while_takeoff_climbing():
+    fake = FakeController()
+    store = armed_store(in_air=False)
+    ex = CommandExecutor(fake, store, SafetyGuard(LIMITS))
+    await ex.takeoff(10.0)
+    store.set_in_air(True)  # airborne but still low (rel_alt ~0)
+    blocked = await ex.goto_relative(10.0, 0.0, 0.0)
+    assert blocked.ok is False
+    assert "still executing takeoff" in blocked.message
+    # reached takeoff altitude (10 m above home)
+    store.set_position(GeoPoint(HOME.latitude_deg, HOME.longitude_deg,
+                                HOME.absolute_altitude_m + 10.0))
+    ok = await ex.goto_relative(10.0, 0.0, 0.0)
+    assert ok.ok is True
