@@ -321,3 +321,14 @@ re-evaluated on each new command, so the flag never sticks; `hold`/`land` are
 terminators that clear it (the "say 'stop' to override" path). This closes the
 command-stacking crash class droneserver documented, using our own tested layer
 rather than a dependency. Covered by `tests/test_executor.py`.
+
+### D4 (2026-05-30) — In-process tools, not a standalone MCP server
+Project north star (user): a "lego" app — compose standard components with thin
+glue, powered by the Claude Code agent. Considered exposing flight control as a
+standalone MCP-server brick (reusable/swappable by any agent). Decision: **keep
+the in-process `@tool` adapters** — simpler, no transport layer, and there's no
+second consumer yet to justify the extra plumbing. Capabilities stay local; the
+`CommandExecutor` seam still allows promoting them to an MCP server later if a
+second consumer appears. The architecture stays as-is. Reuse effort focuses on
+standard bricks (PX4/Gazebo/MAVSDK/Claude Agent SDK/noVNC/FastAPI) + the one
+owned brick that has no standard equivalent (the safety layer).
