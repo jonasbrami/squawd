@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Brings up: micro-XRCE-DDS Agent + PX4 SITL (gz_x500) + standalone mavsdk_server.
 # Assumes PX4-Autopilot is cloned/built at /workspace/PX4-Autopilot.
-set -euo pipefail
+# NB: no `-u` — ROS2 setup.bash references unbound vars (AMENT_TRACE_SETUP_FILES).
+set -eo pipefail
 
 source /opt/ros/jazzy/setup.bash
 source /opt/px4_ws/install/setup.bash
