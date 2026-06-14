@@ -46,11 +46,15 @@ RUN curl -fsSL -o /usr/local/bin/mavsdk_server \
         https://github.com/mavlink/MAVSDK/releases/download/v2.12.2/mavsdk_server_musl_x86_64 \
     && chmod +x /usr/local/bin/mavsdk_server
 
-# --- Python deps for the agent layer ---
-# --ignore-installed: a transitive dep (PyJWT) is Debian-managed and pip can't
-# uninstall it ("RECORD file not found"); install our own copy over it instead.
+# --- uv + app-layer Python deps in a uv venv ---
+# rclpy/px4_msgs are apt/system-bound (they arrive on PYTHONPATH via setup.bash),
+# so the venv is created with --system-site-packages and is always run with ROS
+# sourced. We use uv (not system pip) per project convention.
 COPY requirements-swarm.txt /tmp/requirements-swarm.txt
-RUN pip3 install --break-system-packages --ignore-installed -r /tmp/requirements-swarm.txt
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
+    && uv venv --system-site-packages /opt/venv \
+    && VIRTUAL_ENV=/opt/venv uv pip install -r /tmp/requirements-swarm.txt
 
 # --- PX4 gz_bridge build dep: cppzmq provides the CPPZMQ::CPPZMQ CMake target
 # that gz-transport13's config requires (gz-harmonic doesn't pull it in). ---
@@ -60,7 +64,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends cppzmq-dev \
 # Source ROS + px4_msgs for every shell. profile.d covers login shells
 # (`bash -lc`, which does NOT read /etc/bash.bashrc); bash.bashrc covers
 # interactive non-login shells (`docker exec -it`).
-RUN printf 'source /opt/ros/jazzy/setup.bash\nsource /opt/px4_ws/install/setup.bash\n' \
+# Also activate the uv venv (PATH) so `python`/`uv run` use it, not /usr/bin.
+RUN printf 'source /opt/ros/jazzy/setup.bash\nsource /opt/px4_ws/install/setup.bash\nexport VIRTUAL_ENV=/opt/venv\nexport PATH=/opt/venv/bin:$PATH\n' \
         > /etc/profile.d/ros_setup.sh \
     && cat /etc/profile.d/ros_setup.sh >> /etc/bash.bashrc
 
