@@ -8,94 +8,103 @@
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; }
-  header { padding:12px 18px; border-bottom:1px solid var(--grid);
-           display:flex; align-items:center; gap:12px; }
-  header h1 { font-size:16px; margin:0; letter-spacing:.5px; }
-  header .dot { width:9px; height:9px; border-radius:50%; background:#3ad07a; }
-  .wrap { display:flex; gap:16px; padding:16px; align-items:flex-start; }
-  .card { background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:14px; }
-  #map { width:560px; height:560px; }
-  .legend { display:flex; gap:16px; margin-top:10px; flex-wrap:wrap; }
-  .legend span { display:flex; align-items:center; gap:6px; }
-  .swatch { width:12px; height:12px; border-radius:3px; }
-  #chatcard { width:420px; }
-  #chat { height:470px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
-  .msg { background:#0e1626; border-left:3px solid var(--accent); padding:7px 10px; border-radius:6px; }
-  .msg b { color:var(--accent); }
-  h2 { font-size:13px; text-transform:uppercase; letter-spacing:1px; color:#8da2c8; margin:0 0 10px; }
+  header { padding:10px 18px; border-bottom:1px solid var(--grid); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
+  header .dot { width:9px;height:9px;border-radius:50%;background:#3ad07a; }
   .meta { color:#8da2c8; font-size:12px; }
+  .wrap { padding:14px; display:flex; flex-direction:column; gap:14px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#8da2c8; margin:0 0 8px; }
+  .card { background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:12px; }
+  /* camera tiles */
+  #cams { display:flex; gap:10px; flex-wrap:wrap; }
+  .tile { background:#0e1626; border:1px solid var(--grid); border-radius:8px; padding:6px; width:266px; }
+  .tile img { width:252px; height:142px; object-fit:cover; background:#000; border-radius:5px; display:block; }
+  .tile .lbl { display:flex; justify-content:space-between; margin-top:5px; font-size:12px; }
+  .tile .lbl b { color:var(--accent); }
+  .row { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; }
+  #map { width:480px; height:480px; }
+  #chatcard { flex:1; min-width:320px; }
+  #chat { height:430px; overflow-y:auto; display:flex; flex-direction:column; gap:7px; }
+  .msg { background:#0e1626; border-left:3px solid var(--accent); padding:6px 9px; border-radius:6px; }
+  .msg.cmd { border-left-color:#ffd65a; }
+  .msg b { color:var(--accent); }
+  .msg.cmd b { color:#ffd65a; }
+  #cmdbar { display:flex; gap:8px; }
+  #cmd { flex:1; background:#0e1626; border:1px solid var(--grid); color:var(--ink);
+         padding:10px 12px; border-radius:8px; font:inherit; }
+  #send { background:var(--accent); color:#04121b; border:0; border-radius:8px; padding:0 18px; font-weight:700; cursor:pointer; }
 </style>
 </head>
 <body>
-<header>
-  <span class="dot"></span><h1>DRONEBOT · SWARM OBSERVATORY</h1>
-  <span class="meta" id="status">connecting…</span>
-</header>
+<header><span class="dot"></span><h1>DRONEBOT · SWARM OBSERVATORY</h1><span class="meta" id="status">connecting…</span></header>
 <div class="wrap">
-  <div class="card">
-    <h2>Live map · top-down (north ↑, east →)</h2>
-    <canvas id="map" width="560" height="560"></canvas>
-    <div class="legend" id="legend"></div>
-  </div>
-  <div class="card" id="chatcard">
-    <h2>Swarm chat · /swarm/chat</h2>
-    <div id="chat"></div>
+  <div class="card"><h2>Drone POV · onboard cameras</h2><div id="cams"></div></div>
+  <div class="row">
+    <div class="card"><h2>Map · top-down (N↑ E→)</h2><canvas id="map" width="480" height="480"></canvas></div>
+    <div class="card" id="chatcard"><h2>Swarm chat · you = commander</h2>
+      <div id="chat"></div>
+      <div id="cmdbar" style="margin-top:10px;">
+        <input id="cmd" placeholder="Command the swarm… e.g. 'everyone take off and spread out'" autocomplete="off"/>
+        <button id="send">Send</button>
+      </div>
+    </div>
   </div>
 </div>
 <script>
-const COLORS = ["#5ad1ff","#ff8a5a","#9d7bff","#3ad07a","#ffd65a"];
-const RANGE = 90; // metres shown from centre to edge
-const cv = document.getElementById("map"), ctx = cv.getContext("2d");
-const W = cv.width, H = cv.height, C = W/2;
-function toPx(north, east){ // north up, east right
-  return [C + (east/RANGE)*C, C - (north/RANGE)*C];
-}
-function drawGrid(){
-  ctx.fillStyle="#0b1020"; ctx.fillRect(0,0,W,H);
-  ctx.strokeStyle="#23304d"; ctx.lineWidth=1;
-  for(let m=-RANGE; m<=RANGE; m+=30){
-    let [x1,y1]=toPx(m,-RANGE),[x2,y2]=toPx(m,RANGE); ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
-    let [x3,y3]=toPx(-RANGE,m),[x4,y4]=toPx(RANGE,m); ctx.beginPath();ctx.moveTo(x3,y3);ctx.lineTo(x4,y4);ctx.stroke();
+const COLORS=["#5ad1ff","#ff8a5a","#9d7bff","#3ad07a","#ffd65a","#ff6b9d","#6bffb8","#c0c0ff"];
+const RANGE=90, cv=document.getElementById("map"), ctx=cv.getContext("2d"), W=cv.width, C=W/2;
+let built=0;
+function col(i){return COLORS[i%COLORS.length];}
+function toPx(n,e){return [C+(e/RANGE)*C, C-(n/RANGE)*C];}
+function buildCams(n){
+  const c=document.getElementById("cams"); c.innerHTML="";
+  for(let i=0;i<n;i++){
+    c.insertAdjacentHTML("beforeend",
+      `<div class="tile"><img src="/cam/${i}" alt="drone_${i}"/>`+
+      `<div class="lbl"><b style="color:${col(i)}">drone_${i}</b><span id="alt${i}">—</span></div></div>`);
   }
-  ctx.strokeStyle="#34507f";
-  ctx.beginPath();ctx.moveTo(C,0);ctx.lineTo(C,H);ctx.moveTo(0,C);ctx.lineTo(W,C);ctx.stroke();
-  ctx.fillStyle="#8da2c8"; ctx.font="12px monospace";
-  ctx.fillText("N",C-4,14); ctx.fillText("S",C-4,H-4); ctx.fillText("E",W-14,C-6); ctx.fillText("W",6,C-6);
+  built=n;
 }
-function drawDrones(drones){
-  drones.forEach(d=>{
+function grid(){
+  ctx.fillStyle="#0b1020";ctx.fillRect(0,0,W,W);
+  ctx.strokeStyle="#23304d";
+  for(let m=-RANGE;m<=RANGE;m+=30){let a=toPx(m,-RANGE),b=toPx(m,RANGE);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+    let d=toPx(-RANGE,m),e=toPx(RANGE,m);ctx.beginPath();ctx.moveTo(d[0],d[1]);ctx.lineTo(e[0],e[1]);ctx.stroke();}
+  ctx.strokeStyle="#34507f";ctx.beginPath();ctx.moveTo(C,0);ctx.lineTo(C,W);ctx.moveTo(0,C);ctx.lineTo(W,C);ctx.stroke();
+  ctx.fillStyle="#8da2c8";ctx.fillText("N",C-4,12);ctx.fillText("E",W-12,C-6);
+}
+function drones(ds){
+  ds.forEach(d=>{
+    if(d.alt!==null && document.getElementById("alt"+d.id)) document.getElementById("alt"+d.id).textContent=(d.alt??"—")+"m";
     if(d.north===null) return;
-    const col=COLORS[d.id%COLORS.length];
-    const [x,y]=toPx(d.north,d.east);
-    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,8,0,7); ctx.fill();
-    ctx.fillStyle="#dfe6f5"; ctx.font="12px monospace";
-    ctx.fillText(`drone_${d.id}`, x+12, y+4);
-    ctx.fillStyle="#8da2c8"; ctx.fillText(`${d.alt??"?"}m`, x+12, y+18);
+    const p=toPx(d.north,d.east);
+    ctx.fillStyle=col(d.id);ctx.beginPath();ctx.arc(p[0],p[1],7,0,7);ctx.fill();
+    ctx.fillStyle="#dfe6f5";ctx.fillText("drone_"+d.id,p[0]+11,p[1]+4);
   });
 }
-function legend(drones){
-  document.getElementById("legend").innerHTML = drones.map(d=>
-    `<span><i class="swatch" style="background:${COLORS[d.id%COLORS.length]}"></i>drone_${d.id} `+
-    `(${d.north??"?"}N, ${d.east??"?"}E, ${d.alt??"?"}m)</span>`).join("");
-}
-function renderChat(chat){
+function chat(msgs){
   const el=document.getElementById("chat");
-  el.innerHTML = chat.map(line=>{
-    const i=line.indexOf(":");
-    const who=i>0?line.slice(0,i):"", rest=i>0?line.slice(i+1):line;
-    return `<div class="msg"><b>${who}</b>${rest}</div>`;
-  }).join("");
-  el.scrollTop = el.scrollHeight;
+  el.innerHTML=msgs.map(l=>{const i=l.indexOf(":");const who=i>0?l.slice(0,i):"";const rest=i>0?l.slice(i+1):l;
+    const cls=/commander|^you/i.test(who)?"msg cmd":"msg";
+    return `<div class="${cls}"><b>${who}</b>${rest}</div>`;}).join("");
+  el.scrollTop=el.scrollHeight;
 }
 async function tick(){
   try{
-    const r = await fetch("/state"); const s = await r.json();
-    drawGrid(); drawDrones(s.drones); legend(s.drones); renderChat(s.chat);
-    document.getElementById("status").textContent =
-      `${s.drones.length} drones · ${s.chat.length} messages · live`;
-  }catch(e){ document.getElementById("status").textContent="reconnecting…"; }
+    const s=await (await fetch("/state")).json();
+    if(s.n!==built) buildCams(s.n);
+    grid(); drones(s.drones); chat(s.chat);
+    document.getElementById("status").textContent=`${s.n} drones · ${s.chat.length} messages · live`;
+  }catch(e){document.getElementById("status").textContent="reconnecting…";}
 }
-drawGrid(); setInterval(tick, 500); tick();
+async function send(){
+  const inp=document.getElementById("cmd");const text=inp.value.trim();if(!text)return;
+  inp.value="";
+  await fetch("/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+}
+document.getElementById("send").onclick=send;
+document.getElementById("cmd").addEventListener("keydown",e=>{if(e.key==="Enter")send();});
+grid(); setInterval(tick,500); tick();
 </script>
 </body>
 </html>
