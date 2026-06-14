@@ -1,8 +1,14 @@
-"""Swarm demo: N drones, each a Claude agent, coordinating over /swarm/chat to
-cover distinct sectors. One process, one asyncio loop, one shared RosBridge.
+"""Interactive swarm: a Commander agent + N drone agents, all on one event loop.
 
-Each agent has tools take_off / say / fly_to. They are started staggered so each
-reads the prior claims in the chat and picks a still-free sector.
+- You type a command in the observatory -> it lands on /swarm/user_input.
+- The Commander agent reads it, sees the drones' positions, and BROADCASTS
+  per-drone instructions on /swarm/chat ("commander: drone_0 take off and go north, ...").
+- Each drone agent runs a continuous react loop: when a NEW relevant message
+  appears (from the commander, or addressed to it, or to all), it acts via its
+  tools (take_off / fly / say / land).
+
+Scales to N drones (SWARM_N): one persistent Claude client per agent; drones only
+spend tokens when a relevant message arrives.
 """
 import asyncio
 import os
@@ -19,27 +25,68 @@ from agents.common.bus import RosBridge, CHAT_QOS
 from agents.common.geo import GeoPoint, offset_point
 
 N = int(os.environ.get("SWARM_N", "3"))
-CHAT_TOPIC = "/swarm/chat"
-SECTORS = {"north": (60.0, 0.0), "south": (-60.0, 0.0), "east": (0.0, 60.0)}
 
-_chat_lock = threading.Lock()
-_chat_log: list[str] = []
+_lock = threading.Lock()
+_chat: list[str] = []
+_user: list[str] = []
 
-
-def _on_chat(msg) -> None:
-    with _chat_lock:
-        _chat_log.append(msg.data)
+bridge = RosBridge(node_name="swarm_agents")
 
 
-def chat_text() -> str:
-    with _chat_lock:
-        return "\n".join(_chat_log) if _chat_log else "(no messages yet)"
+def _on_chat(m):
+    with _lock:
+        _chat.append(m.data)
 
 
-bridge = RosBridge()
+def _on_user(m):
+    with _lock:
+        _user.append(m.data)
 
 
-def make_agent(i: int, drone: System):
+def publish_chat(text: str) -> None:
+    msg = String()
+    msg.data = text
+    bridge.publish("/swarm/chat", String, msg, CHAT_QOS)
+
+
+def positions_text(drones) -> str:
+    lines = []
+    for i, d in enumerate(drones):
+        p = bridge.latest(f"/px4_{i}/fmu/out/vehicle_local_position")
+        if p is None:
+            lines.append(f"drone_{i}: (no telemetry)")
+        else:
+            lines.append(f"drone_{i}: north={p.x:.0f}m east={p.y:.0f}m alt={-p.z:.0f}m")
+    return "\n".join(lines)
+
+
+# ---------- Commander ----------
+def make_commander():
+    @tool("broadcast", "Broadcast an instruction to the whole swarm over the chat. "
+          "Address drones by name, e.g. 'drone_0 take off and go 50m north; drone_1 hold'.",
+          {"message": {"type": "string"}})
+    async def broadcast(args):
+        publish_chat(f"commander: {args.get('message', '')}")
+        return {"content": [{"type": "text", "text": "broadcast sent"}]}
+
+    server = create_sdk_mcp_server(name="cmd", tools=[broadcast])
+    options = ClaudeAgentOptions(
+        mcp_servers={"cmd": server},
+        allowed_tools=["mcp__cmd__broadcast"],
+        setting_sources=[],
+        system_prompt=(
+            f"You are the COMMANDER of a swarm of {N} drones (drone_0..drone_{N-1}). "
+            "The user gives you high-level commands. Translate each into concrete per-drone "
+            "instructions and send them with the broadcast tool, addressing drones by name. "
+            "Drones can: take off, fly a relative offset (north/east/up metres), hold, land. "
+            "Keep instructions short and unambiguous. Use the drones' reported positions to "
+            "decide. One broadcast per user command is usually enough."),
+    )
+    return ClaudeSDKClient(options=options)
+
+
+# ---------- Drone ----------
+def make_drone_options(i: int, drone: System):
     name = f"drone_{i}"
 
     @tool("take_off", "Arm and take off to 10m.", {})
@@ -49,74 +96,96 @@ def make_agent(i: int, drone: System):
             await drone.action.set_takeoff_altitude(10.0)
             await drone.action.takeoff()
             await asyncio.sleep(8)
-            return {"content": [{"type": "text", "text": f"{name} airborne (~10m)"}]}
-        except Exception as e:  # SITL EKF may reject arming early; report, don't crash
-            return {"content": [{"type": "text", "text": f"{name} takeoff failed: {e}"}],
-                    "is_error": True}
+            return {"content": [{"type": "text", "text": f"{name} airborne"}]}
+        except Exception as e:
+            return {"content": [{"type": "text", "text": f"{name} takeoff failed: {e}"}], "is_error": True}
 
-    @tool("say", "Broadcast a short message to the swarm chat (every drone sees it).",
-          {"message": {"type": "string"}})
-    async def say(args):
-        msg = String()
-        msg.data = f"{name}: {args.get('message', '')}"
-        bridge.publish(CHAT_TOPIC, String, msg, CHAT_QOS)
-        return {"content": [{"type": "text", "text": "sent"}]}
-
-    @tool("check_chat", "Read the swarm chat NOW to see which sectors peers have claimed.", {})
-    async def check_chat(args):
-        return {"content": [{"type": "text", "text": chat_text()}]}
-
-    @tool("fly_to", "Fly to a sector: one of north, south, east.",
-          {"sector": {"type": "string"}})
-    async def fly_to(args):
-        sector = args.get("sector", "").lower().strip()
-        if sector not in SECTORS:
-            return {"content": [{"type": "text", "text": f"unknown sector '{sector}'"}],
-                    "is_error": True}
+    @tool("fly", "Fly a relative offset from the current position (metres).",
+          {"north": {"type": "number"}, "east": {"type": "number"}, "up": {"type": "number"}})
+    async def fly(args):
         try:
-            north_m, east_m = SECTORS[sector]
             pos = await anext(drone.telemetry.position())
             origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
-            tgt = offset_point(origin, north_m, east_m, 0.0)
-            await drone.action.goto_location(
-                tgt.latitude_deg, tgt.longitude_deg, tgt.absolute_altitude_m, 0.0)
-            return {"content": [{"type": "text", "text": f"{name} heading {sector}"}]}
+            tgt = offset_point(origin, float(args.get("north", 0)), float(args.get("east", 0)),
+                               float(args.get("up", 0)))
+            await drone.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
+                                             tgt.absolute_altitude_m, 0.0)
+            return {"content": [{"type": "text", "text": f"{name} moving"}]}
         except Exception as e:
-            return {"content": [{"type": "text", "text": f"{name} fly_to failed: {e}"}],
-                    "is_error": True}
+            return {"content": [{"type": "text", "text": f"{name} fly failed: {e}"}], "is_error": True}
 
-    server = create_sdk_mcp_server(name=f"flight_{i}", tools=[take_off, check_chat, say, fly_to])
+    @tool("land", "Land in place.", {})
+    async def land(args):
+        try:
+            await drone.action.land()
+            return {"content": [{"type": "text", "text": f"{name} landing"}]}
+        except Exception as e:
+            return {"content": [{"type": "text", "text": f"{name} land failed: {e}"}], "is_error": True}
+
+    @tool("say", "Say something on the swarm chat.", {"message": {"type": "string"}})
+    async def say(args):
+        publish_chat(f"{name}: {args.get('message', '')}")
+        return {"content": [{"type": "text", "text": "sent"}]}
+
+    server = create_sdk_mcp_server(name=f"d{i}", tools=[take_off, fly, land, say])
     options = ClaudeAgentOptions(
-        mcp_servers={f"flight_{i}": server},
-        allowed_tools=[f"mcp__flight_{i}__take_off",
-                       f"mcp__flight_{i}__check_chat",
-                       f"mcp__flight_{i}__say",
-                       f"mcp__flight_{i}__fly_to"],
+        mcp_servers={f"d{i}": server},
+        allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly",
+                       f"mcp__d{i}__land", f"mcp__d{i}__say"],
         setting_sources=[],
         system_prompt=(
-            f"You are {name}, one of {N} autonomous drones in a swarm. The sectors to "
-            f"divide among the drones are: north, south, east. Coordinate so each drone "
-            f"covers a DIFFERENT sector. Procedure: (1) take_off; (2) call check_chat to see "
-            f"which sectors peers have ALREADY claimed; (3) pick a sector NOT yet claimed; "
-            f"(4) announce it with say(); (5) fly_to it. Never pick a sector a peer claimed."),
+            f"You are {name}, an autonomous drone in a swarm of {N}. You receive swarm-chat "
+            "messages. When a message is an instruction for YOU (mentions your name) or for "
+            "ALL drones (everyone/all/swarm), carry it out with your tools. If a message is "
+            "not for you, do nothing. Be terse; only say() if you have something useful to add."),
     )
-    return name, options
+    return options
 
 
-async def run_agent(i: int, drone: System, stagger: float) -> None:
-    name, options = make_agent(i, drone)
-    await asyncio.sleep(stagger)
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(
-            "Begin: take_off, then check_chat to see what peers claimed, then claim a "
-            "still-free sector with say(), then fly_to it.")
-        async for _ in client.receive_response():
-            pass
-    print(f"{name}: mission turn complete", flush=True)
+def relevant_to(msg: str, i: int) -> bool:
+    low = msg.lower()
+    if low.startswith(f"drone_{i}:"):  # own message
+        return False
+    return (low.startswith("commander:") or f"drone_{i}" in low
+            or "everyone" in low or " all " in f" {low} " or "swarm" in low)
 
 
-async def main() -> None:
-    bridge.subscribe(CHAT_TOPIC, String, CHAT_QOS, _on_chat)
+async def drone_loop(i: int, client: ClaudeSDKClient):
+    seen = 0
+    async with client:
+        while True:
+            await asyncio.sleep(1.5)
+            with _lock:
+                new = _chat[seen:]
+                seen = len(_chat)
+            rel = [m for m in new if relevant_to(m, i)]
+            if not rel:
+                continue
+            await client.query("New swarm chat:\n" + "\n".join(rel) +
+                               "\nAct on anything addressed to you or to all drones; else do nothing.")
+            async for _ in client.receive_response():
+                pass
+
+
+async def commander_loop(client: ClaudeSDKClient, drones):
+    seen = 0
+    async with client:
+        while True:
+            await asyncio.sleep(1.0)
+            with _lock:
+                new = _user[seen:]
+                seen = len(_user)
+            for cmd in new:
+                await client.query(
+                    f"User command: {cmd}\n\nDrone positions:\n{positions_text(drones)}\n\n"
+                    "Broadcast concrete per-drone instructions now.")
+                async for _ in client.receive_response():
+                    pass
+
+
+async def main():
+    bridge.subscribe("/swarm/chat", String, CHAT_QOS, _on_chat)
+    bridge.subscribe("/swarm/user_input", String, CHAT_QOS, _on_user)
     for i in range(N):
         bridge.subscribe(f"/px4_{i}/fmu/out/vehicle_local_position", VehicleLocalPosition)
     bridge.start()
@@ -131,11 +200,13 @@ async def main() -> None:
         drones.append(d)
         print(f"drone_{i} connected", flush=True)
 
-    await asyncio.gather(*[run_agent(i, drones[i], i * 18.0) for i in range(N)])
-    print("=== swarm chat transcript ===", flush=True)
-    print(chat_text(), flush=True)
-    await asyncio.sleep(15)  # let goto_location settle
-    bridge.shutdown()
+    commander = make_commander()
+    drone_clients = [ClaudeSDKClient(options=make_drone_options(i, drones[i])) for i in range(N)]
+    print(f"swarm online: commander + {N} drones. Waiting for commands on /swarm/user_input.", flush=True)
+    await asyncio.gather(
+        commander_loop(commander, drones),
+        *[drone_loop(i, drone_clients[i]) for i in range(N)],
+    )
 
 
 if __name__ == "__main__":
