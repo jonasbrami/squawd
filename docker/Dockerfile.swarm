@@ -40,21 +40,19 @@ RUN mkdir -p /opt/px4_ws/src \
     && source /opt/ros/jazzy/setup.bash \
     && cd /opt/px4_ws && colcon build --packages-select px4_msgs
 
-# --- mavsdk_server binary (run standalone; pip's mavsdk is the client only) ---
-# x86_64 dev host. On arm64 swap to mavsdk_server_musl_aarch64.
-RUN curl -fsSL -o /usr/local/bin/mavsdk_server \
-        https://github.com/mavlink/MAVSDK/releases/download/v2.12.2/mavsdk_server_musl_x86_64 \
-    && chmod +x /usr/local/bin/mavsdk_server
-
 # --- uv + app-layer Python deps in a uv venv ---
 # rclpy/px4_msgs are apt/system-bound (they arrive on PYTHONPATH via setup.bash),
 # so the venv is created with --system-site-packages and is always run with ROS
 # sourced. We use uv (not system pip) per project convention.
+# mavsdk_server: use the version-matched binary bundled in the pip `mavsdk`
+# package (NOT a separately-downloaded one — a v2 server vs v3 client mismatch
+# leaves gRPC 50051 dead and connect() hangs). Symlink it onto PATH.
 COPY requirements-swarm.txt /tmp/requirements-swarm.txt
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
     && uv venv --system-site-packages /opt/venv \
-    && VIRTUAL_ENV=/opt/venv uv pip install -r /tmp/requirements-swarm.txt
+    && VIRTUAL_ENV=/opt/venv uv pip install -r /tmp/requirements-swarm.txt \
+    && ln -sf /opt/venv/lib/python3.12/site-packages/mavsdk/bin/mavsdk_server /usr/local/bin/mavsdk_server
 
 # --- PX4 gz_bridge build dep: cppzmq provides the CPPZMQ::CPPZMQ CMake target
 # that gz-transport13's config requires (gz-harmonic doesn't pull it in). ---
