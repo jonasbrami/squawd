@@ -30,6 +30,14 @@ export GZ_CONFIG_PATH=/usr/share/gz
 
 cd /workspace/PX4-Autopilot
 
+# Build a richer 'city' world (buildings) from default.sdf, idempotently, and use
+# it — so the drones + cameras have something to see. Override with PX4_GZ_WORLD.
+WORLDS="Tools/simulation/gz/worlds"
+if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_city_world.py ]; then
+  python3 /workspace/sim/worlds/make_city_world.py "$WORLDS/default.sdf" "$WORLDS/city.sdf" || true
+fi
+export PX4_GZ_WORLD="${PX4_GZ_WORLD:-city}"
+
 N=${SWARM_N:-3}
 MODEL=${PX4_MODEL:-gz_x500_depth}
 
