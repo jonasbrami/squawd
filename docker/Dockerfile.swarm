@@ -52,6 +52,11 @@ RUN curl -fsSL -o /usr/local/bin/mavsdk_server \
 COPY requirements-swarm.txt /tmp/requirements-swarm.txt
 RUN pip3 install --break-system-packages --ignore-installed -r /tmp/requirements-swarm.txt
 
+# --- PX4 gz_bridge build dep: cppzmq provides the CPPZMQ::CPPZMQ CMake target
+# that gz-transport13's config requires (gz-harmonic doesn't pull it in). ---
+RUN apt-get update && apt-get install -y --no-install-recommends cppzmq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Source ROS + px4_msgs for every shell. profile.d covers login shells
 # (`bash -lc`, which does NOT read /etc/bash.bashrc); bash.bashrc covers
 # interactive non-login shells (`docker exec -it`).
