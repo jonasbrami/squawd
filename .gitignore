@@ -7,3 +7,4 @@ flight_logs/
 .pytest_cache/
 .screen99.png
 .cam_preview.jpg
+PX4-Autopilot/
