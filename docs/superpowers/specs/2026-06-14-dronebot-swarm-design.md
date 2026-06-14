@@ -28,6 +28,9 @@ coordination**, not a safety-critical or hardware-bound system (see §6).
 - **Free natural-language peer-to-peer chat** between drone agents as the coordination medium.
 - **Mission genericity**: the commander composes a small, generic task vocabulary; no hardcoded
   per-mission-type logic. The LLM does the mission-specific reasoning.
+- **Swarm Observatory (read-only web UI)**: a browser dashboard to watch the swarm — per-drone
+  camera + status, the full inter-agent NL chat transcript, and the fused map with drone
+  positions/findings. Read-only consumer of the bus (control surface deferred). See §5b.
 - Runs in full 3D simulation with 2 drones (3 = stretch).
 
 **Non-goals (explicitly cut or deferred)**
@@ -104,6 +107,8 @@ coordination**, not a safety-critical or hardware-bound system (see §6).
 | Agents (commander + drones) | **Claude Agent SDK** | prompts, tool sets, orchestration |
 | Inter-agent comms | **ROS2 / DDS** (topics, services, actions) | message schema (`swarm_msgs`) |
 | Geo / frame math | salvage v1 **`geo.py`** | — (already tested) |
+| Observatory web UI | **FastAPI + WebSocket + MJPEG** + salvage v1 `web/` | dashboard layout, bus→browser glue |
+| Gazebo camera → ROS2 | **`ros_gz` image bridge** | topic config |
 
 ## 5. Mission lifecycle & comms
 
@@ -134,6 +139,33 @@ a sequence of these across drones.
 | Commander → all: fused snapshot | Topic (`/swarm/world`) | shared picture |
 | Peer ↔ peer: agent chat | Topic (`/swarm/chat`) | free NL coordination (D6) |
 
+## 5b. Swarm Observatory (read-only web UI)
+
+A separate **FastAPI process** that is a pure **consumer** of the bus — it subscribes, never
+publishes, so it cannot perturb the agents. Reuses v1's `web/` cockpit (FastAPI + WebSocket + MJPEG +
+static frontend) and the same `RosBridge`.
+
+**Shows:**
+- **Per-drone tiles (grid of N):** live camera + status (alt/battery/mode/position) + that drone's
+  latest chatter.
+- **Swarm chat panel:** the full `/swarm/chat` NL transcript, all agents interleaved — the
+  emergent-coordination window.
+- **Fused-map view:** top-down OctoMap/occupancy in the GPS frame with live drone positions and
+  `/swarm/findings` markers.
+- *(Optional)* v1's noVNC Gazebo 3D view of the real scene.
+
+**Transport:** WebSocket (JSON) for status/chat/map; MJPEG (multipart) per camera — the split v1
+proved.
+
+**New wheel it forces:** camera frames live on **Gazebo** topics, so the observatory needs the
+**`ros_gz` image bridge** to pull them into ROS2 (the bridge gate defers `ros_gz`; the observatory
+needs it). Supported Jazzy↔Harmonic bridge.
+
+**Decoupling:** the observatory is a sibling consumer on the bus, like the commander but read-only and
+human-facing. Agents do not know it exists. **Control surface (issue missions / abort / message a
+drone from the browser) is deferred**, but the data flow is designed so a write path can be added
+without rework.
+
 ## 6. What's cut, and why it's safe to cut
 
 Sim-only experiment → the entire safety apparatus from v1 is removed: per-drone safety supervisor,
@@ -158,11 +190,15 @@ holds, the design holds.** Spike it before building anything else.
 1. **Bridge spike** — one Claude agent process ↔ `rclpy` ↔ PX4 SITL: fly via MAVSDK and read one SLAM
    map topic on one process. Go/no-go for the whole design.
 2. **Single-drone slice** — NL → drone agent → fly + local SLAM + `look()`. (v1, re-based on ROS2.)
+2b. **Observatory v0** — minimal web UI: one drone's camera + status + chat (needs `ros_gz` image
+   bridge). Pulled early so everything after is watchable.
 3. **Map fusion** — add OctoMap/`map_merge`; one drone produces a global map in the GPS frame.
 4. **Second drone + namespacing** — 2× PX4 SITL under `/drone_1`, `/drone_2`; fused map from both.
+4b. **Observatory v1** — full UI: N-drone grid + swarm chat panel + fused-map view.
 5. **Commander agent** — NL mission → decompose → delegate to the two drones.
 6. **Free chat** — `/swarm/chat`; drones coordinate emergently.
-7. **End-to-end** — "search this area" with 2–3 drones, fused map, emergent division of labor.
+7. **End-to-end** — "search this area" with 2–3 drones, fused map, emergent division of labor,
+   watched live in the observatory.
 
 ## 9. Repo layout (fresh)
 
@@ -188,6 +224,10 @@ dronebot-swarm/
       agent.py       per-drone Claude agent
       tools.py       fly (MAVSDK), look, query_local_map, message_peer, report
       prompts.py
+  observatory/       read-only web UI (salvage v1 web/): FastAPI + WS + MJPEG
+    server.py        subscribes the bus (status/chat/findings/map) + ros_gz cameras
+    framing.py       MJPEG encode per drone
+    static/          index.html, cockpit.css, cockpit.js (N-drone grid, chat, map)
   config.py          sim params, N drones, model selection, sensor selection
   tests/
 ```
@@ -203,12 +243,13 @@ dronebot-swarm/
 
 ## 11. Reuse-from-v1 ledger
 
-- **Salvage:** `geo.py` (verbatim); patterns/ideas from `control/executor.py`, `control/state.py`,
-  `control/telemetry.py`, `perception/` (provider→snapshot pattern), `agent/` (Claude SDK wiring),
-  `chat/repl.py` (async stdin), and the Docker/Gazebo/PX4 bring-up learnings (llvmpipe, standalone
-  mavsdk_server, x500_depth camera topics) from recent commits.
+- **Salvage:** `geo.py` (verbatim); the v1 **web cockpit** (`web/server.py`, `web/framing.py`,
+  `web/static/`) as the basis for the §5b observatory; patterns/ideas from `control/executor.py`,
+  `control/state.py`, `control/telemetry.py`, `perception/` (provider→snapshot pattern), `agent/`
+  (Claude SDK wiring), `chat/repl.py` (async stdin), and the Docker/Gazebo/PX4 bring-up learnings
+  (llvmpipe, standalone mavsdk_server, x500_depth camera topics) from recent commits.
 - **Drop:** `safety.py` (no safety in sim), the single-loop single-drone `app.py` wiring (replaced by
-  per-process agents on a bus), the v1 web cockpit (deferred).
+  per-process agents on a bus).
 
 ## 12. Open choices (noted, not blocking)
 

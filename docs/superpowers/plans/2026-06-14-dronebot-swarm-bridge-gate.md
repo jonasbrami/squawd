@@ -547,8 +547,10 @@ git commit -m "feat: bridge gate spike — Claude tool flies PX4 + reads ROS2 (o
 ## Deferred to follow-up plans (written after this gate passes)
 
 - **Milestone 2** — single-drone vertical slice: NL → drone agent → fly + local SLAM + `look()` (port v1's control/perception onto ROS2; salvage `geo.py`).
+- **Milestone 2b** — Observatory v0: minimal read-only web UI (one drone's camera + status + chat), needs the `ros_gz` image bridge. Salvage v1's `web/` cockpit. Pulled early so all later milestones are watchable.
 - **Milestone 3** — per-drone SLAM (RTAB-Map on depth cam) + read a real map topic through the bridge.
 - **Milestone 4** — map fusion server (`map_merge`/OctoMap in GPS frame).
+- **Milestone 4b** — Observatory v1: full UI — N-drone grid + swarm chat panel + fused-map view.
 - **Milestone 5** — second drone + `/drone_i` namespacing; fused map from both.
 - **Milestone 6** — Commander agent: NL mission → decompose → delegate.
-- **Milestone 7** — `/swarm/chat` free NL peer coordination; end-to-end "search this area".
+- **Milestone 7** — `/swarm/chat` free NL peer coordination; end-to-end "search this area", watched live in the observatory.
