@@ -62,6 +62,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends cppzmq-dev \
 # Source ROS + px4_msgs for every shell. profile.d covers login shells
 # (`bash -lc`, which does NOT read /etc/bash.bashrc); bash.bashrc covers
 # interactive non-login shells (`docker exec -it`).
+# --- Node + Claude Code CLI (claude-agent-sdk drives the `claude` CLI; OAuth
+# creds are bind-mounted at runtime to /root/.claude). ---
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && rm -rf /var/lib/apt/lists/*
+
 # Also activate the uv venv (PATH) so `python`/`uv run` use it, not /usr/bin.
 RUN printf 'source /opt/ros/jazzy/setup.bash\nsource /opt/px4_ws/install/setup.bash\nexport VIRTUAL_ENV=/opt/venv\nexport PATH=/opt/venv/bin:$PATH\n' \
         > /etc/profile.d/ros_setup.sh \
