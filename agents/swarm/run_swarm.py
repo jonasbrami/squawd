@@ -62,6 +62,10 @@ def make_agent(i: int, drone: System):
         bridge.publish(CHAT_TOPIC, String, msg, CHAT_QOS)
         return {"content": [{"type": "text", "text": "sent"}]}
 
+    @tool("check_chat", "Read the swarm chat NOW to see which sectors peers have claimed.", {})
+    async def check_chat(args):
+        return {"content": [{"type": "text", "text": chat_text()}]}
+
     @tool("fly_to", "Fly to a sector: one of north, south, east.",
           {"sector": {"type": "string"}})
     async def fly_to(args):
@@ -81,18 +85,20 @@ def make_agent(i: int, drone: System):
             return {"content": [{"type": "text", "text": f"{name} fly_to failed: {e}"}],
                     "is_error": True}
 
-    server = create_sdk_mcp_server(name=f"flight_{i}", tools=[take_off, say, fly_to])
+    server = create_sdk_mcp_server(name=f"flight_{i}", tools=[take_off, check_chat, say, fly_to])
     options = ClaudeAgentOptions(
         mcp_servers={f"flight_{i}": server},
         allowed_tools=[f"mcp__flight_{i}__take_off",
+                       f"mcp__flight_{i}__check_chat",
                        f"mcp__flight_{i}__say",
                        f"mcp__flight_{i}__fly_to"],
         setting_sources=[],
         system_prompt=(
             f"You are {name}, one of {N} autonomous drones in a swarm. The sectors to "
-            f"divide among the drones are: north, south, east. Coordinate over the shared "
-            f"chat so that each drone covers a DIFFERENT sector. Never claim a sector a "
-            f"peer already claimed in the chat."),
+            f"divide among the drones are: north, south, east. Coordinate so each drone "
+            f"covers a DIFFERENT sector. Procedure: (1) take_off; (2) call check_chat to see "
+            f"which sectors peers have ALREADY claimed; (3) pick a sector NOT yet claimed; "
+            f"(4) announce it with say(); (5) fly_to it. Never pick a sector a peer claimed."),
     )
     return name, options
 
@@ -102,9 +108,8 @@ async def run_agent(i: int, drone: System, stagger: float) -> None:
     await asyncio.sleep(stagger)
     async with ClaudeSDKClient(options=options) as client:
         await client.query(
-            f"Take off. Here is the swarm chat so far:\n{chat_text()}\n\n"
-            f"Claim a sector that no peer has claimed yet, announce your claim with say(), "
-            f"then fly_to that sector.")
+            "Begin: take_off, then check_chat to see what peers claimed, then claim a "
+            "still-free sector with say(), then fly_to it.")
         async for _ in client.receive_response():
             pass
     print(f"{name}: mission turn complete", flush=True)
@@ -126,7 +131,7 @@ async def main() -> None:
         drones.append(d)
         print(f"drone_{i} connected", flush=True)
 
-    await asyncio.gather(*[run_agent(i, drones[i], i * 12.0) for i in range(N)])
+    await asyncio.gather(*[run_agent(i, drones[i], i * 18.0) for i in range(N)])
     print("=== swarm chat transcript ===", flush=True)
     print(chat_text(), flush=True)
     await asyncio.sleep(15)  # let goto_location settle
