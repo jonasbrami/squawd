@@ -6,8 +6,18 @@
 # NB: no `-u` — ROS setup.bash references unbound vars.
 set -eo pipefail
 
-# Force software GL (llvmpipe) so Gazebo renders camera sensors headless (no GPU).
-export LIBGL_ALWAYS_SOFTWARE=1
+# Rendering backend: software GL (llvmpipe) by default so cameras work with no GPU.
+# Set GPU_RENDER=1 (and pass --device /dev/dri) to use hardware EGL instead — far
+# faster, lets N camera feeds + live flight coexist.
+if [ "${GPU_RENDER:-0}" = "1" ]; then
+  unset LIBGL_ALWAYS_SOFTWARE
+  # Headless EGL on the Intel iGPU. Expose ONLY renderD128 to the container so
+  # Mesa can't grab the NVIDIA node (no Mesa driver there -> ogre2 segfault).
+  export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-iris}"
+  export QT_QPA_PLATFORM=offscreen
+else
+  export LIBGL_ALWAYS_SOFTWARE=1
+fi
 
 source /opt/ros/jazzy/setup.bash
 source /opt/px4_ws/install/setup.bash
