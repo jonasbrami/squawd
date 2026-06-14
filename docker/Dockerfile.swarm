@@ -1,0 +1,62 @@
+# Swarm image: Ubuntu 24.04 + Gazebo Harmonic + ROS2 Jazzy + PX4 + uXRCE-DDS
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-c"]
+
+# --- base tools ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg2 lsb-release ca-certificates software-properties-common \
+        git python3 python3-pip python3-venv build-essential cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- ROS2 Jazzy (apt) ---
+RUN add-apt-repository universe \
+    && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-ros-base python3-colcon-common-extensions python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Gazebo Harmonic (OSRF apt) ---
+RUN curl -fsSL https://packages.osrfoundation.org/gazebo.gpg \
+        -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/gazebo-stable.list \
+    && apt-get update && apt-get install -y --no-install-recommends gz-harmonic \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- micro-XRCE-DDS Agent (PX4 <-> ROS2 bridge) ---
+RUN git clone -b v2.4.3 --depth 1 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/xrce \
+    && cd /tmp/xrce && mkdir build && cd build \
+    && cmake .. && make -j$(nproc) && make install && ldconfig \
+    && rm -rf /tmp/xrce
+
+# --- px4_msgs (ROS2 message defs for PX4 topics), built into a ws ---
+RUN mkdir -p /opt/px4_ws/src \
+    && git clone -b release/1.15 --depth 1 https://github.com/PX4/px4_msgs.git /opt/px4_ws/src/px4_msgs \
+    && source /opt/ros/jazzy/setup.bash \
+    && cd /opt/px4_ws && colcon build --packages-select px4_msgs
+
+# --- mavsdk_server binary (run standalone; pip's mavsdk is the client only) ---
+# x86_64 dev host. On arm64 swap to mavsdk_server_musl_aarch64.
+RUN curl -fsSL -o /usr/local/bin/mavsdk_server \
+        https://github.com/mavlink/MAVSDK/releases/download/v2.12.2/mavsdk_server_musl_x86_64 \
+    && chmod +x /usr/local/bin/mavsdk_server
+
+# --- Python deps for the agent layer ---
+# --ignore-installed: a transitive dep (PyJWT) is Debian-managed and pip can't
+# uninstall it ("RECORD file not found"); install our own copy over it instead.
+COPY requirements-swarm.txt /tmp/requirements-swarm.txt
+RUN pip3 install --break-system-packages --ignore-installed -r /tmp/requirements-swarm.txt
+
+# Source ROS + px4_msgs for every shell. profile.d covers login shells
+# (`bash -lc`, which does NOT read /etc/bash.bashrc); bash.bashrc covers
+# interactive non-login shells (`docker exec -it`).
+RUN printf 'source /opt/ros/jazzy/setup.bash\nsource /opt/px4_ws/install/setup.bash\n' \
+        > /etc/profile.d/ros_setup.sh \
+    && cat /etc/profile.d/ros_setup.sh >> /etc/bash.bashrc
+
+WORKDIR /workspace
