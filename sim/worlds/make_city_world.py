@@ -7,6 +7,7 @@ something to see. Buildings avoid the spawn corridor near the origin.
 Usage: python make_city_world.py <px4_default.sdf> <out_city.sdf>
 """
 import random
+import re
 import sys
 
 
@@ -53,6 +54,12 @@ def main() -> None:
     src, dst = sys.argv[1], sys.argv[2]
     with open(src) as f:
         sdf = f.read()
+    # Rename the world to match this file's basename ('city'). PX4 starts gz with
+    # -w $PX4_GZ_WORLD ('city') and calls /world/city/create; if the SDF's internal
+    # name stayed 'default' that service never exists and the gz-launching instance
+    # dies on a spawn timeout. Keep them consistent. (Sensor + camera topics then
+    # live under /world/city/... — the observatory reads the same name.)
+    sdf = re.sub(r'<world\s+name="[^"]*"', '<world name="city"', sdf, count=1)
     idx = sdf.rfind("</world>")
     if idx == -1:
         raise SystemExit("no </world> in source SDF")

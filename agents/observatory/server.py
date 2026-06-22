@@ -29,7 +29,10 @@ from agents.common.bus import RosBridge, CHAT_QOS
 
 N = int(os.environ.get("SWARM_N", "3"))
 HERE = os.path.dirname(__file__)
-CAM_TOPIC = ("/world/default/model/x500_depth_{i}/link/OakD-Lite/base_link"
+# World name must match the generated world (make_city_world.py names it 'city',
+# and PX4 runs with PX4_GZ_WORLD=city). Override with GZ_WORLD if you change it.
+GZ_WORLD = os.environ.get("GZ_WORLD", "city")
+CAM_TOPIC = ("/world/" + GZ_WORLD + "/model/x500_depth_{i}/link/OakD-Lite/base_link"
              "/sensor/IMX214/image")
 
 _chat_lock = threading.Lock()
@@ -111,6 +114,12 @@ async def command(request):
     body = await request.json()
     text = (body.get("text") or "").strip()
     if text:
+        print(f"[command] received: {text!r}", flush=True)
+        # Echo into the local chat view only (NOT onto /swarm/chat, which the drones
+        # listen to) so the UI confirms the message landed without bypassing the
+        # commander.
+        with _chat_lock:
+            _chat.append(f"you: {text}")
         m = String()
         m.data = text
         bridge.publish("/swarm/user_input", String, m, CHAT_QOS)

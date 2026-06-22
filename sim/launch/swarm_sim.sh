@@ -19,6 +19,12 @@ else
   export LIBGL_ALWAYS_SOFTWARE=1
 fi
 
+# Server-only Gazebo. There's no display in the container, and under the GPU path
+# (QT_QPA_PLATFORM=offscreen) the gz GUI aborts in handleContextCreationFailure,
+# which takes down the px4 -i 0 instance that spawned gz. HEADLESS=1 makes PX4
+# launch `gz sim -s` (no GUI); cameras render from the server sensor pipeline.
+export HEADLESS=1
+
 source /opt/ros/jazzy/setup.bash
 source /opt/px4_ws/install/setup.bash
 
