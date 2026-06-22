@@ -1,0 +1,139 @@
+"""Bind a drone's FlightOps to Claude-Agent-SDK MCP tools.
+
+`make_drone_options` builds the per-drone MCP server (flight + look/scan/say) and
+returns the ClaudeAgentOptions the swarm hands to a ClaudeSDKClient. The wrappers
+are deliberately thin: parse args -> call FlightOps -> wrap text/errors. The
+camera image (`look`) comes from core.GzCameras; chat (`say`) goes out via the
+injected publish_chat callable.
+"""
+from claude_agent_sdk import tool, create_sdk_mcp_server, ClaudeAgentOptions
+
+from agents.flight.ops import FlightOps
+
+
+def _ok(text: str) -> dict:
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def _err(text: str) -> dict:
+    return {"content": [{"type": "text", "text": text}], "is_error": True}
+
+
+def make_drone_options(i, drone, world, bridge, n, cameras, publish_chat, env=None):
+    name = f"drone_{i}"
+    ops = FlightOps(drone, world, bridge, i, n)
+
+    @tool("take_off", "Arm and take off (default 10m). Returns once airborne at altitude.",
+          {"altitude": {"type": "number"}})
+    async def take_off(args):
+        try:
+            return _ok(await ops.take_off(args.get("altitude", 10.0)))
+        except Exception as e:
+            return _err(f"{name} takeoff failed: {e}")
+
+    @tool("fly", "Fly a relative offset from the current position (metres). Turns to "
+          "face the travel direction so your camera looks where you're going.",
+          {"north": {"type": "number"}, "east": {"type": "number"}, "up": {"type": "number"}})
+    async def fly(args):
+        try:
+            return _ok(await ops.fly(args.get("north", 0), args.get("east", 0), args.get("up", 0)))
+        except Exception as e:
+            return _err(f"{name} fly failed: {e}")
+
+    @tool("goto", "Fly to an ABSOLUTE world point (east, north, up=altitude metres) OR a named "
+          "target (a drone like 'drone_1', a building like 'bldg_7'). Optional heading: a compass "
+          "word ('north'..) or 'travel' (default, face the way you go).",
+          {"target": {"type": "string"}, "east": {"type": "number"}, "north": {"type": "number"},
+           "up": {"type": "number"}, "heading": {"type": "string"}})
+    async def goto(args):
+        try:
+            return _ok(await ops.goto(args.get("target", ""), args.get("east"), args.get("north"),
+                                      args.get("up"), args.get("heading", "travel")))
+        except Exception as e:
+            return _err(f"{name} goto failed: {e}")
+
+    @tool("orbit", "Circle a target (a drone, a building like 'bldg_7', or an east/north point) at "
+          "a radius, keeping your camera pointed at the center. One call = the whole orbit.",
+          {"target": {"type": "string"}, "east": {"type": "number"}, "north": {"type": "number"},
+           "radius": {"type": "number"}, "speed": {"type": "number"},
+           "direction": {"type": "string"}, "alt": {"type": "number"}})
+    async def orbit(args):
+        try:
+            return _ok(await ops.orbit(args.get("target", ""), args.get("east"), args.get("north"),
+                                       args.get("radius", 12.0), args.get("speed", 3.0),
+                                       args.get("direction", "cw"), args.get("alt")))
+        except Exception as e:
+            return _err(f"{name} orbit failed: {e}")
+
+    @tool("hover", "Hold current position (loiter in place).", {})
+    async def hover(args):
+        try:
+            return _ok(await ops.hover())
+        except Exception as e:
+            return _err(f"{name} hover failed: {e}")
+
+    @tool("set_speed", "Set cruise speed (m/s) for subsequent moves.", {"speed": {"type": "number"}})
+    async def set_speed(args):
+        try:
+            return _ok(await ops.set_speed(args.get("speed", 5.0)))
+        except Exception as e:
+            return _err(f"{name} set_speed failed: {e}")
+
+    @tool("face", "Turn in place to aim your camera at a target: a drone ('drone_1'), a "
+          "building ('bldg_7'), or a compass direction ('north'/'east'/'south'/'west').",
+          {"target": {"type": "string"}})
+    async def face(args):
+        try:
+            return _ok(await ops.face(args.get("target", "")))
+        except Exception as e:
+            return _err(f"{name} face failed: {e}")
+
+    @tool("land", "Land in place. Returns once on the ground.", {})
+    async def land(args):
+        try:
+            return _ok(await ops.land())
+        except Exception as e:
+            return _err(f"{name} land failed: {e}")
+
+    @tool("say", "Say something on the swarm chat.", {"message": {"type": "string"}})
+    async def say(args):
+        publish_chat(f"{name}: {args.get('message', '')}")
+        return _ok("sent")
+
+    @tool("look", "See through your onboard camera (returns the current image).", {})
+    async def look(args):
+        b64 = cameras.jpeg_b64(i) if cameras is not None else None
+        if b64 is None:
+            return _err(f"{name}: no camera frame yet")
+        return {"content": [{"type": "image", "data": b64, "mimeType": "image/jpeg"}]}
+
+    @tool("scan", "Sense nearby buildings and drones (distance + world-frame bearing).", {})
+    async def scan(args):
+        return _ok(ops.scan())
+
+    server = create_sdk_mcp_server(
+        name=f"d{i}", tools=[take_off, fly, goto, orbit, hover, set_speed, face, land,
+                             say, look, scan])
+    return ClaudeAgentOptions(
+        mcp_servers={f"d{i}": server},
+        allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__goto",
+                       f"mcp__d{i}__orbit", f"mcp__d{i}__hover", f"mcp__d{i}__set_speed",
+                       f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__say",
+                       f"mcp__d{i}__look", f"mcp__d{i}__scan"],
+        setting_sources=[],
+        env=env or {},
+        system_prompt=(
+            f"You are {name}, an autonomous drone in a swarm of {n}. You receive swarm-chat "
+            "messages. When a message is an instruction for YOU (mentions your name) or for "
+            "ALL drones (everyone/all/swarm), carry it out with your tools. If a message is "
+            "not for you, do nothing. Be terse; only say() if you have something useful to add.\n"
+            "MOVE: `goto` (an absolute world point east/north/up OR a named target like 'bldg_7' "
+            "or 'drone_1'); `orbit` (circle a target keeping your camera on it — ONE call, no need "
+            "to compute waypoints); `fly` (relative north/east/up); `face` (turn in place to aim "
+            "your camera); `hover` (hold); `set_speed`; `take_off`; `land`. Prefer `goto`/`orbit` "
+            "with named targets and the world coords from `scan` over hand-computing paths.\n"
+            "SENSE: `scan` lists nearby buildings + drones with distance and bearing RELATIVE to "
+            "where you face — items marked [IN VIEW] are in your camera. `look` returns your live "
+            "camera image. Camera is fixed forward (~69deg): to see something not [IN VIEW], `face` "
+            "or `orbit` it, then `look`. Use `scan` before moving near obstacles."),
+    )

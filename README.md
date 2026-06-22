@@ -33,6 +33,51 @@ talk. Type a command at the bottom and watch the Commander delegate.
 
 ## Architecture
 
+The code is **six small Python packages** with a one-directional dependency graph,
+so each layer reads — and unit-tests — on its own.
+
+### Code modules
+
+```mermaid
+flowchart TD
+    classDef orch fill:#1e3a8a,stroke:#93c5fd,color:#eff6ff;
+    classDef heavy fill:#374151,stroke:#9ca3af,color:#f3f4f6;
+    classDef pure fill:#065f46,stroke:#6ee7b7,color:#ecfdf5;
+
+    SWARM["<b>agents.swarm</b> · run.py + loops.py<br/>Commander + N drone react loops · wiring"]:::orch
+    OBS["<b>agents.observatory</b> · server.py<br/>web UI — camera tiles · map · chat"]:::orch
+    FLIGHT["<b>agents.flight</b> · ops.py + tools.py<br/>FlightOps (take_off·goto·orbit·…) + MCP tool bindings"]:::heavy
+    CORE["<b>agents.core</b> · bus · store · geo · camera<br/>RosBridge · TopicLog · GeoPoint · GzCameras"]:::heavy
+    PERC["<b>agents.perception</b><br/>scan / situation text · bearings — pure trig"]:::pure
+    WORLD["<b>agents.world</b> · World<br/>city_boxes.json · NED→ENU · resolve targets — pure"]:::pure
+
+    SWARM --> FLIGHT
+    SWARM --> CORE
+    SWARM --> PERC
+    SWARM --> WORLD
+    FLIGHT --> CORE
+    FLIGHT --> PERC
+    OBS --> CORE
+    FLIGHT -. operates on .-> WORLD
+    PERC -. operates on .-> WORLD
+```
+
+*Solid arrows = imports; dotted = used at runtime. The **green** packages are pure
+(no sim dependencies) and are covered by host-side unit tests.*
+
+- **`agents.core`** — primitives only: the ROS bridge + QoS (`bus`), thread-safe
+  holders (`store`: `LatestStore`, `TopicLog`), GPS offset math (`geo`), and the one
+  camera reader (`camera`: `GzCameras`).
+- **`agents.world` + `agents.perception`** — ground truth + telemetry → the drone's
+  sense of place (positions, bearings, "what's in view", scan/situation text).
+- **`agents.flight`** — `FlightOps` is the flight logic; `tools.py` binds it to
+  Claude-Agent-SDK `@tool`s. Logic and SDK plumbing are separable.
+- **`agents.swarm`** — wires everything into the Commander + N drone loops (`run.py`
+  bootstraps, `loops.py` is the react loops). **`agents.observatory`** is the web UI
+  and depends only on `core`.
+
+### Runtime & data flow
+
 One container, several cooperating processes. The simulator and flight stack are
 classic PX4/Gazebo; the novel part is the **agent layer** and how it reads/acts on
 the sim.
@@ -44,7 +89,7 @@ flowchart TB
     end
 
     subgraph Container["🐳 swarm-multi container"]
-        subgraph Agents["Agent layer — agents/swarm/run_swarm.py (one asyncio process)"]
+        subgraph Agents["Agent layer — agents/swarm/run.py (one asyncio process)"]
             CMD["🧠 Commander agent<br/>decomposes your intent → per-drone orders"]
             D0["🤖 drone_0 agent"]
             D1["🤖 drone_1 agent"]
@@ -71,7 +116,7 @@ flowchart TB
     PX4 -- "telemetry" --> XRCE
     XRCE -- "/px4_i/fmu/out/* (ROS2)" --> OBS & D0 & D1 & D2
     GZ -- "camera topics (gz-transport)" --> OBS
-    OBS -- "MJPEG /cam/i + /state" --> UI
+    OBS -- "camera tiles (/ws) + /state" --> UI
 ```
 
 ### Data buses
@@ -103,12 +148,14 @@ flowchart TB
 
 ## Agent organization
 
-All agents live in **`agents/swarm/run_swarm.py`** and run in a single asyncio
-process, each backed by a persistent **Claude Agent SDK** client.
+The agents are defined in **`agents/swarm/loops.py`** and bootstrapped by
+**`agents/swarm/run.py`**, all in a single asyncio process, each backed by a
+persistent **Claude Agent SDK** client.
 
 **Commander** (`commander_loop`)
 - Subscribes to `/swarm/user_input` (your commands from the browser).
-- For each command, builds a prompt with live drone positions and asks the model to
+- For each command, builds a prompt with the live **situation map** (positions,
+  facing, nearest buildings — from `agents.perception`) and asks the model to
   **broadcast concrete per-drone instructions**.
 - Tool: `broadcast(message)` → publishes `commander: <message>` to `/swarm/chat`.
 
@@ -116,16 +163,20 @@ process, each backed by a persistent **Claude Agent SDK** client.
 - Subscribe to `/swarm/chat`; a filter (`relevant_to`) keeps only messages that are
   from the Commander, mention `drone_<i>`, or address everyone/all/swarm — and drops
   the drone's own messages.
-- Tools (in-process MCP, MAVSDK underneath):
-  - `take_off` — arm, set 10 m takeoff altitude, take off
-  - `fly(north, east, up)` — relative move via GPS offset → `goto_location`
-  - `land`
-  - `say(message)` — post to `/swarm/chat` (how drones report back)
+- Tools = `agents.flight.FlightOps` bound as in-process MCP tools (`tools.py`),
+  MAVSDK underneath:
+  - **move** — `take_off`, `goto` (absolute world point or a named target like
+    `bldg_7`/`drone_1`), `orbit` (circle a target, camera on it), `fly` (relative),
+    `face`, `hover`, `set_speed`, `land`
+  - **sense** — `scan` (nearby buildings + drones with bearing, `agents.perception`),
+    `look` (live camera frame via `agents.core.GzCameras`)
+  - **talk** — `say(message)` → `/swarm/chat`
 - System prompt: act only on messages meant for you; be terse.
 
 **Observatory** (`agents/observatory/server.py`, Starlette + uvicorn)
 - Pure consumer of the sim plus the one thing it publishes: your commands.
-- Routes: `/` (UI), `/state` (JSON: positions + chat), `/cam/{i}` (MJPEG),
+- Routes: `/` (UI), `/state` (JSON: positions + chat), `/ws` (one WebSocket of all
+  camera tiles), `/cam/{i}` + `/frame/{i}` (MJPEG / single JPEG),
   `POST /command` (→ `/swarm/user_input`, and echoes `you: …` into the chat view).
 
 ---
@@ -208,12 +259,15 @@ docker rm -f swarm-multi                          # stop everything
 ## Project layout
 
 ```
-agents/
-  swarm/run_swarm.py        # Commander + N drone agents (the swarm brain)
-  observatory/server.py     # web UI backend: state, cameras (MJPEG), command intake
+agents/                     # one package per responsibility; deps flow downward
+  core/                     # RosBridge + QoS, GPS offset math, GzCameras (the one camera reader)
+  world/                    # World: loads city_boxes.json, maps PX4 NED -> world ENU, resolves targets
+  perception/               # pure trig/text: scan + situation readouts over a World
+  flight/                   # FlightOps (take_off/goto/orbit/...) + their MCP tool bindings
+  swarm/run.py              # Commander + N drone agents on one event loop (the swarm brain)
+  swarm/loops.py            # commander/drone react loops + the Commander agent
+  observatory/server.py     # web UI backend: state, cameras (MJPEG/WS), command intake
   observatory/static/       # the Observatory single-page UI
-  common/bus.py             # RosBridge + ROS2 QoS profiles (PX4_QOS, CHAT_QOS)
-  common/geo.py             # GPS offset math for relative moves
 sim/
   launch/swarm_sim.sh       # in-container launch: gz + N×PX4 + uXRCE + N×mavsdk
   worlds/make_city_world.py # generate the 'city' world (buildings) from default.sdf
@@ -223,8 +277,8 @@ docker/Dockerfile.swarm     # Ubuntu 24.04 + Gazebo Harmonic + ROS2 Jazzy + PX4 
 docs/superpowers/           # design specs + plans
 ```
 
-> An earlier **single-drone cockpit** (`src/dronebot/`, with a non-bypassable
-> `SafetyGuard`) is the v1 of this project and is independent of the swarm above.
+> Dependencies form a clean DAG: `core <- world <- perception <- flight <- swarm`,
+> and `observatory -> core`. Each package is importable and testable on its own.
 
 ---
 

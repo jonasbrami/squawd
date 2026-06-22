@@ -1,17 +1,15 @@
 """Swarm Observatory — web UI. Scales to N drones (SWARM_N).
 
-- Per-drone camera tiles: read Gazebo camera topics directly via gz-transport
-  (system gz, no ros_gz), JPEG-encode (Pillow), serve as MJPEG streams.
+- Per-drone camera tiles: read Gazebo camera topics via core.GzCameras, served
+  as MJPEG / single frames / one WebSocket of JPEGs.
 - Map + status: drone positions from ROS2 /px4_<i>/fmu (RosBridge).
-- Swarm chat feed: /swarm/chat (ROS2).
+- Swarm chat feed: /swarm/chat via a TopicLog.
 - Commander input: POST /command -> publishes /swarm/user_input for the
   Commander agent to act on.
 Pure consumer of the sim; the only thing it publishes is your typed commands.
 """
 import asyncio
-import io
 import os
-import threading
 
 import uvicorn
 from starlette.applications import Starlette
@@ -21,57 +19,23 @@ from starlette.staticfiles import StaticFiles
 
 from std_msgs.msg import String
 from px4_msgs.msg import VehicleLocalPosition
-from gz.transport13 import Node as GzNode
-from gz.msgs10.image_pb2 import Image as GzImage
-from PIL import Image as PILImage
 
-from agents.common.bus import RosBridge, CHAT_QOS
+from agents.core.bus import RosBridge, CHAT_QOS
+from agents.core.store import TopicLog
+from agents.core.camera import GzCameras
 
 N = int(os.environ.get("SWARM_N", "3"))
 HERE = os.path.dirname(__file__)
-# World name must match the generated world (make_city_world.py names it 'city',
-# and PX4 runs with PX4_GZ_WORLD=city). Override with GZ_WORLD if you change it.
-GZ_WORLD = os.environ.get("GZ_WORLD", "city")
-CAM_TOPIC = ("/world/" + GZ_WORLD + "/model/x500_depth_{i}/link/OakD-Lite/base_link"
-             "/sensor/IMX214/image")
 
-_chat_lock = threading.Lock()
-_chat: list[str] = []
-_frame_lock = threading.Lock()
-_frames: dict[int, bytes] = {}
-
-
-def _on_chat(m) -> None:
-    with _chat_lock:
-        _chat.append(m.data)
-
-
-# --- ROS2 side: chat + positions ---
+# ROS2 side: chat + positions.
 bridge = RosBridge(node_name="observatory")
-bridge.subscribe("/swarm/chat", String, CHAT_QOS, _on_chat)
+chat = TopicLog(bridge, "/swarm/chat", String, CHAT_QOS)
 for _i in range(N):
     bridge.subscribe(f"/px4_{_i}/fmu/out/vehicle_local_position", VehicleLocalPosition)
 bridge.start()
 
-# --- gz side: per-drone cameras (read system gz directly) ---
-_gz = GzNode()
-
-
-def _make_cam_cb(i: int):
-    def cb(msg) -> None:
-        try:
-            img = PILImage.frombytes("RGB", (msg.width, msg.height), bytes(msg.data))
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=55)
-            with _frame_lock:
-                _frames[i] = buf.getvalue()
-        except Exception:
-            pass
-    return cb
-
-
-for _i in range(N):
-    _gz.subscribe(GzImage, CAM_TOPIC.format(i=_i), _make_cam_cb(_i))
+# gz side: per-drone cameras (system gz, read directly).
+cameras = GzCameras(N)
 
 
 async def index(request):
@@ -82,18 +46,14 @@ async def state(request):
     drones = []
     for i in range(N):
         p = bridge.latest(f"/px4_{i}/fmu/out/vehicle_local_position")
-        with _frame_lock:
-            has_cam = i in _frames
         drones.append({
             "id": i,
             "north": round(p.x, 1) if p else None,
             "east": round(p.y, 1) if p else None,
             "alt": round(-p.z, 1) if p else None,
-            "cam": has_cam,
+            "cam": cameras.has(i),
         })
-    with _chat_lock:
-        chat = list(_chat)
-    return JSONResponse({"n": N, "drones": drones, "chat": chat})
+    return JSONResponse({"n": N, "drones": drones, "chat": chat.all()})
 
 
 async def cam(request):
@@ -101,8 +61,7 @@ async def cam(request):
 
     async def gen():
         while True:
-            with _frame_lock:
-                f = _frames.get(i)
+            f = cameras.jpeg(i)
             if f:
                 yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + f + b"\r\n"
             await asyncio.sleep(0.1)
@@ -112,33 +71,30 @@ async def cam(request):
 
 async def frame(request):
     """One latest JPEG (short-lived request). The frontend polls this per tile so we
-    don't hold N forever-open MJPEG streams — browsers cap ~6 connections per host,
-    which would leave tiles 7..N permanently black. Polling cycles through that budget."""
+    don't hold N forever-open MJPEG streams — browsers cap ~6 connections per host."""
     i = int(request.path_params["id"])
-    with _frame_lock:
-        f = _frames.get(i)
+    f = cameras.jpeg(i)
     if not f:
         return Response(status_code=204)
-    return Response(f, media_type="image/jpeg",
-                    headers={"Cache-Control": "no-store"})
+    return Response(f, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 async def ws_cams(websocket):
     """Push every drone's latest camera frame over ONE WebSocket. Each message is
     binary: byte 0 = drone id, rest = JPEG. One connection for all N tiles, so the
-    browser's ~6-per-host cap is irrelevant. We send a drone's frame only when a NEW
-    one has arrived (identity check: the gz callback stores a fresh bytes object per
-    frame), so a hovering/idle drone costs nothing."""
+    browser's ~6-per-host cap is irrelevant. We encode+send a drone's frame only
+    when a NEW one has arrived (seq changed), so a hovering/idle drone costs nothing."""
     await websocket.accept()
-    last: dict[int, bytes] = {}
+    last: dict[int, int] = {}
     try:
         while True:
             for i in range(N):
-                with _frame_lock:
-                    f = _frames.get(i)
-                if f is not None and last.get(i) is not f:
-                    last[i] = f
-                    await websocket.send_bytes(bytes([i]) + f)
+                seq = cameras.seq(i)
+                if seq and last.get(i) != seq:
+                    f = cameras.jpeg(i)
+                    if f is not None:
+                        last[i] = seq
+                        await websocket.send_bytes(bytes([i]) + f)
             await asyncio.sleep(0.08)
     except Exception:
         pass  # client disconnected
@@ -152,8 +108,7 @@ async def command(request):
         # Echo into the local chat view only (NOT onto /swarm/chat, which the drones
         # listen to) so the UI confirms the message landed without bypassing the
         # commander.
-        with _chat_lock:
-            _chat.append(f"you: {text}")
+        chat.append(f"you: {text}")
         m = String()
         m.data = text
         bridge.publish("/swarm/user_input", String, m, CHAT_QOS)

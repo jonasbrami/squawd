@@ -50,7 +50,7 @@ done
 
 echo "Starting observatory + agents…"
 docker exec -d swarm-multi bash -lc "cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH SWARM_N=$N uv run --no-project python agents/observatory/server.py > /tmp/obs.log 2>&1"
-docker exec -d swarm-multi bash -lc "cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH SWARM_N=$N PYTHONUNBUFFERED=1 uv run --no-project python agents/swarm/run_swarm.py > /tmp/swarm.log 2>&1"
+docker exec -d swarm-multi bash -lc "cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH SWARM_N=$N PYTHONUNBUFFERED=1 uv run --no-project python agents/swarm/run.py > /tmp/swarm.log 2>&1"
 
 echo
 echo "  ✈  Swarm up.  Open  http://localhost:8000  and command the swarm."
