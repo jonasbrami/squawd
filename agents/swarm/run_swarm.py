@@ -23,6 +23,7 @@ from claude_agent_sdk import (
 
 from agents.common.bus import RosBridge, CHAT_QOS
 from agents.common.geo import GeoPoint, offset_point
+from agents.swarm import perception
 
 N = int(os.environ.get("SWARM_N", "3"))
 
@@ -31,6 +32,7 @@ _chat: list[str] = []
 _user: list[str] = []
 
 bridge = RosBridge(node_name="swarm_agents")
+look = None  # perception.GzLook, created in main() once N cameras exist
 
 
 def _on_chat(m):
@@ -127,17 +129,34 @@ def make_drone_options(i: int, drone: System):
         publish_chat(f"{name}: {args.get('message', '')}")
         return {"content": [{"type": "text", "text": "sent"}]}
 
-    server = create_sdk_mcp_server(name=f"d{i}", tools=[take_off, fly, land, say])
+    @tool("look", "See through your onboard camera (returns the current image).", {})
+    async def look_tool(args):
+        b64 = look.latest_jpeg(i) if look is not None else None
+        if b64 is None:
+            return {"content": [{"type": "text", "text": f"{name}: no camera frame yet"}],
+                    "is_error": True}
+        return {"content": [{"type": "image", "data": b64, "mimeType": "image/jpeg"}]}
+
+    @tool("scan", "Sense nearby buildings and drones (distance + world-frame bearing).", {})
+    async def scan_tool(args):
+        return {"content": [{"type": "text", "text": perception.scan_text(bridge, i, N)}]}
+
+    server = create_sdk_mcp_server(name=f"d{i}", tools=[take_off, fly, land, say, look_tool, scan_tool])
     options = ClaudeAgentOptions(
         mcp_servers={f"d{i}": server},
         allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly",
-                       f"mcp__d{i}__land", f"mcp__d{i}__say"],
+                       f"mcp__d{i}__land", f"mcp__d{i}__say",
+                       f"mcp__d{i}__look", f"mcp__d{i}__scan"],
         setting_sources=[],
         system_prompt=(
             f"You are {name}, an autonomous drone in a swarm of {N}. You receive swarm-chat "
             "messages. When a message is an instruction for YOU (mentions your name) or for "
             "ALL drones (everyone/all/swarm), carry it out with your tools. If a message is "
-            "not for you, do nothing. Be terse; only say() if you have something useful to add."),
+            "not for you, do nothing. Be terse; only say() if you have something useful to add.\n"
+            "You can sense your environment: `scan` lists nearby buildings and drones with "
+            "distance and compass bearing (N/E/S/W) in the world frame; `look` returns your live "
+            "camera image. Use `scan` before moving near obstacles or when asked what's around, "
+            "and `look` when asked what you see or to confirm a target visually."),
     )
     return options
 
@@ -177,8 +196,10 @@ async def commander_loop(client: ClaudeSDKClient, drones):
                 seen = len(_user)
             for cmd in new:
                 await client.query(
-                    f"User command: {cmd}\n\nDrone positions:\n{positions_text(drones)}\n\n"
-                    "Broadcast concrete per-drone instructions now.")
+                    f"User command: {cmd}\n\nSwarm situation (positions + nearest buildings, "
+                    f"world frame ENU):\n{perception.situation_text(bridge, N)}\n\n"
+                    "Broadcast concrete per-drone instructions now. Route drones around "
+                    "buildings when relevant.")
                 async for _ in client.receive_response():
                     pass
 
@@ -199,6 +220,11 @@ async def main():
                 break
         drones.append(d)
         print(f"drone_{i} connected", flush=True)
+
+    global look
+    look = perception.GzLook(N)            # start reading each drone's camera off gz
+    print(f"perception: {len(perception.load_boxes().get('buildings', []))} buildings loaded; "
+          f"cameras subscribed for {N} drones.", flush=True)
 
     commander = make_commander()
     drone_clients = [ClaudeSDKClient(options=make_drone_options(i, drones[i])) for i in range(N)]

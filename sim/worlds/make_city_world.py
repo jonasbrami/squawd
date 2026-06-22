@@ -4,16 +4,32 @@ Keeps default.sdf's required plugins/scene/sun/ground (so PX4 + sensors work) an
 adds a deterministic scatter of box "buildings" so the drones + their cameras have
 something to see. Buildings avoid the spawn corridor near the origin.
 
+Also writes a sidecar `city_boxes.json` next to the world: the exact building
+boxes + the drones' spawn layout, so the agents can compute obstacle/proximity
+awareness in pure Python (no extra Gazebo subscriptions) from the same ground
+truth that built the world. See agents/swarm/perception.py.
+
 Usage: python make_city_world.py <px4_default.sdf> <out_city.sdf>
+       -> writes <out_city.sdf> and <out_dir>/city_boxes.json
 """
+import json
+import os
 import random
 import re
 import sys
 
+# Drones spawn at world (x=0, y=i*SPAWN_SPACING, z=SPAWN_Z), yaw=0 — must match
+# swarm_sim.sh (PX4_GZ_MODEL_POSE="0,${y},0.5"). The agents read these to map a
+# drone's local NED telemetry into this world frame.
+SPAWN_X = 0.0
+SPAWN_SPACING = 3.0
+SPAWN_Z = 0.5
 
-def buildings(seed: int = 7) -> str:
+
+def building_boxes(seed: int = 7) -> list[dict]:
+    """Deterministic list of building boxes in the gz world (ENU: +x East, +y North)."""
     rng = random.Random(seed)
-    out = []
+    boxes = []
     n = 0
     # sparse grid of plots with jitter; skip the spawn/flight corridor near origin.
     # Kept light (~15 buildings) so 3 camera renders + flight stay real-time.
@@ -30,8 +46,20 @@ def buildings(seed: int = 7) -> str:
             h = rng.uniform(6, 30)
             g = rng.uniform(0.35, 0.7)            # greyscale, slight tint
             r, gg, b = g, g * rng.uniform(0.9, 1.0), g * rng.uniform(0.9, 1.05)
-            out.append(f"""
-    <model name="bldg_{n}">
+            boxes.append({"name": f"bldg_{n}", "x": round(x, 2), "y": round(y, 2),
+                          "w": round(w, 2), "d": round(d, 2), "h": round(h, 2),
+                          "color": [round(r, 2), round(gg, 2), round(b, 2)]})
+            n += 1
+    return boxes
+
+
+def boxes_to_sdf(boxes: list[dict]) -> str:
+    out = []
+    for box in boxes:
+        x, y, w, d, h = box["x"], box["y"], box["w"], box["d"], box["h"]
+        r, gg, b = box["color"]
+        out.append(f"""
+    <model name="{box['name']}">
       <static>true</static>
       <pose>{x:.2f} {y:.2f} {h/2:.2f} 0 0 0</pose>
       <link name="link">
@@ -46,7 +74,6 @@ def buildings(seed: int = 7) -> str:
         </visual>
       </link>
     </model>""")
-            n += 1
     return "".join(out)
 
 
@@ -63,11 +90,18 @@ def main() -> None:
     idx = sdf.rfind("</world>")
     if idx == -1:
         raise SystemExit("no </world> in source SDF")
-    city = sdf[:idx] + buildings() + "\n" + sdf[idx:]
+
+    boxes = building_boxes()
+    city = sdf[:idx] + boxes_to_sdf(boxes) + "\n" + sdf[idx:]
     with open(dst, "w") as f:
         f.write(city)
-    marker = '<model name="bldg_'
-    print(f"wrote {dst} (+{city.count(marker)} buildings)")
+
+    # Sidecar ground truth for the agents (same source as the world geometry).
+    sidecar = os.path.join(os.path.dirname(dst), "city_boxes.json")
+    with open(sidecar, "w") as f:
+        json.dump({"spawn_x": SPAWN_X, "spawn_spacing": SPAWN_SPACING,
+                   "spawn_z": SPAWN_Z, "buildings": boxes}, f)
+    print(f"wrote {dst} (+{len(boxes)} buildings) and {sidecar}")
 
 
 if __name__ == "__main__":
