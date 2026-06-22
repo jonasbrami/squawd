@@ -13,7 +13,7 @@ from claude_agent_sdk import (
     tool, create_sdk_mcp_server, ClaudeAgentOptions, ClaudeSDKClient,
 )
 
-from agents.common.bus import RosBridge
+from agents.core.bus import RosBridge
 
 TOPIC = "/fmu/out/vehicle_local_position"
 

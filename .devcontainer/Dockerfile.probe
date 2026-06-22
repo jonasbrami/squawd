@@ -1,8 +1,0 @@
-# Minimal image to validate the in-container Gazebo rendering path (EGL).
-FROM ubuntu:24.04
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        mesa-utils mesa-utils-bin libgl1-mesa-dri libglx-mesa0 \
-    && rm -rf /var/lib/apt/lists/*
-COPY scripts/gl_probe.sh /gl_probe.sh
-ENTRYPOINT ["/gl_probe.sh"]

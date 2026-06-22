@@ -8,7 +8,7 @@ import asyncio
 from mavsdk import System
 from px4_msgs.msg import VehicleLocalPosition
 
-from agents.common.bus import RosBridge
+from agents.core.bus import RosBridge
 
 TOPIC = "/fmu/out/vehicle_local_position"
 

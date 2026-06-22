@@ -1,6 +1,6 @@
 # spikes/mavsdk_check.py
 """Cheap check: connect to PX4 SITL and read one telemetry value.
-Requires the sim running (scripts/run_sim.sh). No API key needed.
+Requires the sim running (sim/launch/one_drone.sh). No API key needed.
 """
 import asyncio
 from mavsdk import System

@@ -1,5 +1,5 @@
 import math
-from dronebot.control.geo import GeoPoint, offset_point, horizontal_distance_m
+from agents.core.geo import GeoPoint, offset_point, horizontal_distance_m
 
 # Zurich-ish reference; values are convention checks, not site-specific.
 ORIGIN = GeoPoint(latitude_deg=47.3977, longitude_deg=8.5456, absolute_altitude_m=500.0)

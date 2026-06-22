@@ -1,5 +1,5 @@
 import threading
-from agents.common.latest_store import LatestStore
+from agents.core.store import LatestStore
 
 
 def test_get_returns_none_before_any_set():
