@@ -37,7 +37,7 @@ def building_boxes(seed: int = 7) -> list[dict]:
         for gy in range(-30, 91, 40):
             x = gx + rng.uniform(-6, 6)
             y = gy + rng.uniform(-6, 6)
-            if abs(x) < 14 and -6 < y < 14:      # keep spawn area clear
+            if abs(x) < 14 and -6 < y < 40:      # keep spawn corridor clear: drones spawn at y=i*3 (up to ~12)
                 continue
             if rng.random() < 0.15:               # some empty lots
                 continue

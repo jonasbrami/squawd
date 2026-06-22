@@ -13,6 +13,7 @@ spend tokens when a relevant message arrives.
 import asyncio
 import math
 import os
+import shutil
 import threading
 
 from std_msgs.msg import String
@@ -28,6 +29,24 @@ from agents.common.geo import GeoPoint, offset_point
 from agents.swarm import perception
 
 N = int(os.environ.get("SWARM_N", "3"))
+
+
+def agent_env(tag: str) -> dict:
+    """Isolate each Claude CLI's config so N+1 concurrent clients don't race on one
+    file. The `claude` CLI does a non-atomic read-modify-write of $CLAUDE_CONFIG_DIR/
+    .claude.json on startup; with ~11 clients booting at once the shared
+    /root/.claude.json gets truncated mid-write (JSON EOF) and the whole swarm dies.
+    Point each agent at its own dir (verified: the CLI writes .claude.json there and
+    reads creds from $CLAUDE_CONFIG_DIR/.credentials.json) seeded with a copy of the
+    real credentials. Returns the env dict for ClaudeAgentOptions (merged over os.environ)."""
+    base = os.environ.get("CLAUDE_CONFIG_DIR", "/root/.claude")
+    d = f"/root/.claude-{tag}"
+    os.makedirs(d, exist_ok=True)
+    try:
+        shutil.copy(os.path.join(base, ".credentials.json"), os.path.join(d, ".credentials.json"))
+    except Exception:
+        pass
+    return {"CLAUDE_CONFIG_DIR": d}
 
 COMPASS = {"north": 0.0, "n": 0.0, "northeast": 45.0, "ne": 45.0, "east": 90.0, "e": 90.0,
            "southeast": 135.0, "se": 135.0, "south": 180.0, "s": 180.0, "southwest": 225.0,
@@ -82,6 +101,7 @@ def make_commander():
         mcp_servers={"cmd": server},
         allowed_tools=["mcp__cmd__broadcast"],
         setting_sources=[],
+        env=agent_env("commander"),
         system_prompt=(
             f"You are the COMMANDER of a swarm of {N} drones (drone_0..drone_{N-1}). "
             "The user gives you high-level commands. Translate each into concrete per-drone "
@@ -302,6 +322,7 @@ def make_drone_options(i: int, drone: System):
                        f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__say",
                        f"mcp__d{i}__look", f"mcp__d{i}__scan"],
         setting_sources=[],
+        env=agent_env(f"drone{i}"),
         system_prompt=(
             f"You are {name}, an autonomous drone in a swarm of {N}. You receive swarm-chat "
             "messages. When a message is an instruction for YOU (mentions your name) or for "
