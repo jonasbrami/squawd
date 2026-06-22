@@ -11,6 +11,7 @@ Scales to N drones (SWARM_N): one persistent Claude client per agent; drones onl
 spend tokens when a relevant message arrives.
 """
 import asyncio
+import math
 import os
 import threading
 
@@ -80,9 +81,12 @@ def make_commander():
             f"You are the COMMANDER of a swarm of {N} drones (drone_0..drone_{N-1}). "
             "The user gives you high-level commands. Translate each into concrete per-drone "
             "instructions and send them with the broadcast tool, addressing drones by name. "
-            "Drones can: take off, fly a relative offset (north/east/up metres), hold, land. "
-            "Keep instructions short and unambiguous. Use the drones' reported positions to "
-            "decide. One broadcast per user command is usually enough."),
+            "Drones can: take off; fly a relative offset (north/east/up m); fly_to an absolute "
+            "world point (east/north/up m — use the coords in the situation map); face/turn to "
+            "aim their camera at a drone, a building (bldg_N), or a compass direction; look "
+            "(camera) and scan (nearby obstacles); hold; land. To make two drones see each "
+            "other, tell each to face the other then look. Keep instructions short and "
+            "unambiguous; use the situation map (positions, facing, obstacles)."),
     )
     return ClaudeSDKClient(options=options)
 
@@ -102,19 +106,72 @@ def make_drone_options(i: int, drone: System):
         except Exception as e:
             return {"content": [{"type": "text", "text": f"{name} takeoff failed: {e}"}], "is_error": True}
 
-    @tool("fly", "Fly a relative offset from the current position (metres).",
+    def _keep_yaw():
+        st = perception.drone_state(bridge, i)
+        return math.degrees(st[3]) if st else 0.0
+
+    @tool("fly", "Fly a relative offset from the current position (metres). Turns to "
+          "face the travel direction so your camera looks where you're going.",
           {"north": {"type": "number"}, "east": {"type": "number"}, "up": {"type": "number"}})
     async def fly(args):
         try:
+            north, east, up = (float(args.get("north", 0)), float(args.get("east", 0)),
+                               float(args.get("up", 0)))
             pos = await anext(drone.telemetry.position())
             origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
-            tgt = offset_point(origin, float(args.get("north", 0)), float(args.get("east", 0)),
-                               float(args.get("up", 0)))
+            tgt = offset_point(origin, north, east, up)
+            yaw = math.degrees(math.atan2(east, north)) if (north or east) else _keep_yaw()
             await drone.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
-                                             tgt.absolute_altitude_m, 0.0)
-            return {"content": [{"type": "text", "text": f"{name} moving"}]}
+                                             tgt.absolute_altitude_m, yaw)
+            return {"content": [{"type": "text", "text": f"{name} moving N{north:+.0f} E{east:+.0f} U{up:+.0f}"}]}
         except Exception as e:
             return {"content": [{"type": "text", "text": f"{name} fly failed: {e}"}], "is_error": True}
+
+    @tool("fly_to", "Fly to an ABSOLUTE world position (metres, world frame: east, north, "
+          "up=altitude). Use the coordinates from scan/the situation map.",
+          {"east": {"type": "number"}, "north": {"type": "number"}, "up": {"type": "number"}})
+    async def fly_to(args):
+        try:
+            t_e, t_n, t_u = (float(args.get("east", 0)), float(args.get("north", 0)),
+                             float(args.get("up", 0)))
+            me = perception.drone_world_xy(bridge, i)
+            if me is None:
+                return {"content": [{"type": "text", "text": f"{name}: position not available"}], "is_error": True}
+            d_e, d_n, d_u = t_e - me[0], t_n - me[1], t_u - me[2]
+            pos = await anext(drone.telemetry.position())
+            origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
+            tgt = offset_point(origin, d_n, d_e, d_u)
+            yaw = math.degrees(math.atan2(d_e, d_n)) if (abs(d_n) > 0.5 or abs(d_e) > 0.5) else _keep_yaw()
+            await drone.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
+                                             tgt.absolute_altitude_m, yaw)
+            return {"content": [{"type": "text", "text": f"{name} -> world E{t_e:.0f} N{t_n:.0f} alt {t_u:.0f}"}]}
+        except Exception as e:
+            return {"content": [{"type": "text", "text": f"{name} fly_to failed: {e}"}], "is_error": True}
+
+    @tool("face", "Turn in place to aim your camera at a target: a drone ('drone_1'), a "
+          "building ('bldg_7'), or a compass direction ('north'/'east'/'south'/'west').",
+          {"target": {"type": "string"}})
+    async def face(args):
+        try:
+            tgt = str(args.get("target", "")).strip().lower()
+            compass = {"north": 0.0, "n": 0.0, "northeast": 45.0, "ne": 45.0, "east": 90.0,
+                       "e": 90.0, "southeast": 135.0, "se": 135.0, "south": 180.0, "s": 180.0,
+                       "southwest": 225.0, "sw": 225.0, "west": 270.0, "w": 270.0,
+                       "northwest": 315.0, "nw": 315.0}
+            if tgt in compass:
+                yaw = compass[tgt]
+            else:
+                me = perception.drone_world_xy(bridge, i)
+                txy = perception.resolve_xy(tgt, bridge, N)
+                if me is None or txy is None:
+                    return {"content": [{"type": "text", "text": f"{name}: can't resolve target '{tgt}'"}], "is_error": True}
+                yaw = perception.yaw_deg_to(me[0], me[1], txy[0], txy[1])
+            pos = await anext(drone.telemetry.position())
+            await drone.action.goto_location(pos.latitude_deg, pos.longitude_deg,
+                                             pos.absolute_altitude_m, yaw)
+            return {"content": [{"type": "text", "text": f"{name} turning to face {tgt} (heading {yaw:.0f}deg)"}]}
+        except Exception as e:
+            return {"content": [{"type": "text", "text": f"{name} face failed: {e}"}], "is_error": True}
 
     @tool("land", "Land in place.", {})
     async def land(args):
@@ -141,11 +198,12 @@ def make_drone_options(i: int, drone: System):
     async def scan_tool(args):
         return {"content": [{"type": "text", "text": perception.scan_text(bridge, i, N)}]}
 
-    server = create_sdk_mcp_server(name=f"d{i}", tools=[take_off, fly, land, say, look_tool, scan_tool])
+    server = create_sdk_mcp_server(
+        name=f"d{i}", tools=[take_off, fly, fly_to, face, land, say, look_tool, scan_tool])
     options = ClaudeAgentOptions(
         mcp_servers={f"d{i}": server},
-        allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly",
-                       f"mcp__d{i}__land", f"mcp__d{i}__say",
+        allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__fly_to",
+                       f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__say",
                        f"mcp__d{i}__look", f"mcp__d{i}__scan"],
         setting_sources=[],
         system_prompt=(
@@ -153,10 +211,13 @@ def make_drone_options(i: int, drone: System):
             "messages. When a message is an instruction for YOU (mentions your name) or for "
             "ALL drones (everyone/all/swarm), carry it out with your tools. If a message is "
             "not for you, do nothing. Be terse; only say() if you have something useful to add.\n"
-            "You can sense your environment: `scan` lists nearby buildings and drones with "
-            "distance and compass bearing (N/E/S/W) in the world frame; `look` returns your live "
-            "camera image. Use `scan` before moving near obstacles or when asked what's around, "
-            "and `look` when asked what you see or to confirm a target visually."),
+            "MOVE: `fly` (relative north/east/up metres, turns toward travel), `fly_to` "
+            "(absolute world east/north/up from scan), `face` (turn in place to aim your camera "
+            "at a drone/building/compass direction), `take_off`, `land`.\n"
+            "SENSE: `scan` lists nearby buildings + drones with distance and bearing RELATIVE to "
+            "where you face — items marked [IN VIEW] are in your camera. `look` returns your live "
+            "camera image. Your camera is fixed forward (~69deg), so to see something that's not "
+            "[IN VIEW], `face` it first, then `look`. Use `scan` before moving near obstacles."),
     )
     return options
 

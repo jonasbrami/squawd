@@ -50,15 +50,27 @@ def load_boxes(path: str | None = None) -> dict:
     return _boxes_cache
 
 
-def drone_world_xy(bridge, i: int):
-    """(east, north, alt) of drone i in the gz world frame, or None if no valid fix."""
+# Camera is body-fixed, pointing forward (along heading) with ~69deg horizontal
+# FOV (hfov 1.204 rad). Something is "in view" if its bearing relative to the
+# drone's heading is within ~half the FOV.
+FOV_HALF_DEG = 35.0
+
+
+def drone_state(bridge, i: int):
+    """(east, north, alt, heading_rad) of drone i in the gz world, or None."""
     cfg = load_boxes()
     p = bridge.latest(f"/px4_{i}/fmu/out/vehicle_local_position")
     if p is None or not getattr(p, "xy_valid", True):
         return None
     east = cfg.get("spawn_x", 0.0) + p.y
     north = cfg.get("spawn_spacing", 3.0) * i + p.x
-    return (east, north, -p.z)
+    return (east, north, -p.z, float(getattr(p, "heading", 0.0)))
+
+
+def drone_world_xy(bridge, i: int):
+    """(east, north, alt) of drone i, or None if no valid fix."""
+    st = drone_state(bridge, i)
+    return None if st is None else (st[0], st[1], st[2])
 
 
 def bearing_word(d_east: float, d_north: float) -> str:
@@ -67,13 +79,38 @@ def bearing_word(d_east: float, d_north: float) -> str:
     return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][int((ang + 22.5) // 45) % 8]
 
 
+def heading_word(heading_rad: float) -> str:
+    """Compass direction the drone (and its camera) faces."""
+    return bearing_word(math.sin(heading_rad), math.cos(heading_rad))
+
+
+def rel_bearing(d_east: float, d_north: float, heading_rad: float):
+    """Bearing of a target relative to where the drone faces.
+    Returns (label, in_view, rel_deg). rel_deg: 0=straight ahead, +=right, -=left."""
+    world = math.degrees(math.atan2(d_east, d_north))       # 0=N, 90=E
+    rel = ((world - math.degrees(heading_rad)) + 180) % 360 - 180
+    a = abs(rel)
+    if a <= 22.5:
+        word = "ahead"
+    elif a <= 67.5:
+        word = "ahead-right" if rel > 0 else "ahead-left"
+    elif a <= 112.5:
+        word = "right" if rel > 0 else "left"
+    elif a <= 157.5:
+        word = "behind-right" if rel > 0 else "behind-left"
+    else:
+        word = "behind"
+    return word, a <= FOV_HALF_DEG, rel
+
+
 def scan_text(bridge, i: int, n_drones: int, k: int = 4) -> str:
-    """Nearest k buildings + other drones, with distance and world-frame bearing."""
+    """Nearest k buildings + other drones, with distance and bearing RELATIVE to
+    where the drone faces, flagging what's in the camera's view."""
     cfg = load_boxes()
-    me = drone_world_xy(bridge, i)
-    if me is None:
+    st = drone_state(bridge, i)
+    if st is None:
         return f"drone_{i}: position not yet available"
-    mx, my, alt = me
+    mx, my, alt, hd = st
     parts = []
     ranked = []
     for b in cfg.get("buildings", []):
@@ -83,7 +120,9 @@ def scan_text(bridge, i: int, n_drones: int, k: int = 4) -> str:
         ranked.append((edge, b, dx, dy))
     ranked.sort(key=lambda t: t[0])
     for edge, b, dx, dy in ranked[:k]:
-        parts.append(f"{b['name']} {edge:.0f}m {bearing_word(dx, dy)} (h={b['h']:.0f}m)")
+        word, inview, _ = rel_bearing(dx, dy, hd)
+        tag = " [IN VIEW]" if inview else ""
+        parts.append(f"{b['name']} {edge:.0f}m {word}{tag} (h={b['h']:.0f}m)")
     for j in range(n_drones):
         if j == i:
             continue
@@ -91,9 +130,36 @@ def scan_text(bridge, i: int, n_drones: int, k: int = 4) -> str:
         if oj is None:
             continue
         dx, dy = oj[0] - mx, oj[1] - my
-        parts.append(f"drone_{j} {math.hypot(dx, dy):.0f}m {bearing_word(dx, dy)}")
-    head = f"drone_{i} at world (E{mx:.0f}, N{my:.0f}), alt {alt:.0f}m. Nearby:"
+        word, inview, _ = rel_bearing(dx, dy, hd)
+        tag = " [IN VIEW]" if inview else ""
+        parts.append(f"drone_{j} {math.hypot(dx, dy):.0f}m {word}{tag}")
+    head = (f"drone_{i} at world (E{mx:.0f}, N{my:.0f}), alt {alt:.0f}m, facing "
+            f"{heading_word(hd)}. Your camera shows what's 'ahead' / [IN VIEW]; "
+            f"turn (face) to bring other things into view. Nearby:")
     return head + (" " + " | ".join(parts) if parts else " nothing close")
+
+
+def resolve_xy(name: str, bridge, n_drones: int):
+    """World (east, north) of a named target: 'drone_<j>' or a building name. None if unknown."""
+    name = name.strip().lower()
+    if name.startswith("drone_"):
+        try:
+            j = int(name.split("_", 1)[1])
+        except ValueError:
+            return None
+        if 0 <= j < n_drones:
+            xy = drone_world_xy(bridge, j)
+            return None if xy is None else (xy[0], xy[1])
+        return None
+    for b in load_boxes().get("buildings", []):
+        if b["name"].lower() == name:
+            return (b["x"], b["y"])
+    return None
+
+
+def yaw_deg_to(east_from: float, north_from: float, east_to: float, north_to: float) -> float:
+    """Heading (deg, NED: 0=N, +clockwise toward E) to face a world point."""
+    return math.degrees(math.atan2(east_to - east_from, north_to - north_from))
 
 
 def situation_text(bridge, n_drones: int) -> str:
@@ -101,17 +167,18 @@ def situation_text(bridge, n_drones: int) -> str:
     cfg = load_boxes()
     lines = []
     for i in range(n_drones):
-        me = drone_world_xy(bridge, i)
-        if me is None:
+        st = drone_state(bridge, i)
+        if st is None:
             lines.append(f"drone_{i}: (no telemetry)")
             continue
-        mx, my, alt = me
+        mx, my, alt, hd = st
+        facing = heading_word(hd)
         nearest = ""
         if cfg.get("buildings"):
             b = min(cfg["buildings"], key=lambda b: math.hypot(b["x"] - mx, b["y"] - my))
             dx, dy = b["x"] - mx, b["y"] - my
             nearest = f"; nearest {b['name']} {math.hypot(dx, dy):.0f}m {bearing_word(dx, dy)} (h={b['h']:.0f}m)"
-        lines.append(f"drone_{i}: world E{mx:.0f} N{my:.0f} alt {alt:.0f}m{nearest}")
+        lines.append(f"drone_{i}: world E{mx:.0f} N{my:.0f} alt {alt:.0f}m facing {facing}{nearest}")
     return "\n".join(lines)
 
 
