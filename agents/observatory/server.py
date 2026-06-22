@@ -15,8 +15,8 @@ import threading
 
 import uvicorn
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, FileResponse, StreamingResponse
-from starlette.routing import Route, Mount
+from starlette.responses import JSONResponse, FileResponse, StreamingResponse, Response
+from starlette.routing import Route, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
 from std_msgs.msg import String
@@ -110,6 +110,40 @@ async def cam(request):
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
+async def frame(request):
+    """One latest JPEG (short-lived request). The frontend polls this per tile so we
+    don't hold N forever-open MJPEG streams — browsers cap ~6 connections per host,
+    which would leave tiles 7..N permanently black. Polling cycles through that budget."""
+    i = int(request.path_params["id"])
+    with _frame_lock:
+        f = _frames.get(i)
+    if not f:
+        return Response(status_code=204)
+    return Response(f, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+async def ws_cams(websocket):
+    """Push every drone's latest camera frame over ONE WebSocket. Each message is
+    binary: byte 0 = drone id, rest = JPEG. One connection for all N tiles, so the
+    browser's ~6-per-host cap is irrelevant. We send a drone's frame only when a NEW
+    one has arrived (identity check: the gz callback stores a fresh bytes object per
+    frame), so a hovering/idle drone costs nothing."""
+    await websocket.accept()
+    last: dict[int, bytes] = {}
+    try:
+        while True:
+            for i in range(N):
+                with _frame_lock:
+                    f = _frames.get(i)
+                if f is not None and last.get(i) is not f:
+                    last[i] = f
+                    await websocket.send_bytes(bytes([i]) + f)
+            await asyncio.sleep(0.08)
+    except Exception:
+        pass  # client disconnected
+
+
 async def command(request):
     body = await request.json()
     text = (body.get("text") or "").strip()
@@ -130,6 +164,8 @@ app = Starlette(routes=[
     Route("/", index),
     Route("/state", state),
     Route("/cam/{id:int}", cam),
+    Route("/frame/{id:int}", frame),
+    WebSocketRoute("/ws", ws_cams),
     Route("/command", command, methods=["POST"]),
     Mount("/static", app=StaticFiles(directory=os.path.join(HERE, "static"))),
 ])

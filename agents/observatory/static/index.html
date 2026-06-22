@@ -60,10 +60,27 @@ function buildCams(n){
   const c=document.getElementById("cams"); c.innerHTML="";
   for(let i=0;i<n;i++){
     c.insertAdjacentHTML("beforeend",
-      `<div class="tile"><img src="/cam/${i}" alt="drone_${i}"/>`+
+      `<div class="tile"><img id="cam${i}" alt="drone_${i}"/>`+
       `<div class="lbl"><b style="color:${col(i)}">drone_${i}</b><span id="alt${i}">—</span></div></div>`);
   }
   built=n;
+}
+// ONE WebSocket carries every tile's frames (binary: byte0 = drone id, rest = JPEG),
+// so the browser's ~6-connection-per-host cap can't starve tiles 7..N. Auto-reconnects.
+function startWS(){
+  const proto = location.protocol==="https:" ? "wss" : "ws";
+  const sock = new WebSocket(`${proto}://${location.host}/ws`);
+  sock.binaryType="arraybuffer";
+  sock.onmessage=ev=>{
+    const buf=new Uint8Array(ev.data);
+    const img=document.getElementById("cam"+buf[0]);
+    if(!img) return;
+    const url=URL.createObjectURL(new Blob([buf.subarray(1)],{type:"image/jpeg"}));
+    const prev=img._url; img._url=url; img.src=url;
+    if(prev) URL.revokeObjectURL(prev);   // free the previous frame's blob
+  };
+  sock.onclose=()=>setTimeout(startWS,1000);
+  sock.onerror=()=>sock.close();
 }
 function grid(){
   ctx.fillStyle="#0b1020";ctx.fillRect(0,0,W,W);
@@ -104,7 +121,7 @@ async function send(){
 }
 document.getElementById("send").onclick=send;
 document.getElementById("cmd").addEventListener("keydown",e=>{if(e.key==="Enter")send();});
-grid(); setInterval(tick,500); tick();
+grid(); startWS(); setInterval(tick,500); tick();
 </script>
 </body>
 </html>
