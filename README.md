@@ -3,8 +3,9 @@
 A swarm of drones you command in **plain language**. You are the *Commander*: you
 type into a browser ("everyone take off and spread out", "drone_1 climb to 20m",
 "all return and land") and an LLM **Commander agent** decomposes your intent into
-per-drone instructions over a shared chat bus. Each drone is its own LLM agent
-that decides whether a message is for it and flies itself accordingly.
+**directed per-drone tasks**. Each drone is its own LLM agent — its own onboard
+thinking, able to run on its own hardware — that carries out the task it is given
+and **reports back** to the Commander.
 
 Everything runs self-contained in one Docker container: **Gazebo Harmonic** +
 **PX4 SITL** (N flight controllers) + **ROS 2 Jazzy** + per-drone **onboard
@@ -13,16 +14,17 @@ cameras** + a web **Observatory**.
 ![Swarm Observatory](docs/img/observatory.png)
 
 The Observatory (above) shows, live: each drone's **onboard camera POV** (top),
-a **top-down map** of the swarm, and the **swarm chat** where you and the agents
-talk. Type a command at the bottom and watch the Commander delegate.
+a **top-down map** of the swarm, and the **swarm feed** where the Commander's
+dispatches and the drones' reports scroll by. Type a command at the bottom and
+watch the Commander delegate.
 
 ---
 
 ## What you get
 
 - **Natural-language command** of an N-drone swarm — no waypoints, no scripting.
-- **Hierarchical agents**: one Commander + N autonomous drone agents, coordinating
-  over free-text chat (the same bus you talk on).
+- **Hierarchical agents**: one Commander that dispatches directed tasks to N
+  autonomous drone agents — each with its own thinking — which report back.
 - **Per-drone onboard cameras** rendered on the GPU, streamed to the browser.
 - **A populated "city" world** (buildings) so the drones and their cameras have
   something to fly through and see.
@@ -108,8 +110,9 @@ flowchart TB
 
     UI -- "POST /command" --> OBS
     OBS -- "/swarm/user_input (ROS2)" --> CMD
-    CMD -- "/swarm/chat (ROS2, free text)" --> D0 & D1 & D2
-    D0 & D1 & D2 -- "say() → /swarm/chat" --> OBS
+    CMD == "/swarm/cmd/drone_i (directed task)" ==> D0 & D1 & D2
+    D0 & D1 & D2 == "/swarm/report/drone_i (result)" ==> CMD
+    CMD -. "/swarm/chat (mirror for UI)" .-> OBS
     D0 & D1 & D2 -- "arm/takeoff/goto (MAVSDK gRPC)" --> MAV
     MAV -- "MAVLink udp 14540+i" --> PX4
     PX4 <--> GZ
@@ -124,7 +127,9 @@ flowchart TB
 | Bus | Carries | Transport / QoS |
 |-----|---------|-----------------|
 | `/swarm/user_input` | **You → Commander** (your typed commands) | ROS 2, RELIABLE + TRANSIENT_LOCAL |
-| `/swarm/chat` | Free natural-language chat among Commander + all drones | ROS 2, RELIABLE + TRANSIENT_LOCAL |
+| `/swarm/cmd/drone_<i>` | **Commander → drone_i** — a directed task | ROS 2, RELIABLE + TRANSIENT_LOCAL |
+| `/swarm/report/drone_<i>` | **drone_i → Commander** — its result | ROS 2, RELIABLE + TRANSIENT_LOCAL |
+| `/swarm/chat` | Read-only mirror (dispatches + reports) for the UI feed | ROS 2, RELIABLE + TRANSIENT_LOCAL |
 | `/px4_<i>/fmu/out/*` | PX4 telemetry (position, status…) | ROS 2, BEST_EFFORT (via uXRCE-DDS) |
 | gz camera topic | Per-drone camera frames | gz-transport13 (read directly, no ros_gz) |
 | MAVSDK gRPC / MAVLink | Flight commands (arm, takeoff, goto) | gRPC `:50051+i` ⇄ MAVLink `udp:14540+i` |
@@ -149,20 +154,42 @@ flowchart TB
 ## Agent organization
 
 The agents are defined in **`agents/swarm/loops.py`** and bootstrapped by
-**`agents/swarm/run.py`**, all in a single asyncio process, each backed by a
-persistent **Claude Agent SDK** client.
+**`agents/swarm/run.py`**, each backed by a persistent **Claude Agent SDK** client.
+They run as coroutines in one asyncio process today, but talk **only over ROS
+topics** — so a drone can be split onto its own onboard computer with no code
+change. The model is a **distributed hub**: the Commander is the one node that
+talks to the human and tasks drones; the drones never hear each other.
+
+```mermaid
+flowchart TD
+    Human([You / Observatory])
+    CMD{{Commander agent}}
+    D0[drone_0 agent]
+    D1[drone_1 agent]
+    D2[drone_N agent]
+    Human -- "/swarm/user_input" --> CMD
+    CMD == "/swarm/cmd/drone_0 (task)" ==> D0
+    CMD == "/swarm/cmd/drone_1" ==> D1
+    CMD == "/swarm/cmd/drone_N" ==> D2
+    D0 == "/swarm/report/drone_0 (result)" ==> CMD
+    D1 == "/swarm/report/drone_1" ==> CMD
+    D2 == "/swarm/report/drone_N" ==> CMD
+    CMD -. "/swarm/chat (mirror)" .-> Human
+```
 
 **Commander** (`commander_loop`)
-- Subscribes to `/swarm/user_input` (your commands from the browser).
-- For each command, builds a prompt with the live **situation map** (positions,
-  facing, nearest buildings — from `agents.perception`) and asks the model to
-  **broadcast concrete per-drone instructions**.
-- Tool: `broadcast(message)` → publishes `commander: <message>` to `/swarm/chat`.
+- Subscribes to `/swarm/user_input` **and** every `/swarm/report/drone_<i>`.
+- For each user command, builds a prompt with the live **situation map** (positions,
+  facing, nearest buildings — from `agents.perception`) and **dispatches a directed
+  task to each drone** that should act.
+- For each drone **report**, decides whether a follow-up is needed (otherwise just
+  summarizes for you), keeping the loop from re-tasking drones that are already done.
+- Tool: `dispatch(drone_id, task)` → publishes the task to `/swarm/cmd/drone_<i>`
+  and mirrors `commander→drone_<i>: <task>` to `/swarm/chat` for the UI.
 
 **Drone agents** (`drone_loop`, one per drone, `drone_0 … drone_<N-1>`)
-- Subscribe to `/swarm/chat`; a filter (`relevant_to`) keeps only messages that are
-  from the Commander, mention `drone_<i>`, or address everyone/all/swarm — and drops
-  the drone's own messages.
+- Subscribe to **their own** `/swarm/cmd/drone_<i>` only — no shared chat, no
+  message filtering. Each acts only when the Commander tasks it.
 - Tools = `agents.flight.FlightOps` bound as in-process MCP tools (`tools.py`),
   MAVSDK underneath:
   - **move** — `take_off`, `goto` (absolute world point or a named target like
@@ -170,8 +197,9 @@ persistent **Claude Agent SDK** client.
     `face`, `hover`, `set_speed`, `land`
   - **sense** — `scan` (nearby buildings + drones with bearing, `agents.perception`),
     `look` (live camera frame via `agents.core.GzCameras`)
-  - **talk** — `say(message)` → `/swarm/chat`
-- System prompt: act only on messages meant for you; be terse.
+  - **report** — `report(message)` → publishes the result to `/swarm/report/drone_<i>`
+    (mirrored to `/swarm/chat`)
+- System prompt: carry out the task with your tools, then report back; be terse.
 
 **Observatory** (`agents/observatory/server.py`, Starlette + uvicorn)
 - Pure consumer of the sim plus the one thing it publishes: your commands.
@@ -284,11 +312,14 @@ docs/superpowers/           # design specs + plans
 
 ## Known limitation / roadmap
 
-- **Drones can't yet *see* their own cameras.** Cameras render on the GPU and stream
-  to the *human* Observatory, but the drone agents only have flight/chat tools — so
-  if you ask *"what can you see?"* a drone honestly answers it has no feed. Next
-  step: a per-drone **`look` tool** that passes the live camera frame into the agent
-  as an image, turning the swarm from *flies-and-talks* into *flies-sees-and-reports*.
+- **Drones are commander-driven only.** Each drone acts when the Commander tasks it
+  and holds its last command in between — it has its own thinking but no autonomous
+  loop. A future option is letting a drone send an *unsolicited* report (e.g. on
+  spotting something) that the Commander can react to.
+- **Run drones on separate hardware.** The agents already talk only over ROS topics,
+  so splitting `run.py` into a `run_commander()` and per-drone `run_drone(i)` (one
+  process each, same ROS graph) would put a drone's agent on its own onboard
+  computer with no protocol change.
 - NVIDIA dGPU path for larger camera feeds.
-- Higher-level behaviors (orbit, follow, search patterns) as composable tools.
+- Higher-level behaviors (follow, search patterns) as composable tools.
 ```
