@@ -226,6 +226,12 @@ class FlightOps:
             await self._halt()
             return True, _result_text(
                 logs, f"{self.name}: mission timed out after {t:g}s; vehicle halted")
+        except asyncio.CancelledError:
+            # We're being cancelled (process/shutdown): cancelling the Python
+            # coroutine does NOT stop PX4 flying the uploaded mission. Shield the
+            # halt so cancellation during the await can't skip it, then re-raise.
+            await asyncio.shield(self._halt())
+            raise
         except Exception:
             return True, _result_text(logs, traceback.format_exc())
         body = f"{self.name}: completed (no return value)" if ret is None else str(ret)

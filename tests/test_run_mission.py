@@ -1,4 +1,7 @@
+import asyncio
 import math
+
+import pytest
 
 from agents.flight.ops import FlightOps, DEFAULT_MISSION_TIMEOUT_S
 
@@ -92,6 +95,18 @@ async def test_timeout_halts_vehicle():
                                       timeout=0.05)
     assert err is True
     assert "timed out" in text
+    assert ops.drone.mission.paused is True
+
+
+async def test_cancel_halts_vehicle():
+    ops = _ops()
+    task = asyncio.ensure_future(
+        ops.run_mission("import asyncio\nawait asyncio.sleep(100)"))
+    # let run_mission start and reach the await
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert ops.drone.mission.paused is True
 
 
