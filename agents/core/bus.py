@@ -9,6 +9,7 @@ import threading
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from std_msgs.msg import String
 
 from agents.core.store import LatestStore
 
@@ -70,3 +71,14 @@ class RosBridge:
     def shutdown(self) -> None:
         self._node.destroy_node()
         rclpy.shutdown()
+
+
+def publish_str(bridge: RosBridge, topic: str, text: str) -> None:
+    """Publish a plain string on `topic` as std_msgs/String over CHAT_QOS.
+
+    The swarm's command/report/chat topics are all latched String channels, so
+    both agents wrap their text the same way; this keeps that one-liner in one place.
+    """
+    m = String()
+    m.data = text
+    bridge.publish(topic, String, m, CHAT_QOS)

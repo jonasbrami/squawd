@@ -10,23 +10,18 @@
 
 The agents talk ONLY over ROS topics, so a drone can run on separate hardware
 unchanged. Scales to N drones (SWARM_N): one persistent Claude client per agent;
-drones only spend tokens when the Commander tasks them.
+drones only spend tokens when the Commander tasks them. This module is just the
+assembler — the agents themselves live in commander.py / drone.py.
 """
 import asyncio
 import os
 import shutil
 
-from std_msgs.msg import String
-from mavsdk import System
-from px4_msgs.msg import VehicleLocalPosition
-from claude_agent_sdk import ClaudeSDKClient
-
-from agents.core.bus import RosBridge, CHAT_QOS
-from agents.core.store import TopicLog
+from agents.core.bus import RosBridge
 from agents.core.camera import GzCameras
 from agents.world import World
-from agents.flight import make_drone_options
-from agents.swarm.loops import make_commander, commander_loop, drone_loop
+from agents.swarm.commander import CommanderAgent
+from agents.swarm.drone import DroneAgent
 
 N = int(os.environ.get("SWARM_N", "3"))
 
@@ -50,73 +45,25 @@ def agent_env(tag: str) -> dict:
 
 async def main():
     bridge = RosBridge(node_name="swarm_agents")
-    user = TopicLog(bridge, "/swarm/user_input", String, CHAT_QOS)
-    # Per-drone directed channels: commander -> drone on cmd_logs[i], drone ->
-    # commander on report_logs[i]. (Same node publishes and subscribes; rclpy
-    # delivers to its own subscriptions, as the chat bus already relied on.)
-    # Topic tokens can't start with a digit (ROS 2 rule), so use drone_<i>, not <i>.
-    cmd_logs = [TopicLog(bridge, f"/swarm/cmd/drone_{i}", String, CHAT_QOS) for i in range(N)]
-    report_logs = [TopicLog(bridge, f"/swarm/report/drone_{i}", String, CHAT_QOS) for i in range(N)]
-    for i in range(N):
-        bridge.subscribe(f"/px4_{i}/fmu/out/vehicle_local_position", VehicleLocalPosition)
-    bridge.start()
-
-    def publish_to(topic: str, text: str) -> None:
-        m = String()
-        m.data = text
-        bridge.publish(topic, String, m, CHAT_QOS)
-
-    def publish_chat(text: str) -> None:        # /swarm/chat is a read-only UI mirror
-        publish_to("/swarm/chat", text)
-
-    def dispatch(i: int, task: str) -> None:    # commander -> drone_i (+ mirror)
-        publish_to(f"/swarm/cmd/drone_{i}", task)
-        publish_chat(f"commander→drone_{i}: {task}")
-
-    def make_report(i: int):                    # drone_i -> commander (+ mirror)
-        def report(message: str) -> None:
-            publish_to(f"/swarm/report/drone_{i}", message)
-            publish_chat(f"drone_{i}: {message}")
-        return report
-
-    drones = []
-    for i in range(N):
-        d = System(mavsdk_server_address="127.0.0.1", port=50051 + i)
-        await d.connect()
-        async for s in d.core.connection_state():
-            if s.is_connected:
-                break
-        drones.append(d)
-        print(f"drone_{i} connected", flush=True)
-
-    # Reuse PX4's own geofence as the hard safety layer (autopilot-enforced even on
-    # link loss) rather than custom Python bounds-checks. Warning action so it never
-    # disrupts the demo; raise GF_ACTION later to actually contain drones.
-    for idx, d in enumerate(drones):
-        try:
-            await d.param.set_param_float("GF_MAX_HOR_DIST", 300.0)
-            await d.param.set_param_float("GF_MAX_VER_DIST", 80.0)
-            await d.param.set_param_int("GF_ACTION", 1)
-        except Exception as e:
-            print(f"geofence setup skipped for drone_{idx}: {e}", flush=True)
-
     world = World()
     cameras = GzCameras(N)                 # start reading each drone's camera off gz
+
+    # Construct the agents BEFORE bridge.start(): their __init__ does every ROS
+    # subscription (cmd/report/user TopicLogs + per-drone PX4 telemetry), and we
+    # want them all registered before the rclpy spin thread comes up.
+    commander = CommanderAgent(N, bridge, world, env=agent_env("commander"))
+    drones = [DroneAgent(i, world, bridge, N, cameras, env=agent_env(f"drone{i}"))
+              for i in range(N)]
+    bridge.start()
     print(f"perception: {len(world.buildings)} buildings loaded; "
           f"cameras subscribed for {N} drones.", flush=True)
 
-    commander = make_commander(N, dispatch, env=agent_env("commander"))
-    drone_clients = [
-        ClaudeSDKClient(options=make_drone_options(
-            i, drones[i], world, bridge, N, cameras, make_report(i), env=agent_env(f"drone{i}")))
-        for i in range(N)
-    ]
+    for d in drones:                       # connect + geofence each drone's MAVSDK link
+        await d.connect()
+
     print(f"swarm online: commander + {N} drones. Waiting for commands on /swarm/user_input.",
           flush=True)
-    await asyncio.gather(
-        commander_loop(commander, user, report_logs, world, bridge, N),
-        *[drone_loop(i, drone_clients[i], cmd_logs[i]) for i in range(N)],
-    )
+    await asyncio.gather(commander.run(), *[d.run() for d in drones])
 
 
 if __name__ == "__main__":
