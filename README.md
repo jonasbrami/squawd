@@ -258,7 +258,7 @@ sequenceDiagram
     deactivate D1
 
     activate CMD
-    Note over CMD: LLM turn - read reports; re-dispatch ONLY if goal unmet
+    Note over CMD: LLM turn - read reports, re-dispatch ONLY if goal unmet
     CMD-->>OBS: /swarm/chat mirror
     deactivate CMD
 ```
