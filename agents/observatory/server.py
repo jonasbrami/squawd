@@ -1,7 +1,8 @@
 """Swarm Observatory — web UI. Scales to N drones (SWARM_N).
 
-- Per-drone camera tiles: read Gazebo camera topics via core.GzCameras, served
-  as MJPEG / single frames / one WebSocket of JPEGs.
+- Per-drone camera tiles: read Gazebo camera topics via core.GzCameras, H.264
+  encoded by VideoHub and streamed over one WebSocket for the browser's WebCodecs
+  decoder; /frame/{id} stays as a JPEG fallback for browsers without WebCodecs.
 - Map + status: drone positions from ROS2 /px4_<i>/fmu (RosBridge).
 - Swarm chat feed: /swarm/chat via a TopicLog.
 - Commander input: POST /command -> publishes /swarm/user_input for the
@@ -9,11 +10,12 @@
 Pure consumer of the sim; the only thing it publishes is your typed commands.
 """
 import asyncio
+import json
 import os
 
 import uvicorn
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, FileResponse, StreamingResponse, Response
+from starlette.responses import JSONResponse, FileResponse, Response
 from starlette.routing import Route, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
@@ -23,6 +25,7 @@ from px4_msgs.msg import VehicleLocalPosition
 from agents.core.bus import RosBridge, CHAT_QOS
 from agents.core.store import TopicLog
 from agents.core.camera import GzCameras
+from agents.observatory.video import VideoHub
 
 N = int(os.environ.get("SWARM_N", "3"))
 HERE = os.path.dirname(__file__)
@@ -34,8 +37,9 @@ for _i in range(N):
     bridge.subscribe(f"/px4_{_i}/fmu/out/vehicle_local_position", VehicleLocalPosition)
 bridge.start()
 
-# gz side: per-drone cameras (system gz, read directly).
+# gz side: per-drone cameras (system gz, read directly) + H.264 encode/fan-out.
 cameras = GzCameras(N)
+hub = VideoHub(cameras, N)
 
 
 async def index(request):
@@ -56,22 +60,9 @@ async def state(request):
     return JSONResponse({"n": N, "drones": drones, "chat": chat.all()})
 
 
-async def cam(request):
-    i = int(request.path_params["id"])
-
-    async def gen():
-        while True:
-            f = cameras.jpeg(i)
-            if f:
-                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + f + b"\r\n"
-            await asyncio.sleep(0.1)
-
-    return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-
 async def frame(request):
-    """One latest JPEG (short-lived request). The frontend polls this per tile so we
-    don't hold N forever-open MJPEG streams — browsers cap ~6 connections per host."""
+    """One latest JPEG (short-lived request). The WebCodecs-less fallback path in
+    the frontend polls this per tile so older browsers still see the cameras."""
     i = int(request.path_params["id"])
     f = cameras.jpeg(i)
     if not f:
@@ -80,24 +71,25 @@ async def frame(request):
 
 
 async def ws_cams(websocket):
-    """Push every drone's latest camera frame over ONE WebSocket. Each message is
-    binary: byte 0 = drone id, rest = JPEG. One connection for all N tiles, so the
-    browser's ~6-per-host cap is irrelevant. We encode+send a drone's frame only
-    when a NEW one has arrived (seq changed), so a hovering/idle drone costs nothing."""
+    """Stream every drone's H.264 over ONE WebSocket (browser ~6-per-host cap is
+    irrelevant). VideoHub encodes each new frame once and fans it out here. Per
+    drone we send a one-off text config {"d", "codec"} before its first keyframe,
+    then binary frames: byte0 = drone id, byte1 = flags (bit0 = keyframe), rest =
+    Annex-B NAL units for the browser's VideoDecoder."""
     await websocket.accept()
-    last: dict[int, int] = {}
+    q = hub.subscribe()
+    announced: set[int] = set()
     try:
         while True:
-            for i in range(N):
-                seq = cameras.seq(i)
-                if seq and last.get(i) != seq:
-                    f = cameras.jpeg(i)
-                    if f is not None:
-                        last[i] = seq
-                        await websocket.send_bytes(bytes([i]) + f)
-            await asyncio.sleep(0.08)
+            i, is_key, codec, data = await q.get()
+            if codec and i not in announced:
+                await websocket.send_text(json.dumps({"d": i, "codec": codec}))
+                announced.add(i)
+            await websocket.send_bytes(bytes([i, 1 if is_key else 0]) + data)
     except Exception:
         pass  # client disconnected
+    finally:
+        hub.unsubscribe(q)
 
 
 async def command(request):
@@ -118,7 +110,6 @@ async def command(request):
 app = Starlette(routes=[
     Route("/", index),
     Route("/state", state),
-    Route("/cam/{id:int}", cam),
     Route("/frame/{id:int}", frame),
     WebSocketRoute("/ws", ws_cams),
     Route("/command", command, methods=["POST"]),
