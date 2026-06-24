@@ -70,6 +70,16 @@ class GzCameras:
     def has(self, i: int) -> bool:
         return self.seq(i) > 0
 
+    def raw(self, i: int) -> tuple[int, int, bytes] | None:
+        """Latest raw (width, height, rgb_bytes) for drone i, or None. The
+        observatory's H.264 encoder needs raw RGB; the VLM still uses jpeg()."""
+        with self._lock:
+            f = self._frames.get(i)
+        if not f:
+            return None
+        _, w, h, data = f
+        return (w, h, data)
+
     def jpeg(self, i: int, quality: int = 55, max_px: int | None = None) -> bytes | None:
         with self._lock:
             f = self._frames.get(i)
