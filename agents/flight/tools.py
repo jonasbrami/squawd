@@ -112,15 +112,32 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
     async def scan(args):
         return _ok(ops.scan())
 
+    @tool("run_mission",
+          "Author and run your OWN async MAVSDK mission code for a multi-leg or "
+          "smooth trajectory. Pre-bound (no import): `drone` (the connected System), "
+          "`mission_item(**fields)` (a MissionItem with every field defaulted, "
+          "overridable by its real name), `await world_to_geo(east, north, up)` "
+          "(-> GeoPoint; use its lat/lon ONLY, set relative_altitude_m to the world "
+          "`up`), `log(msg)`. Import MAVSDK classes you use (e.g. MissionPlan). "
+          "Set `timeout` to the seconds you expect; you are uninterruptible until "
+          "the mission finishes or the timeout fires (which halts you).",
+          {"code": {"type": "string"}, "timeout": {"type": "number"}})
+    async def run_mission(args):
+        try:
+            err, text = await ops.run_mission(args.get("code", ""), args.get("timeout"))
+            return _err(text) if err else _ok(text)
+        except Exception as e:
+            return _err(f"{name} run_mission failed: {e}")
+
     server = create_sdk_mcp_server(
         name=f"d{i}", tools=[take_off, fly, goto, orbit, hover, set_speed, face, land,
-                             report_tool, look, scan])
+                             report_tool, look, scan, run_mission])
     return ClaudeAgentOptions(
         mcp_servers={f"d{i}": server},
         allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__goto",
                        f"mcp__d{i}__orbit", f"mcp__d{i}__hover", f"mcp__d{i}__set_speed",
                        f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__report",
-                       f"mcp__d{i}__look", f"mcp__d{i}__scan"],
+                       f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission"],
         setting_sources=[],
         env=env or {},
         system_prompt=(
@@ -136,5 +153,26 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
             "SENSE: `scan` lists nearby buildings + drones with distance and bearing RELATIVE to "
             "where you face — items marked [IN VIEW] are in your camera. `look` returns your live "
             "camera image. Camera is fixed forward (~69deg): to see something not [IN VIEW], `face` "
-            "or `orbit` it, then `look`. Use `scan` before moving near obstacles."),
+            "or `orbit` it, then `look`. Use `scan` before moving near obstacles.\n"
+            "MISSION: for a multi-leg or smooth trajectory, `run_mission(code, timeout)` "
+            "runs your OWN async MAVSDK. Pre-bound (no import): `drone`, "
+            "`mission_item(**fields)`, `await world_to_geo(east,north,up)`, `log(msg)`; "
+            "import MAVSDK classes (e.g. MissionPlan) yourself. Coords: lat/lon from "
+            "`world_to_geo`, set `relative_altitude_m` to the world `up` (world `up` "
+            "is height above launch; NOT its absolute altitude). Example:\n"
+            "  from mavsdk.mission import MissionPlan\n"
+            "  pts = [(0,0,15), (40,0,15), (40,40,15)]\n"
+            "  items = []\n"
+            "  for e,n_,u in pts:\n"
+            "      g = await world_to_geo(east=e, north=n_, up=u)\n"
+            "      items.append(mission_item(latitude_deg=g.latitude_deg, "
+            "longitude_deg=g.longitude_deg, relative_altitude_m=u, speed_m_s=5, "
+            "is_fly_through=True))\n"
+            "  await drone.mission.upload_mission(MissionPlan(items))\n"
+            "  await drone.action.arm(); await drone.mission.start_mission()\n"
+            "  async for p in drone.mission.mission_progress():\n"
+            "      log(f'{p.current}/{p.total}')\n"
+            "      if p.current == p.total: break\n"
+            "  return 'mission complete'\n"
+            "Set `timeout` to the seconds the path needs."),
     )
