@@ -1,10 +1,10 @@
 """Bind a drone's FlightOps to Claude-Agent-SDK MCP tools.
 
-`make_drone_options` builds the per-drone MCP server (flight + look/scan/say) and
-returns the ClaudeAgentOptions the swarm hands to a ClaudeSDKClient. The wrappers
-are deliberately thin: parse args -> call FlightOps -> wrap text/errors. The
-camera image (`look`) comes from core.GzCameras; chat (`say`) goes out via the
-injected publish_chat callable.
+`make_drone_options` builds the per-drone MCP server (flight + look/scan/report)
+and returns the ClaudeAgentOptions the swarm hands to a ClaudeSDKClient. The
+wrappers are deliberately thin: parse args -> call FlightOps -> wrap text/errors.
+The camera image (`look`) comes from core.GzCameras; the drone's result goes back
+to the Commander via the injected `report` callable (publishes /swarm/report/<i>).
 """
 from claude_agent_sdk import tool, create_sdk_mcp_server, ClaudeAgentOptions
 
@@ -19,7 +19,7 @@ def _err(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
-def make_drone_options(i, drone, world, bridge, n, cameras, publish_chat, env=None):
+def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
     name = f"drone_{i}"
     ops = FlightOps(drone, world, bridge, i, n)
 
@@ -95,10 +95,11 @@ def make_drone_options(i, drone, world, bridge, n, cameras, publish_chat, env=No
         except Exception as e:
             return _err(f"{name} land failed: {e}")
 
-    @tool("say", "Say something on the swarm chat.", {"message": {"type": "string"}})
-    async def say(args):
-        publish_chat(f"{name}: {args.get('message', '')}")
-        return _ok("sent")
+    @tool("report", "Report back to the commander: a short summary of what you did and "
+          "what you saw. Call this when you finish a task.", {"message": {"type": "string"}})
+    async def report_tool(args):
+        report(args.get("message", ""))
+        return _ok("reported")
 
     @tool("look", "See through your onboard camera (returns the current image).", {})
     async def look(args):
@@ -113,20 +114,20 @@ def make_drone_options(i, drone, world, bridge, n, cameras, publish_chat, env=No
 
     server = create_sdk_mcp_server(
         name=f"d{i}", tools=[take_off, fly, goto, orbit, hover, set_speed, face, land,
-                             say, look, scan])
+                             report_tool, look, scan])
     return ClaudeAgentOptions(
         mcp_servers={f"d{i}": server},
         allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__goto",
                        f"mcp__d{i}__orbit", f"mcp__d{i}__hover", f"mcp__d{i}__set_speed",
-                       f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__say",
+                       f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__report",
                        f"mcp__d{i}__look", f"mcp__d{i}__scan"],
         setting_sources=[],
         env=env or {},
         system_prompt=(
-            f"You are {name}, an autonomous drone in a swarm of {n}. You receive swarm-chat "
-            "messages. When a message is an instruction for YOU (mentions your name) or for "
-            "ALL drones (everyone/all/swarm), carry it out with your tools. If a message is "
-            "not for you, do nothing. Be terse; only say() if you have something useful to add.\n"
+            f"You are {name}, an autonomous drone in a swarm of {n}, with your own onboard "
+            "thinking. The COMMANDER sends you tasks; you do not hear the other drones. Carry "
+            "out each task with your tools, then call report(...) with a short result. Be "
+            "terse.\n"
             "MOVE: `goto` (an absolute world point east/north/up OR a named target like 'bldg_7' "
             "or 'drone_1'); `orbit` (circle a target keeping your camera on it — ONE call, no need "
             "to compute waypoints); `fly` (relative north/east/up); `face` (turn in place to aim "
