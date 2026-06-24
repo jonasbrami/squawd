@@ -46,7 +46,7 @@ flowchart TD
     classDef heavy fill:#374151,stroke:#9ca3af,color:#f3f4f6;
     classDef pure fill:#065f46,stroke:#6ee7b7,color:#ecfdf5;
 
-    SWARM["<b>agents.swarm</b> · run.py + loops.py<br/>Commander + N drone react loops · wiring"]:::orch
+    SWARM["<b>agents.swarm</b> · run.py + commander.py + drone.py<br/>CommanderAgent + N DroneAgent objects · wiring"]:::orch
     OBS["<b>agents.observatory</b> · server.py<br/>web UI — camera tiles · map · chat"]:::orch
     FLIGHT["<b>agents.flight</b> · ops.py + tools.py<br/>FlightOps (take_off·goto·orbit·…) + MCP tool bindings"]:::heavy
     CORE["<b>agents.core</b> · bus · store · geo · camera<br/>RosBridge · TopicLog · GeoPoint · GzCameras"]:::heavy
@@ -74,9 +74,11 @@ flowchart TD
   sense of place (positions, bearings, "what's in view", scan/situation text).
 - **`agents.flight`** — `FlightOps` is the flight logic; `tools.py` binds it to
   Claude-Agent-SDK `@tool`s. Logic and SDK plumbing are separable.
-- **`agents.swarm`** — wires everything into the Commander + N drone loops (`run.py`
-  bootstraps, `loops.py` is the react loops). **`agents.observatory`** is the web UI
-  and depends only on `core`.
+- **`agents.swarm`** — the agent layer as objects: `CommanderAgent` (`commander.py`)
+  and `DroneAgent` (`drone.py`), each owning its ROS channels, its Claude client, and
+  an `async run()` loop; `run.py` is a thin assembler that constructs them and
+  `gather`s their loops. **`agents.observatory`** is the web UI and depends only on
+  `core`.
 
 ### Runtime & data flow
 
@@ -153,9 +155,11 @@ flowchart TB
 
 ## Agent organization
 
-The agents are defined in **`agents/swarm/loops.py`** and bootstrapped by
-**`agents/swarm/run.py`**, each backed by a persistent **Claude Agent SDK** client.
-They run as coroutines in one asyncio process today, but talk **only over ROS
+Each agent is a self-contained object — **`CommanderAgent`** (`agents/swarm/commander.py`)
+and **`DroneAgent`** (`agents/swarm/drone.py`) — that owns its ROS channels, its
+persistent **Claude Agent SDK** client, and an `async run()` loop;
+**`agents/swarm/run.py`** is a thin assembler that builds them and `gather`s their
+loops. They run as coroutines in one asyncio process today, but talk **only over ROS
 topics** — so a drone can be split onto its own onboard computer with no code
 change. The model is a **distributed hub**: the Commander is the one node that
 talks to the human and tasks drones; the drones never hear each other.
@@ -177,19 +181,23 @@ flowchart TD
     CMD -. "/swarm/chat (mirror)" .-> Human
 ```
 
-**Commander** (`commander_loop`)
-- Subscribes to `/swarm/user_input` **and** every `/swarm/report/drone_<i>`.
+**`CommanderAgent`** (`agents/swarm/commander.py`)
+- Owns the `/swarm/user_input` inbox **and** every `/swarm/report/drone_<i>` channel;
+  `run()` polls them both.
 - For each user command, builds a prompt with the live **situation map** (positions,
   facing, nearest buildings — from `agents.perception`) and **dispatches a directed
   task to each drone** that should act.
 - For each drone **report**, decides whether a follow-up is needed (otherwise just
   summarizes for you), keeping the loop from re-tasking drones that are already done.
-- Tool: `dispatch(drone_id, task)` → publishes the task to `/swarm/cmd/drone_<i>`
-  and mirrors `commander→drone_<i>: <task>` to `/swarm/chat` for the UI.
+- `dispatch(drone_id, task)` (the Claude tool, backed by the method of the same name)
+  → publishes the task to `/swarm/cmd/drone_<i>` and mirrors
+  `commander→drone_<i>: <task>` to `/swarm/chat` for the UI.
 
-**Drone agents** (`drone_loop`, one per drone, `drone_0 … drone_<N-1>`)
-- Subscribe to **their own** `/swarm/cmd/drone_<i>` only — no shared chat, no
-  message filtering. Each acts only when the Commander tasks it.
+**`DroneAgent`** (`agents/swarm/drone.py`, one instance per drone, `drone_0 … drone_<N-1>`)
+- Owns its MAVSDK link (`System` on `:50051+i`), its PX4 telemetry subscription, and
+  **its own** `/swarm/cmd/drone_<i>` inbox only — no shared chat, no message filtering.
+  `connect()` brings up the link + geofence; `run()` acts only when the Commander
+  tasks it.
 - Tools = `agents.flight.FlightOps` bound as in-process MCP tools (`tools.py`),
   MAVSDK underneath:
   - **move** — `take_off`, `goto` (absolute world point or a named target like
@@ -197,8 +205,8 @@ flowchart TD
     `face`, `hover`, `set_speed`, `land`
   - **sense** — `scan` (nearby buildings + drones with bearing, `agents.perception`),
     `look` (live camera frame via `agents.core.GzCameras`)
-  - **report** — `report(message)` → publishes the result to `/swarm/report/drone_<i>`
-    (mirrored to `/swarm/chat`)
+  - **report** — `report(message)` (the `DroneAgent.report` method, exposed as a tool)
+    → publishes the result to `/swarm/report/drone_<i>` (mirrored to `/swarm/chat`)
 - System prompt: carry out the task with your tools, then report back; be terse.
 
 **Observatory** (`agents/observatory/server.py`, Starlette + uvicorn)
@@ -347,8 +355,9 @@ agents/                     # one package per responsibility; deps flow downward
   world/                    # World: loads city_boxes.json, maps PX4 NED -> world ENU, resolves targets
   perception/               # pure trig/text: scan + situation readouts over a World
   flight/                   # FlightOps (take_off/goto/orbit/...) + their MCP tool bindings
-  swarm/run.py              # Commander + N drone agents on one event loop (the swarm brain)
-  swarm/loops.py            # commander/drone react loops + the Commander agent
+  swarm/run.py              # thin assembler: build the agents + gather their run() loops
+  swarm/commander.py        # CommanderAgent: user/report channels, dispatch(), run()
+  swarm/drone.py            # DroneAgent: MAVSDK link, cmd inbox, report(), connect(), run()
   observatory/server.py     # web UI backend: state, cameras (MJPEG/WS), command intake
   observatory/static/       # the Observatory single-page UI
 sim/
@@ -371,10 +380,10 @@ docs/superpowers/           # design specs + plans
   and holds its last command in between — it has its own thinking but no autonomous
   loop. A future option is letting a drone send an *unsolicited* report (e.g. on
   spotting something) that the Commander can react to.
-- **Run drones on separate hardware.** The agents already talk only over ROS topics,
-  so splitting `run.py` into a `run_commander()` and per-drone `run_drone(i)` (one
-  process each, same ROS graph) would put a drone's agent on its own onboard
-  computer with no protocol change.
+- **Run drones on separate hardware.** The agents already talk only over ROS topics
+  and are self-contained objects, so a per-process entrypoint that constructs a single
+  `DroneAgent(i)` (or the `CommanderAgent`) and awaits its `run()` would put a drone's
+  agent on its own onboard computer with no protocol change.
 - NVIDIA dGPU path for larger camera feeds.
 - Higher-level behaviors (follow, search patterns) as composable tools.
 ```
