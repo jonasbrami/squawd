@@ -51,3 +51,10 @@ def test_battery_unknown_values_become_none():
     batt = SimpleNamespace(remaining=-1.0, voltage_v=0.0, warning=0)
     d = metrics.build_drone_state(0, None, None, batt, None, None, False)
     assert d["batt_pct"] is None and d["voltage"] is None and d["warn"] == 0
+
+
+def test_battery_none_fields_do_not_crash():
+    # px4_msgs always sends floats, but stay defensive: None must not raise.
+    batt = SimpleNamespace(remaining=None, voltage_v=None, warning=0)
+    d = metrics.build_drone_state(0, None, None, batt, None, None, False)
+    assert d["batt_pct"] is None and d["voltage"] is None and d["warn"] == 0
