@@ -207,6 +207,61 @@ flowchart TD
   camera tiles), `/cam/{i}` + `/frame/{i}` (MJPEG / single JPEG),
   `POST /command` (→ `/swarm/user_input`, and echoes `you: …` into the chat view).
 
+### Wake dynamics — who wakes whom
+
+Each agent is its own persistent Claude client, but it only spends tokens when
+something lands on a channel it listens to. In the diagram below an **activation
+bar means that Claude is awake** (running one LLM turn); no bar means idle
+(subprocess alive, zero tokens). The `(wakes …)` labels are the trigger.
+
+```mermaid
+sequenceDiagram
+    actor You
+    participant OBS as Observatory
+    participant CMD as Commander (Claude)
+    participant D0 as drone_0 (Claude)
+    participant D1 as drone_1 (Claude)
+    participant D2 as drone_2 (Claude)
+    participant SIM as PX4 / MAVSDK
+
+    You->>OBS: type "drone_0 to 12m, drone_1 to 7m, leave drone_2"
+    OBS->>CMD: /swarm/user_input  (wakes Commander)
+    activate CMD
+    Note over CMD: LLM turn - decompose intent into per-drone tasks
+    CMD->>D0: /swarm/cmd/drone_0  (wakes drone_0)
+    CMD->>D1: /swarm/cmd/drone_1  (wakes drone_1)
+    CMD-->>OBS: /swarm/chat mirror (display only, no wake)
+    deactivate CMD
+    Note over D2: never addressed - stays asleep, 0 tokens
+
+    activate D0
+    Note over D0: LLM turn - take_off/goto via its own tools
+    D0->>SIM: arm + takeoff (MAVSDK gRPC)
+    SIM-->>D0: airborne ~12m
+    D0->>CMD: /swarm/report/drone_0  (wakes Commander)
+    D0-->>OBS: /swarm/chat mirror
+    deactivate D0
+
+    activate D1
+    Note over D1: LLM turn - take_off to 7m
+    D1->>SIM: arm + takeoff
+    SIM-->>D1: airborne ~7m
+    D1->>CMD: /swarm/report/drone_1  (wakes Commander)
+    deactivate D1
+
+    activate CMD
+    Note over CMD: LLM turn - read reports; re-dispatch ONLY if goal unmet
+    CMD-->>OBS: /swarm/chat mirror
+    deactivate CMD
+```
+
+The wake graph is a strict hub: **you → Commander → only the addressed drones →
+back to Commander**. A drone wakes only on its own `/swarm/cmd/drone_<i>`; it never
+wakes another drone, and an unaddressed drone (drone_2 here) costs nothing. Each
+drone's `report` re-wakes the Commander, whose prompt tells it to re-dispatch only
+if the goal isn't met — so the chain terminates instead of ping-ponging.
+`/swarm/chat` is display-only: nothing subscribes to it to act, so it wakes no one.
+
 ---
 
 ## Rendering: with GPU vs without
