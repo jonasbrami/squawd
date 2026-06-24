@@ -12,6 +12,8 @@ live fix (see _world_to_geo).
 """
 import asyncio
 import math
+import textwrap
+import traceback
 
 from mavsdk.action import OrbitYawBehavior
 from mavsdk.mission import MissionItem
@@ -39,6 +41,16 @@ def _mission_item(**kw):
     )
     fields.update(kw)
     return MissionItem(**fields)
+
+
+DEFAULT_MISSION_TIMEOUT_S = 180.0
+
+
+def _result_text(logs, body):
+    """Prefix any log() lines before the result/traceback body."""
+    if logs:
+        return "logs:\n" + "\n".join(logs) + "\n\n" + body
+    return body
 
 
 class FlightOps:
@@ -179,3 +191,42 @@ class FlightOps:
 
     def scan(self) -> str:
         return perception.scan_text(self.world, self.bridge, self.i, self.n)
+
+    async def _halt(self) -> None:
+        """Stop the vehicle after a cancelled/timed-out mission: cancelling the
+        Python coroutine does NOT stop PX4 flying the already-uploaded mission."""
+        try:
+            await self.drone.mission.pause_mission()
+        except Exception:
+            try:
+                await self.drone.action.hold()
+            except Exception:
+                pass
+
+    async def run_mission(self, code: str, timeout=None):
+        """Exec a Claude-authored async MAVSDK body in-process; return (is_error, text).
+
+        Namespace: `drone` (live System), `mission_item(**fields)`, `world_to_geo`
+        (await -> GeoPoint), `log(msg)`. Claude imports MAVSDK classes itself.
+        `timeout` (s) is Claude-set; None -> DEFAULT_MISSION_TIMEOUT_S. On timeout
+        the vehicle is halted before the error is returned."""
+        logs = []
+        ns = {
+            "drone": self.drone,
+            "mission_item": _mission_item,
+            "world_to_geo": self._world_to_geo,
+            "log": logs.append,
+        }
+        src = "async def _snippet():\n" + textwrap.indent(code or "", "    ")
+        t = float(timeout) if timeout is not None else DEFAULT_MISSION_TIMEOUT_S
+        try:
+            exec(compile(src, "<mission>", "exec"), ns)
+            ret = await asyncio.wait_for(ns["_snippet"](), timeout=t)
+        except asyncio.TimeoutError:
+            await self._halt()
+            return True, _result_text(
+                logs, f"{self.name}: mission timed out after {t:g}s; vehicle halted")
+        except Exception:
+            return True, _result_text(logs, traceback.format_exc())
+        body = f"{self.name}: completed (no return value)" if ret is None else str(ret)
+        return False, _result_text(logs, body)
