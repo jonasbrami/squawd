@@ -4,43 +4,125 @@
 <meta charset="utf-8"/>
 <title>Dronebot Swarm Observatory</title>
 <style>
-  :root { --bg:#0b1020; --panel:#141b2e; --ink:#dfe6f5; --accent:#5ad1ff; --grid:#23304d; }
+  :root { --bg:#0b1020; --panel:#141b2e; --ink:#dfe6f5; --accent:#5ad1ff;
+          --grid:#23304d; --muted:#8da2c8; --tile:#0e1626;
+          --ok:#3ad07a; --warn:#ffd65a; --bad:#ff6b6b; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
-         font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; }
-  header { padding:10px 18px; border-bottom:1px solid var(--grid); display:flex; align-items:center; gap:12px; }
+         font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;
+         height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+  header { padding:10px 18px; border-bottom:1px solid var(--grid);
+           display:flex; align-items:center; gap:12px; }
   header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
-  header .dot { width:9px;height:9px;border-radius:50%;background:#3ad07a; }
-  .meta { color:#8da2c8; font-size:12px; }
-  .wrap { padding:14px; display:flex; flex-direction:column; gap:14px; }
-  h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#8da2c8; margin:0 0 8px; }
-  .card { background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:12px; }
-  /* camera tiles */
-  #cams { display:flex; gap:10px; flex-wrap:wrap; }
-  .tile { background:#0e1626; border:1px solid var(--grid); border-radius:8px; padding:6px; width:266px; }
-  .tile img, .tile canvas { width:252px; height:142px; object-fit:cover; background:#000; border-radius:5px; display:block; }
-  .tile .lbl { display:flex; justify-content:space-between; margin-top:5px; font-size:12px; }
-  .tile .lbl b { color:var(--accent); }
-  .row { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; }
-  #map { width:480px; height:480px; }
-  #chatcard { flex:1; min-width:320px; }
-  #chat { height:430px; overflow-y:auto; display:flex; flex-direction:column; gap:7px; }
-  .msg { background:#0e1626; border-left:3px solid var(--accent); padding:6px 9px; border-radius:6px; }
-  .msg.cmd { border-left-color:#ffd65a; }
-  .msg b { color:var(--accent); }
-  .msg.cmd b { color:#ffd65a; }
+  header .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); }
+  .meta { color:var(--muted); font-size:12px; margin-left:auto; }
+  .wrap { flex:1; min-height:0; overflow:hidden; padding:14px;
+          display:flex; flex-direction:column; gap:14px; }
+  .wrap > .focus { flex:1; min-height:0; }
+  .wrap > .card { flex:none; }
+  .wrap > .row { flex:none; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px;
+       color:var(--muted); margin:0 0 8px; }
+  .card { background:var(--panel); border:1px solid var(--grid);
+          border-radius:10px; padding:12px; }
+
+  /* focus row: hero camera + metrics rail */
+  .focus { display:flex; gap:14px; align-items:stretch; }
+  #herocard { flex:1; min-width:0; display:flex; flex-direction:column; }
+  #herocard h2 { flex:none; }
+  #hero { width:100%; flex:1; min-height:0; object-fit:cover; background:#000;
+          border-radius:8px; display:block; }
+  #herocard .nocam { display:flex; align-items:center; justify-content:center;
+          width:100%; flex:1; min-height:0; background:#000; border-radius:8px;
+          color:var(--muted); }
+  #metricscard { width:260px; flex:none; overflow-y:auto; }
+  .mhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .mhead b { font-size:15px; }
+  .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;
+           background:var(--tile); border:1px solid var(--grid); }
+  .badge.armed { color:var(--ok); border-color:var(--ok); }
+  .badge.disarmed { color:var(--muted); }
+  .mgrid { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; }
+  .mgrid .k { color:var(--muted); }
+  .mgrid .v { text-align:right; font-variant-numeric:tabular-nums; }
+  .v.ok { color:var(--ok); } .v.warn { color:var(--warn); } .v.bad { color:var(--bad); }
+  .agent { margin-top:12px; border-top:1px solid var(--grid); padding-top:10px; }
+  .agent .k { color:var(--muted); font-size:11px; text-transform:uppercase;
+              letter-spacing:.5px; }
+  .agent .t { margin:2px 0 8px; word-break:break-word; }
+
+  /* thumbnail strip — single scrollable row so it never grows the page */
+  #thumbs { display:flex; gap:10px; overflow-x:auto; padding-bottom:2px; }
+  .thumb { flex:none; background:var(--tile); border:2px solid var(--grid); border-radius:8px;
+           padding:5px; width:150px; cursor:pointer; transition:border-color .12s; }
+  .thumb.sel { border-color:var(--accent); }
+  .thumb img, .thumb canvas { width:138px; height:78px; object-fit:cover; background:#000;
+               border-radius:5px; display:block; }
+  .thumb .lbl { display:flex; justify-content:space-between; align-items:center;
+                margin-top:5px; font-size:12px; }
+  .thumb .lbl b { font-weight:700; }
+  .sdot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  .sdot.ok { background:var(--ok); } .sdot.warn { background:var(--warn); }
+  .sdot.bad { background:var(--bad); }
+
+  /* bottom row: map + chat — bounded height so the whole app fits one screen */
+  .row { display:flex; gap:14px; align-items:stretch;
+         height:clamp(200px, 32vh, 320px); }
+  #mapcard { flex:none; display:flex; flex-direction:column; }
+  #mapcard h2 { flex:none; }
+  #map { flex:1; min-height:0; aspect-ratio:1; width:auto; height:auto; cursor:pointer; }
+  #chatcard { flex:1; min-width:320px; display:flex; flex-direction:column; }
+  #chat { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:7px; }
+  .msg { background:var(--tile); border-left:3px solid var(--accent);
+         padding:6px 9px; border-radius:6px; }
+  .msg.cmd { border-left-color:var(--warn); }
+  .msg b { color:var(--accent); } .msg.cmd b { color:var(--warn); }
   #cmdbar { display:flex; gap:8px; }
-  #cmd { flex:1; background:#0e1626; border:1px solid var(--grid); color:var(--ink);
+  #cmd { flex:1; background:var(--tile); border:1px solid var(--grid); color:var(--ink);
          padding:10px 12px; border-radius:8px; font:inherit; }
-  #send { background:var(--accent); color:#04121b; border:0; border-radius:8px; padding:0 18px; font-weight:700; cursor:pointer; }
+  #send { background:var(--accent); color:#04121b; border:0; border-radius:8px;
+          padding:0 18px; font-weight:700; cursor:pointer; }
 </style>
 </head>
 <body>
-<header><span class="dot"></span><h1>DRONEBOT · SWARM OBSERVATORY</h1><span class="meta" id="status">connecting…</span></header>
+<header>
+  <span class="dot"></span><h1>DRONEBOT · SWARM OBSERVATORY</h1>
+  <span class="meta" id="status">connecting…</span>
+</header>
 <div class="wrap">
-  <div class="card"><h2>Drone POV · onboard cameras</h2><div id="cams"></div></div>
+  <div class="focus">
+    <div class="card" id="herocard">
+      <h2 id="herotitle">Drone POV · select a drone</h2>
+      <!-- hero media element (canvas or img) + nocam placeholder injected by setupHero() -->
+    </div>
+    <div class="card" id="metricscard">
+      <div class="mhead">
+        <b id="m-name">drone_—</b>
+        <span class="badge disarmed" id="m-arm">—</span>
+      </div>
+      <div class="mgrid">
+        <div class="k">ALT</div>  <div class="v" id="m-alt">—</div>
+        <div class="k">SPD</div>  <div class="v" id="m-spd">—</div>
+        <div class="k">V/S</div>  <div class="v" id="m-vs">—</div>
+        <div class="k">HDG</div>  <div class="v" id="m-hdg">—</div>
+        <div class="k">MODE</div> <div class="v" id="m-mode">—</div>
+        <div class="k">BATT</div> <div class="v" id="m-batt">—</div>
+        <div class="k">POS</div>  <div class="v" id="m-pos">—</div>
+      </div>
+      <div class="agent">
+        <div class="k">Current task</div>
+        <div class="t" id="m-task">—</div>
+        <div class="k">Last report</div>
+        <div class="t" id="m-report">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card"><h2>Swarm · click a drone to focus</h2><div id="thumbs"></div></div>
+
   <div class="row">
-    <div class="card"><h2>Map · top-down (N↑ E→)</h2><canvas id="map" width="480" height="480"></canvas></div>
+    <div class="card" id="mapcard"><h2>Map · top-down (N↑ E→)</h2>
+      <canvas id="map" width="480" height="480"></canvas></div>
     <div class="card" id="chatcard"><h2>Swarm chat · you = commander</h2>
       <div id="chat"></div>
       <div id="cmdbar" style="margin-top:10px;">
@@ -53,41 +135,49 @@
 <script>
 const COLORS=["#5ad1ff","#ff8a5a","#9d7bff","#3ad07a","#ffd65a","#ff6b9d","#6bffb8","#c0c0ff"];
 const RANGE=90, cv=document.getElementById("map"), ctx=cv.getContext("2d"), W=cv.width, C=W/2;
-let built=0;
+let built=0, sel=0, lastState=null;
 function col(i){return COLORS[i%COLORS.length];}
 function toPx(n,e){return [C+(e/RANGE)*C, C-(n/RANGE)*C];}
-// Modern browsers decode H.264 in-process via WebCodecs onto a <canvas>; older
-// ones fall back to polling /frame/{id} JPEGs into an <img>.
-const HAS_WEBCODECS = ("VideoDecoder" in window) && ("EncodedVideoChunk" in window);
-function buildCams(n){
-  const c=document.getElementById("cams"); c.innerHTML="";
-  for(const k in tiles){ try{ tiles[k].dec.close(); }catch(e){} delete tiles[k]; }  // tiles rebuilt
-  built=0;
-  for(let i=0;i<n;i++){
-    const media = HAS_WEBCODECS ? `<canvas id="cam${i}"></canvas>`
-                                : `<img id="cam${i}" alt="drone_${i}"/>`;
-    c.insertAdjacentHTML("beforeend",
-      `<div class="tile">${media}`+
-      `<div class="lbl"><b style="color:${col(i)}">drone_${i}</b><span id="alt${i}">—</span></div></div>`);
-  }
-  built=n;
-  if(HAS_WEBCODECS) startWS(); else startPolling(n);
+function fmt(v,suffix=""){return (v===null||v===undefined)?"—":v+suffix;}
+
+// battery → severity class for color coding
+function battClass(pct,warn){
+  if(pct===null||pct===undefined) return "";
+  if((warn!=null && warn>1) || pct<20) return "bad";
+  if(pct<50) return "warn";
+  return "ok";
 }
-// ONE WebSocket carries every tile's H.264. Text msg {d,codec} announces a drone's
-// codec; binary msg = [drone id, flags(bit0=keyframe), ...Annex-B NALs]. One
-// connection for all N tiles, so the ~6-per-host cap can't starve tiles 7..N.
+
+// Modern browsers decode H.264 in-process via WebCodecs onto a <canvas>; older
+// ones fall back to polling /frame/{id} JPEGs into an <img>. The selected drone's
+// frames are drawn to BOTH its thumbnail and the large hero view.
+const HAS_WEBCODECS = ("VideoDecoder" in window) && ("EncodedVideoChunk" in window);
 const codecFor={}, tiles={};
+
+function setupHero(){
+  const box=document.getElementById("herocard");
+  const media = HAS_WEBCODECS ? '<canvas id="hero"></canvas>' : '<img id="hero" alt="hero"/>';
+  box.insertAdjacentHTML("beforeend",
+    media + '<div id="nocam" class="nocam" style="display:none">no camera signal</div>');
+}
+
+// Draw a decoded VideoFrame into a <canvas>, sizing the canvas to the frame.
+function paint(canvas, frame){
+  if(canvas.width!==frame.displayWidth) canvas.width=frame.displayWidth;
+  if(canvas.height!==frame.displayHeight) canvas.height=frame.displayHeight;
+  canvas.getContext("2d").drawImage(frame,0,0,canvas.width,canvas.height);
+}
+
 function ensureDecoder(i){
   let t=tiles[i];
   if(t) return t;
   const canvas=document.getElementById("cam"+i);
   if(!canvas) return null;
-  const ctx=canvas.getContext("2d");
   const dec=new VideoDecoder({
     output:frame=>{
-      if(canvas.width!==frame.displayWidth) canvas.width=frame.displayWidth;
-      if(canvas.height!==frame.displayHeight) canvas.height=frame.displayHeight;
-      ctx.drawImage(frame,0,0,canvas.width,canvas.height);
+      paint(canvas, frame);                                    // thumbnail
+      if(i===sel){ const h=document.getElementById("hero");
+        if(h && h.tagName==="CANVAS") paint(h, frame); }       // hero (selected)
       frame.close();
     },
     error:e=>console.warn("decoder",i,e)
@@ -96,6 +186,9 @@ function ensureDecoder(i){
   tiles[i]=t;
   return t;
 }
+// ONE WebSocket carries every tile's H.264. Text msg {d,codec} announces a drone's
+// codec; binary msg = [drone id, flags(bit0=keyframe), ...Annex-B NALs]. One
+// connection for all N tiles, so the ~6-per-host cap can't starve tiles 7..N.
 function startWS(){
   if(startWS._sock && startWS._sock.readyState<=1) return;   // already connected
   const proto = location.protocol==="https:" ? "wss" : "ws";
@@ -109,20 +202,21 @@ function startWS(){
     const t=ensureDecoder(i);
     if(!t) return;
     if(!t.configured){
-      if(!isKey) return;                                     // need a keyframe to start
+      if(!isKey) return;                                       // need a keyframe to start
       try{ t.dec.configure({codec:codecFor[i]||"avc1.42C01F", optimizeForLatency:true}); t.configured=true; }
       catch(e){ console.warn("configure",codecFor[i],e); return; }
     }
     if(!t.gotKey){ if(!isKey) return; t.gotKey=true; }
     try{
       t.dec.decode(new EncodedVideoChunk({type:isKey?"key":"delta", timestamp:t.ts, data}));
-      t.ts+=83333;                                           // ~12fps in microseconds
+      t.ts+=83333;                                             // ~12fps in microseconds
     }catch(e){ console.warn("decode",e); }
   };
   sock.onclose=()=>setTimeout(startWS,1000);
   sock.onerror=()=>sock.close();
 }
-// Fallback: poll the latest JPEG per tile into an <img> (no WebCodecs).
+// Fallback: poll the latest JPEG per tile into an <img> (no WebCodecs). The
+// selected drone's frame is mirrored into the hero <img>.
 function startPolling(n){
   if(startPolling._t) clearInterval(startPolling._t);
   startPolling._t=setInterval(()=>{
@@ -132,11 +226,80 @@ function startPolling(n){
         if(!b) return;
         const url=URL.createObjectURL(b);
         const prev=img._url; img._url=url; img.src=url;
+        if(i===sel){ const h=document.getElementById("hero"); if(h && h.tagName==="IMG") h.src=url; }
         if(prev) URL.revokeObjectURL(prev);
       }).catch(()=>{});
     }
   },200);
 }
+
+function buildThumbs(n){
+  const c=document.getElementById("thumbs"); c.innerHTML="";
+  for(const k in tiles){ try{ tiles[k].dec.close(); }catch(e){} delete tiles[k]; }  // tiles rebuilt
+  for(let i=0;i<n;i++){
+    const media = HAS_WEBCODECS ? `<canvas id="cam${i}"></canvas>`
+                                : `<img id="cam${i}" alt="drone_${i}"/>`;
+    c.insertAdjacentHTML("beforeend",
+      `<div class="thumb" data-id="${i}">${media}`+
+      `<div class="lbl"><b style="color:${col(i)}">drone_${i}</b>`+
+      `<span class="sdot" id="sdot${i}"></span></div></div>`);
+  }
+  c.querySelectorAll(".thumb").forEach(t=>t.onclick=()=>select(+t.dataset.id));
+  built=n;
+  if(sel>=n) sel=0;
+  if(HAS_WEBCODECS) startWS(); else startPolling(n);
+  select(sel);
+}
+
+function select(i){
+  sel=i;
+  const thumbs=[...document.querySelectorAll(".thumb")];
+  thumbs.forEach(t=>t.classList.toggle("sel", +t.dataset.id===i));
+  const selThumb=thumbs.find(t=>+t.dataset.id===i);
+  if(selThumb) selThumb.scrollIntoView({block:"nearest", inline:"nearest"});
+  if(lastState) renderMetrics(lastState.drones[i]);
+  document.getElementById("herotitle").textContent="Drone POV · drone_"+i;
+  // Show the selected drone's current frame in the hero immediately (no wait for
+  // the next decoded frame): copy the thumbnail's current pixels into the hero.
+  const hero=document.getElementById("hero"), cam=document.getElementById("cam"+i);
+  if(hero && cam){
+    if(hero.tagName==="CANVAS" && cam.tagName==="CANVAS" && cam.width){
+      hero.width=cam.width; hero.height=cam.height;
+      hero.getContext("2d").drawImage(cam,0,0,hero.width,hero.height);
+    } else if(hero.tagName==="IMG" && cam.tagName==="IMG" && cam.src){
+      hero.src=cam.src;
+    }
+  }
+}
+
+function renderMetrics(d){
+  if(!d) return;
+  document.getElementById("m-name").textContent="drone_"+d.id;
+  document.getElementById("m-name").style.color=col(d.id);
+  const arm=document.getElementById("m-arm");
+  if(d.armed===null){arm.textContent="—";arm.className="badge disarmed";}
+  else if(d.armed){arm.textContent="ARMED";arm.className="badge armed";}
+  else {arm.textContent="DISARMED";arm.className="badge disarmed";}
+  document.getElementById("m-alt").textContent=fmt(d.alt," m");
+  document.getElementById("m-spd").textContent=fmt(d.speed," m/s");
+  document.getElementById("m-vs").textContent=fmt(d.vspeed," m/s");
+  document.getElementById("m-hdg").textContent=d.heading===null?"—":String(d.heading).padStart(3,"0")+"°";
+  document.getElementById("m-mode").textContent=fmt(d.mode);
+  const batt=document.getElementById("m-batt");
+  batt.textContent=(d.batt_pct===null?"—":d.batt_pct+"%")+(d.voltage===null?"":" · "+d.voltage+"V");
+  batt.className="v "+battClass(d.batt_pct,d.warn);
+  document.getElementById("m-pos").textContent=
+    (d.north===null?"—":d.north+"N")+(d.east===null?"":" "+d.east+"E");
+  document.getElementById("m-task").textContent=fmt(d.task);
+  document.getElementById("m-report").textContent=fmt(d.report);
+  // Show the "no signal" placeholder when the selected drone has no camera topic.
+  const hero=document.getElementById("hero"), nocam=document.getElementById("nocam");
+  if(hero && nocam){
+    if(d.cam===false){ hero.style.display="none"; nocam.style.display="flex"; }
+    else { hero.style.display=""; nocam.style.display="none"; }
+  }
+}
+
 function grid(){
   ctx.fillStyle="#0b1020";ctx.fillRect(0,0,W,W);
   ctx.strokeStyle="#23304d";
@@ -145,15 +308,29 @@ function grid(){
   ctx.strokeStyle="#34507f";ctx.beginPath();ctx.moveTo(C,0);ctx.lineTo(C,W);ctx.moveTo(0,C);ctx.lineTo(W,C);ctx.stroke();
   ctx.fillStyle="#8da2c8";ctx.fillText("N",C-4,12);ctx.fillText("E",W-12,C-6);
 }
+let markers=[];   // {id, x, y} in canvas px, for click hit-testing
 function drones(ds){
+  markers=[];
   ds.forEach(d=>{
-    if(d.alt!==null && document.getElementById("alt"+d.id)) document.getElementById("alt"+d.id).textContent=(d.alt??"—")+"m";
+    const sdot=document.getElementById("sdot"+d.id);
+    if(sdot) sdot.className="sdot "+battClass(d.batt_pct,d.warn);
     if(d.north===null) return;
     const p=toPx(d.north,d.east);
-    ctx.fillStyle=col(d.id);ctx.beginPath();ctx.arc(p[0],p[1],7,0,7);ctx.fill();
-    ctx.fillStyle="#dfe6f5";ctx.fillText("drone_"+d.id,p[0]+11,p[1]+4);
+    markers.push({id:d.id,x:p[0],y:p[1]});
+    const r=d.id===sel?10:7;
+    if(d.id===sel){ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],r+3,0,7);ctx.stroke();ctx.lineWidth=1;}
+    ctx.fillStyle=col(d.id);ctx.beginPath();ctx.arc(p[0],p[1],r,0,7);ctx.fill();
+    ctx.fillStyle="#dfe6f5";ctx.fillText("drone_"+d.id,p[0]+13,p[1]+4);
   });
 }
+cv.onclick=ev=>{
+  const rect=cv.getBoundingClientRect();
+  const x=(ev.clientX-rect.left)*(W/rect.width), y=(ev.clientY-rect.top)*(W/rect.height);
+  let best=null,bd=1e9;
+  markers.forEach(m=>{const dd=(m.x-x)**2+(m.y-y)**2; if(dd<bd){bd=dd;best=m;}});
+  if(best && bd<=18*18) select(best.id);
+};
+
 function chat(msgs){
   const el=document.getElementById("chat");
   el.innerHTML=msgs.map(l=>{const i=l.indexOf(":");const who=i>0?l.slice(0,i):"";const rest=i>0?l.slice(i+1):l;
@@ -164,8 +341,10 @@ function chat(msgs){
 async function tick(){
   try{
     const s=await (await fetch("/state")).json();
-    if(s.n!==built) buildCams(s.n);
+    lastState=s;
+    if(s.n!==built) buildThumbs(s.n);
     grid(); drones(s.drones); chat(s.chat);
+    renderMetrics(s.drones[sel]);
     document.getElementById("status").textContent=`${s.n} drones · ${s.chat.length} messages · live`;
   }catch(e){document.getElementById("status").textContent="reconnecting…";}
 }
@@ -176,7 +355,7 @@ async function send(){
 }
 document.getElementById("send").onclick=send;
 document.getElementById("cmd").addEventListener("keydown",e=>{if(e.key==="Enter")send();});
-grid(); setInterval(tick,500); tick();   // tick() builds tiles, which starts WS/polling
+setupHero(); grid(); setInterval(tick,500); tick();   // tick() builds tiles, which starts WS/polling
 </script>
 </body>
 </html>
