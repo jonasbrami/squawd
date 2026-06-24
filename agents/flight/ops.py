@@ -14,6 +14,7 @@ import asyncio
 import math
 
 from mavsdk.action import OrbitYawBehavior
+from mavsdk.mission import MissionItem
 
 from agents.core.geo import GeoPoint, offset_point
 from agents import perception
@@ -21,6 +22,23 @@ from agents import perception
 COMPASS = {"north": 0.0, "n": 0.0, "northeast": 45.0, "ne": 45.0, "east": 90.0, "e": 90.0,
            "southeast": 135.0, "se": 135.0, "south": 180.0, "s": 180.0, "southwest": 225.0,
            "sw": 225.0, "west": 270.0, "w": 270.0, "northwest": 315.0, "nw": 315.0}
+
+
+def _mission_item(**kw):
+    """A MissionItem with every field defaulted (nan / enum NONE), overridable by
+    its real SDK field name. Cuts the 14-required-arg boilerplate; hides nothing."""
+    nan = float("nan")
+    fields = dict(
+        latitude_deg=nan, longitude_deg=nan, relative_altitude_m=nan,
+        speed_m_s=nan, is_fly_through=True,
+        gimbal_pitch_deg=nan, gimbal_yaw_deg=nan,
+        camera_action=MissionItem.CameraAction.NONE,
+        loiter_time_s=nan, camera_photo_interval_s=nan,
+        acceptance_radius_m=nan, yaw_deg=nan, camera_photo_distance_m=nan,
+        vehicle_action=MissionItem.VehicleAction.NONE,
+    )
+    fields.update(kw)
+    return MissionItem(**fields)
 
 
 class FlightOps:
