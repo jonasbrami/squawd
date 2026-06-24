@@ -20,12 +20,13 @@ from starlette.routing import Route, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
 from std_msgs.msg import String
-from px4_msgs.msg import VehicleLocalPosition
+from px4_msgs.msg import VehicleLocalPosition, VehicleStatus, BatteryStatus
 
 from agents.core.bus import RosBridge, CHAT_QOS
 from agents.core.store import TopicLog
 from agents.core.camera import GzCameras
 from agents.observatory.video import VideoHub
+from agents.observatory import metrics
 
 N = int(os.environ.get("SWARM_N", "3"))
 HERE = os.path.dirname(__file__)
@@ -34,7 +35,14 @@ HERE = os.path.dirname(__file__)
 bridge = RosBridge(node_name="observatory")
 chat = TopicLog(bridge, "/swarm/chat", String, CHAT_QOS)
 for _i in range(N):
-    bridge.subscribe(f"/px4_{_i}/fmu/out/vehicle_local_position", VehicleLocalPosition)
+    base = f"/px4_{_i}/fmu/out"
+    bridge.subscribe(f"{base}/vehicle_local_position", VehicleLocalPosition)
+    bridge.subscribe(f"{base}/vehicle_status", VehicleStatus)
+    bridge.subscribe(f"{base}/battery_status", BatteryStatus)
+    # Latched String channels (CHAT_QOS) so the observatory replays the last
+    # task/report on connect. The drones publish these; we only read them.
+    bridge.subscribe(f"/swarm/cmd/drone_{_i}", String, CHAT_QOS)
+    bridge.subscribe(f"/swarm/report/drone_{_i}", String, CHAT_QOS)
 bridge.start()
 
 # gz side: per-drone cameras (system gz, read directly) + H.264 encode/fan-out.
@@ -46,17 +54,24 @@ async def index(request):
     return FileResponse(os.path.join(HERE, "static", "index.html"))
 
 
+def _text(msg):
+    """Latest String channel payload, or None if nothing heard yet."""
+    return msg.data if msg is not None else None
+
+
 async def state(request):
     drones = []
     for i in range(N):
-        p = bridge.latest(f"/px4_{i}/fmu/out/vehicle_local_position")
-        drones.append({
-            "id": i,
-            "north": round(p.x, 1) if p else None,
-            "east": round(p.y, 1) if p else None,
-            "alt": round(-p.z, 1) if p else None,
-            "cam": cameras.has(i),
-        })
+        base = f"/px4_{i}/fmu/out"
+        drones.append(metrics.build_drone_state(
+            i,
+            bridge.latest(f"{base}/vehicle_local_position"),
+            bridge.latest(f"{base}/vehicle_status"),
+            bridge.latest(f"{base}/battery_status"),
+            _text(bridge.latest(f"/swarm/cmd/drone_{i}")),
+            _text(bridge.latest(f"/swarm/report/drone_{i}")),
+            cameras.has(i),
+        ))
     return JSONResponse({"n": N, "drones": drones, "chat": chat.all()})
 
 
