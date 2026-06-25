@@ -70,7 +70,11 @@
          height:clamp(200px, 32vh, 320px); }
   #mapcard { flex:none; display:flex; flex-direction:column; }
   #mapcard h2 { flex:none; }
-  #map { flex:1; min-height:0; aspect-ratio:1; width:auto; height:auto; cursor:pointer; }
+  /* align-self:center stops the flex cross-axis stretch so aspect-ratio governs the
+     width from the (definite) flex height — otherwise width falls back to the canvas's
+     480px intrinsic attr and the square map renders stretched (~1.8:1). */
+  #map { flex:1; min-height:0; aspect-ratio:1; width:auto; height:auto;
+         align-self:center; cursor:pointer; }
   #chatcard { flex:1; min-width:320px; display:flex; flex-direction:column; }
   #chat { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:7px; }
   .msg { background:var(--tile); border-left:3px solid var(--accent);
