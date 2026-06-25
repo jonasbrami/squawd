@@ -3,19 +3,31 @@ import math
 
 import pytest
 
+from mavsdk.mission import MissionError, MissionResult
+
 from agents.flight.ops import FlightOps, DEFAULT_MISSION_TIMEOUT_S
 
 
+def _denied():
+    return MissionError(MissionResult(MissionResult.Result.DENIED, "Denied"),
+                        "start_mission()")
+
+
 class FakeMission:
-    def __init__(self):
+    def __init__(self, deny_starts=0):
         self.uploaded = None
         self.started = False
         self.paused = False
+        self.start_calls = 0
+        self._deny_starts = deny_starts
 
     async def upload_mission(self, plan):
         self.uploaded = plan
 
     async def start_mission(self):
+        self.start_calls += 1
+        if self.start_calls <= self._deny_starts:
+            raise _denied()
         self.started = True
 
     async def pause_mission(self):
@@ -34,14 +46,32 @@ class FakeAction:
         self.held = True
 
 
+class _Pos:
+    latitude_deg = 47.0
+    longitude_deg = 8.0
+    absolute_altitude_m = 500.0
+
+
+class FakeTelemetry:
+    async def position(self):
+        yield _Pos()
+
+
+class FakeWorld:
+    """world_xy returns None so _world_to_geo takes the origin path (no offset math)."""
+    def world_xy(self, bridge, i):
+        return None
+
+
 class FakeDrone:
-    def __init__(self):
-        self.mission = FakeMission()
+    def __init__(self, deny_starts=0):
+        self.mission = FakeMission(deny_starts)
         self.action = FakeAction()
+        self.telemetry = FakeTelemetry()
 
 
-def _ops():
-    return FlightOps(FakeDrone(), world=None, bridge=None, i=0, n=1)
+def _ops(deny_starts=0):
+    return FlightOps(FakeDrone(deny_starts), world=FakeWorld(), bridge=None, i=0, n=1)
 
 
 async def test_success_returns_logs_and_value():
@@ -112,3 +142,39 @@ async def test_cancel_halts_vehicle():
 
 def test_default_timeout_value():
     assert DEFAULT_MISSION_TIMEOUT_S == 180.0
+
+
+async def test_world_to_geo_accepts_kwargs():
+    # The tool docstring + system prompt advertise world_to_geo(east, north, up);
+    # calling by keyword must not raise TypeError.
+    g = await _ops()._world_to_geo(east=10.0, north=5.0, up=12.0)
+    assert g.latitude_deg == 47.0 and g.longitude_deg == 8.0
+
+
+async def test_world_to_geo_positional_still_works():
+    g = await _ops()._world_to_geo(10.0, 5.0, 12.0)
+    assert g.latitude_deg == 47.0
+
+
+async def test_arm_and_start_retries_through_denied():
+    # PX4 DENIES the first start_mission right after arm; the helper must retry.
+    ops = _ops(deny_starts=2)
+    await ops._arm_and_start(delay=0)
+    assert ops.drone.action.armed is True
+    assert ops.drone.mission.started is True
+    assert ops.drone.mission.start_calls == 3  # 2 denied + 1 success
+
+
+async def test_arm_and_start_reraises_if_never_succeeds():
+    ops = _ops(deny_starts=99)
+    with pytest.raises(MissionError):
+        await ops._arm_and_start(retries=3, delay=0)
+    assert ops.drone.mission.start_calls == 3
+
+
+async def test_arm_and_start_bound_in_namespace():
+    ops = _ops(deny_starts=1)
+    err, text = await ops.run_mission("await arm_and_start(delay=0)\nreturn 'ok'")
+    assert err is False
+    assert ops.drone.mission.started is True
+    assert "ok" in text

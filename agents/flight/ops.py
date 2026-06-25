@@ -71,14 +71,15 @@ class FlightOps:
         st = self.world.drone_state(self.bridge, self.i)
         return math.degrees(st[3]) if st else 0.0
 
-    async def _world_to_geo(self, t_e, t_n, t_u) -> GeoPoint:
-        """Convert a world ENU point to a GeoPoint, relative to the drone's live GPS fix."""
+    async def _world_to_geo(self, east, north, up) -> GeoPoint:
+        """Convert a world ENU point to a GeoPoint, relative to the drone's live GPS fix.
+        Params are named east/north/up so authored missions can call it by keyword."""
         me = self.world.world_xy(self.bridge, self.i)
         pos = await anext(self.drone.telemetry.position())
         origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
         if me is None:
             return origin
-        return offset_point(origin, t_n - me[1], t_e - me[0], t_u - me[2])
+        return offset_point(origin, north - me[1], east - me[0], up - me[2])
 
     def _resolve_xy(self, target, east=None, north=None):
         """(east, north) for a symbolic target name, explicit east/north, or None."""
@@ -203,11 +204,28 @@ class FlightOps:
             except Exception:
                 pass
 
+    async def _arm_and_start(self, retries=6, delay=1.5):
+        """Arm, then start the uploaded mission — retrying start_mission through the
+        transient PX4 'DENIED' that routinely hits the first call right after arm.
+        Returns once started; re-raises the last error if every attempt fails."""
+        await self.drone.action.arm()
+        last = None
+        for _ in range(max(1, retries)):
+            try:
+                await self.drone.mission.start_mission()
+                return
+            except Exception as e:  # MissionError DENIED (vehicle not ready yet), etc.
+                last = e
+                await asyncio.sleep(delay)
+        raise last
+
     async def run_mission(self, code: str, timeout=None):
         """Exec a Claude-authored async MAVSDK body in-process; return (is_error, text).
 
         Namespace: `drone` (live System), `mission_item(**fields)`, `world_to_geo`
-        (await -> GeoPoint), `log(msg)`. Claude imports MAVSDK classes itself.
+        (await world_to_geo(east, north, up) -> GeoPoint), `arm_and_start()` (arm +
+        start the uploaded mission, retrying the transient PX4 DENIED), `log(msg)`.
+        Claude imports MAVSDK classes itself.
         `timeout` (s) is Claude-set; None -> DEFAULT_MISSION_TIMEOUT_S. On timeout
         the vehicle is halted before the error is returned."""
         logs = []
@@ -215,6 +233,7 @@ class FlightOps:
             "drone": self.drone,
             "mission_item": _mission_item,
             "world_to_geo": self._world_to_geo,
+            "arm_and_start": self._arm_and_start,
             "log": logs.append,
         }
         src = "async def _snippet():\n" + textwrap.indent(code or "", "    ")
