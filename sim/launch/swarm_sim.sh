@@ -13,7 +13,11 @@ set -eo pipefail
 # Back-compat: GPU_RENDER=1 with no RENDER_BACKEND == intel.
 RENDER_BACKEND="${RENDER_BACKEND:-}"
 if [ -z "$RENDER_BACKEND" ]; then
-  [ "${GPU_RENDER:-0}" = "1" ] && RENDER_BACKEND=intel || RENDER_BACKEND=cpu
+  if [ "${GPU_RENDER:-0}" = "1" ]; then
+    RENDER_BACKEND=intel
+  else
+    RENDER_BACKEND=cpu
+  fi
 fi
 case "$RENDER_BACKEND" in
   nvidia)
@@ -33,6 +37,7 @@ case "$RENDER_BACKEND" in
     ;;
   *)  # cpu / llvmpipe
     export LIBGL_ALWAYS_SOFTWARE=1
+    unset MESA_LOADER_DRIVER_OVERRIDE
     ;;
 esac
 

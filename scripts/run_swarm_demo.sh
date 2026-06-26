@@ -18,7 +18,13 @@ WORLD="${WORLD:-baylands}"
 IMG="squawd:dev"
 GPU="${GPU:-1}"
 # RENDER_BACKEND: cpu | intel | nvidia. Default mirrors old behaviour: GPU=1 -> intel.
-RENDER_BACKEND="${RENDER_BACKEND:-$([ "$GPU" = 1 ] && echo intel || echo cpu)}"
+if [ -z "${RENDER_BACKEND:-}" ]; then
+  if [ "$GPU" = 1 ]; then
+    RENDER_BACKEND=intel
+  else
+    RENDER_BACKEND=cpu
+  fi
+fi
 CAM_W="${CAM_W:-640}"
 CAM_H="${CAM_H:-360}"
 CAM_FPS="${CAM_FPS:-10}"
