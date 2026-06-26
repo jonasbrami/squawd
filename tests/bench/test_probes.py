@@ -18,6 +18,17 @@ def test_parse_intel_gpu_top_matches_render_and_video():
     assert d["video_pct"] == 12.0
 
 
+def test_parse_intel_gpu_top_maxes_multiple_render_engines():
+    obj = {"engines": {
+        "Render/3D/0": {"busy": 20.0, "unit": "%"},
+        "Render/3D/1": {"busy": 71.0, "unit": "%"},
+        "Video/0": {"busy": 5.0, "unit": "%"},
+    }}
+    d = probes.parse_intel_gpu_top(obj)
+    assert d["render_pct"] == 71.0
+    assert d["video_pct"] == 5.0
+
+
 def test_parse_docker_stats_gib():
     d = probes.parse_docker_stats("231.40% 4.5GiB / 31GiB")
     assert d["cpu_pct"] == 231.4

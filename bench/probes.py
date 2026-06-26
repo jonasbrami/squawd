@@ -23,10 +23,9 @@ def parse_intel_gpu_top(obj) -> dict:
     engines = obj.get("engines", {})
 
     def busy(prefix: str, exclude: str | None = None) -> float:
-        for name, e in engines.items():
-            if name.startswith(prefix) and (exclude is None or not name.startswith(exclude)):
-                return float(e.get("busy", 0.0))
-        return 0.0
+        vals = [float(e.get("busy", 0.0)) for name, e in engines.items()
+                if name.startswith(prefix) and (exclude is None or not name.startswith(exclude))]
+        return max(vals, default=0.0)
 
     return {"render_pct": busy("Render"), "video_pct": busy("Video", exclude="VideoEnhance")}
 
