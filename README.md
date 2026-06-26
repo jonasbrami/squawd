@@ -204,10 +204,31 @@ flowchart TD
     `bldg_7`/`drone_1`), `orbit` (circle a target, camera on it), `fly` (relative),
     `face`, `hover`, `set_speed`, `land`
   - **sense** — `scan` (nearby buildings + drones with bearing, `agents.perception`),
-    `look` (live camera frame via `agents.core.GzCameras`)
+    `look` (live camera frame **fed to Claude's vision** — see below)
   - **report** — `report(message)` (the `DroneAgent.report` method, exposed as a tool)
     → publishes the result to `/swarm/report/drone_<i>` (mirrored to `/swarm/chat`)
 - System prompt: carry out the task with your tools, then report back; be terse.
+
+#### Claude is the vision model too (multimodal, not just text)
+
+The drones don't just reason over text — they **see**. The same Claude that plans
+and calls tools also processes images natively, so `look` turns the onboard camera
+into genuine perception:
+
+1. `agents.core.GzCameras` grabs the drone's RGB frame off gz-transport and
+   `jpeg_b64()` encodes it (JPEG → base64 — base64 is just transport, so the bytes
+   survive JSON/HTTP; it is **not** how Claude "reads" the image).
+2. The `look` tool returns it as a typed **image** content block —
+   `{"type": "image", "data": <b64>, "mimeType": "image/jpeg"}` (`agents/flight/tools.py`).
+3. The Claude Agent SDK forwards that block to the API, where the `type: "image"`
+   tag routes it into Claude's **vision encoder** (base64 → pixels → image tokens) —
+   the same model, attending to pixels and text together.
+
+So a drone can `look` and, in its very next thought, write *"open parkland with
+paved paths and scattered trees, a parking lot to the south"* — real visual
+understanding, not OCR or a bolt-on detector. (It is point-in-time and qualitative:
+distances/coordinates still come from the `scan`/ground-truth channel, and each
+`look` costs vision tokens, so drones use it deliberately, not continuously.)
 
 **Observatory** (`agents/observatory/server.py`, Starlette + uvicorn)
 - Pure consumer of the sim plus the one thing it publishes: your commands.
