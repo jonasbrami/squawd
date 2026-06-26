@@ -1,4 +1,4 @@
-# Dronebot Swarm — Mission-Generic LLM Agent Swarm — Design
+# Squawd Swarm — Mission-Generic LLM Agent Swarm — Design
 
 **Date:** 2026-06-14
 **Status:** Approved (pending spec review)
@@ -203,7 +203,7 @@ holds, the design holds.** Spike it before building anything else.
 ## 9. Repo layout (fresh)
 
 ```
-dronebot-swarm/
+squawd/
   docker/            ROS2 Humble + PX4 + Gazebo image
   sim/launch/        swarm.launch.py — N× PX4 SITL + Gazebo + per-drone SLAM + map_merge
   sim/worlds/

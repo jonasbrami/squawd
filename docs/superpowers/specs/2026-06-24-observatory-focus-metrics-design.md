@@ -25,7 +25,7 @@ plus the important metrics for that drone.
 
 ```
 ┌──────────────────────────────────────────────┐
-│ DRONEBOT · SWARM OBSERVATORY     3·live  ●     │
+│ SQUAWD · SWARM OBSERVATORY     3·live  ●     │
 ├────────────────────────────┬───────────────────┤
 │                            │  drone_1  ● ARMED │
 │      HERO CAMERA           │  ───────────────  │

@@ -1,4 +1,4 @@
-# Dronebot Swarm — Bridge Spike Gate (Milestone 1) Implementation Plan
+# Squawd Swarm — Bridge Spike Gate (Milestone 1) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **Scope:** Milestone 1 only (spec §8 step 1). Milestones 2–7 (single-drone slice, SLAM, map fusion, multi-drone, commander, chat) are deferred to follow-up plans written after this gate passes. The gate reads PX4's `/fmu/out/vehicle_local_position` topic rather than a SLAM map topic — same `rclpy` mechanism, far less setup; reading a real SLAM map is identical plumbing deferred to Milestone 3.
 
-**Working directory:** the existing repo `/home/quenouille/drone` on branch `feat/dronebot-swarm`. We add new top-level dirs (`docker/`, `sim/`, `agents/`, `spikes/swarm/`) alongside v1's `src/` (kept as salvage source).
+**Working directory:** the existing repo `/home/quenouille/drone` on branch `feat/squawd`. We add new top-level dirs (`docker/`, `sim/`, `agents/`, `spikes/swarm/`) alongside v1's `src/` (kept as salvage source).
 
 ---
 
@@ -122,14 +122,14 @@ WORKDIR /workspace
 
 - [ ] **Step 2: Build the image**
 
-Run: `docker build -f docker/Dockerfile.swarm -t dronebot-swarm:dev .`
+Run: `docker build -f docker/Dockerfile.swarm -t squawd:dev .`
 Expected: build completes; final layers show `px4_msgs` colcon build succeeded and pip install of mavsdk/claude-agent-sdk.
 
 - [ ] **Step 3: Verify the three toolchains resolve inside the image**
 
 Run:
 ```bash
-docker run --rm dronebot-swarm:dev bash -lc \
+docker run --rm squawd:dev bash -lc \
   'ros2 --help >/dev/null && which MicroXRCEAgent && which mavsdk_server && python3 -c "import px4_msgs.msg as m; print(m.VehicleLocalPosition)"'
 ```
 Expected: prints paths like `/usr/local/bin/MicroXRCEAgent` and `/usr/local/bin/mavsdk_server`, then `<class 'px4_msgs.msg._vehicle_local_position.VehicleLocalPosition'>`. No import error.
@@ -278,7 +278,7 @@ PX4_QOS = QoSProfile(
 
 
 class RosBridge:
-    def __init__(self, node_name: str = "dronebot_bridge") -> None:
+    def __init__(self, node_name: str = "squawd_bridge") -> None:
         rclpy.init()
         self._node: Node = rclpy.create_node(node_name)
         self._store = LatestStore()
@@ -308,7 +308,7 @@ class RosBridge:
 
 Run:
 ```bash
-docker run --rm -v "$PWD:/workspace" dronebot-swarm:dev bash -lc \
+docker run --rm -v "$PWD:/workspace" squawd:dev bash -lc \
   'python3 -c "from agents.common.bus import RosBridge, PX4_QOS; print(\"ok\", PX4_QOS.reliability)"'
 ```
 Expected: prints `ok ReliabilityPolicy.BEST_EFFORT`. (Importing `rclpy` succeeds; we do not start() here.)
@@ -366,7 +366,7 @@ wait
 
 Run an interactive container and build PX4 (one-time, ~10–15 min):
 ```bash
-docker run --rm -it -v "$PWD:/workspace" dronebot-swarm:dev bash -lc '
+docker run --rm -it -v "$PWD:/workspace" squawd:dev bash -lc '
   cd /workspace && [ -d PX4-Autopilot ] || git clone -b v1.15.4 --recursive --depth 1 https://github.com/PX4/PX4-Autopilot.git
   cd PX4-Autopilot && bash ./Tools/setup/ubuntu.sh --no-nuttx
   DONT_RUN=1 make px4_sitl gz_x500'
@@ -430,7 +430,7 @@ PX4-Autopilot/
 
 Shell A (bring-up):
 ```bash
-docker run --rm -it --name swarm-sim -v "$PWD:/workspace" dronebot-swarm:dev \
+docker run --rm -it --name swarm-sim -v "$PWD:/workspace" squawd:dev \
   bash -lc 'chmod +x sim/launch/one_drone.sh && sim/launch/one_drone.sh'
 ```
 Wait until it prints `/fmu/...` topics. Shell B (spike, into the same container):

@@ -9,7 +9,7 @@ instead of silently stacking another swarm.
 import fcntl
 import os
 
-DEFAULT_LOCK_PATH = os.environ.get("SWARM_LOCK", "/tmp/dronebot_swarm_agents.lock")
+DEFAULT_LOCK_PATH = os.environ.get("SWARM_LOCK", "/tmp/squawd_agents.lock")
 
 
 def acquire_singleton_lock(path: str = DEFAULT_LOCK_PATH):
