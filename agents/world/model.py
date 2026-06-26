@@ -15,13 +15,20 @@ yaw=0, so axes only swap (no rotation):
 import json
 import os
 
-_DEFAULT_BOXES = "/workspace/PX4-Autopilot/Tools/simulation/gz/worlds/city_boxes.json"
 _FALLBACK = {"spawn_x": 0.0, "spawn_spacing": 3.0, "spawn_z": 0.5, "buildings": []}
+
+
+def _default_boxes_path() -> str:
+    """Per-world sidecar: <world>_boxes.json. 'city' has buildings (written by
+    make_city_world.py); 'baylands' has none, so its file is absent and World
+    falls back to empty buildings — scan then reports only nearby drones."""
+    world = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "baylands"
+    return f"/workspace/PX4-Autopilot/Tools/simulation/gz/worlds/{world}_boxes.json"
 
 
 class World:
     def __init__(self, path: str | None = None) -> None:
-        path = path or os.environ.get("CITY_BOXES", _DEFAULT_BOXES)
+        path = path or os.environ.get("CITY_BOXES") or _default_boxes_path()
         try:
             with open(path) as f:
                 self._cfg = json.load(f)

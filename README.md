@@ -26,8 +26,11 @@ watch the Commander delegate.
 - **Hierarchical agents**: one Commander that dispatches directed tasks to N
   autonomous drone agents — each with its own thinking — which report back.
 - **Per-drone onboard cameras** rendered on the GPU, streamed to the browser.
-- **A populated "city" world** (buildings) so the drones and their cameras have
-  something to fly through and see.
+- **A realistic "baylands" world** (PX4's coastal scene — road, grass, water,
+  trees) by default, so the drones and their cameras have something real to see.
+  `WORLD=city` swaps in a procedural building world (and is the only world with
+  building obstacle-`scan`). *(Baylands' tree foliage renders as dark silhouettes
+  under headless EGL — a known artifact; the rest of the scene is unaffected.)*
 - **Scales with N** — `./scripts/run_swarm_demo.sh 5` just works; ports, namespaces,
   camera tiles, and agents are all derived from the drone index.
 
@@ -334,15 +337,20 @@ docker build -f docker/Dockerfile.swarm -t dronebot-swarm:dev .
 
 ### 2. Launch the swarm
 ```bash
-# 3 drones, GPU cameras (default)
+# 3 drones, baylands world, GPU cameras (default)
 ./scripts/run_swarm_demo.sh 3
 
 # more drones
 ./scripts/run_swarm_demo.sh 5
 
+# procedural building world (adds building obstacle-scan)
+WORLD=city ./scripts/run_swarm_demo.sh 3
+
 # software rendering, no cameras (flight + chat only, much slower)
 GPU=0 ./scripts/run_swarm_demo.sh 3
 ```
+> First baylands launch downloads ~400MB of Gazebo Fuel terrain/water models
+> (cached in `/tmp/swarm-gz-fuel`, reused after that — needs internet once).
 
 Then open **http://localhost:8000** and command the swarm:
 > *"everyone take off and climb to 12m, then spread out and scout"*
