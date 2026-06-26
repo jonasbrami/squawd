@@ -1,4 +1,4 @@
-# dronebot — LLM-piloted UAV swarm
+# squawd — LLM-piloted UAV swarm
 
 A swarm of drones you command in **plain language**. You are the *Commander*: you
 type into a browser ("everyone take off and spread out", "drone_1 climb to 20m",
@@ -332,7 +332,7 @@ Notes:
 
 ### 1. Build the image (once, slow — compiles PX4 + pulls Gazebo/ROS)
 ```bash
-docker build -f docker/Dockerfile.swarm -t dronebot-swarm:dev .
+docker build -f docker/Dockerfile.swarm -t squawd:dev .
 ```
 
 ### 2. Launch the swarm

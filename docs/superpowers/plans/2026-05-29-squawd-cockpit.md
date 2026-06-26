@@ -1,16 +1,16 @@
-# Dronebot Cockpit & Dev Container Implementation Plan
+# Squawd Cockpit & Dev Container Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make dronebot fully self-contained in a dev container and give it a browser "mission-control" cockpit (chat + live Gazebo 3D + telemetry + home-relative map + camera).
+**Goal:** Make squawd fully self-contained in a dev container and give it a browser "mission-control" cockpit (chat + live Gazebo 3D + telemetry + home-relative map + camera).
 
 **Architecture:** One Ubuntu 24.04 container builds and runs PX4 SITL + Gazebo Harmonic (Intel-iGPU rendering via `/dev/dri`, software fallback). A supervisor starts Xvfb → PX4+Gazebo → x11vnc+noVNC → a FastAPI app. The FastAPI app reuses the v1 `CommandExecutor`/`DroneAgent` (same single asyncio loop) and exposes WS chat, WS telemetry, and an MJPEG camera stream to a vanilla-JS cockpit. The Claude Agent SDK uses the mounted host OAuth with a slimmed context.
 
 **Tech Stack:** Docker / dev containers, Ubuntu 24.04, PX4 SITL, Gazebo Harmonic, Mesa, Xvfb/x11vnc/noVNC, FastAPI + uvicorn, vanilla JS, MAVSDK-Python, Claude Agent SDK.
 
-**Reference specs:** `docs/superpowers/specs/2026-05-29-dronebot-cockpit-design.md` (this increment) and `docs/superpowers/specs/2026-05-29-llm-uav-chatbot-design.md` (v1 core).
+**Reference specs:** `docs/superpowers/specs/2026-05-29-squawd-cockpit-design.md` (this increment) and `docs/superpowers/specs/2026-05-29-llm-uav-chatbot-design.md` (v1 core).
 
-**Prereq:** the v1 core branch `feat/dronebot-v1` (control/perception/agent modules) is implemented.
+**Prereq:** the v1 core branch `feat/squawd-v1` (control/perception/agent modules) is implemented.
 
 ---
 
@@ -23,14 +23,14 @@
 | `docker-compose.yml` | Single service wrapping the image (works without VS Code). |
 | `scripts/gl_probe.sh` | Milestone-1 GL/render check. |
 | `scripts/start-all.sh` | Supervisor: Xvfb → PX4+Gazebo → noVNC → uvicorn; GL fallback; signal teardown. |
-| `src/dronebot/stack.py` | `build_stack`/`start_stack`/`stop_stack` — shared wiring for REPL + web (DRY). |
-| `src/dronebot/web/framing.py` | Pure helpers: MJPEG part framing + telemetry-frame serializer. |
-| `src/dronebot/web/server.py` | FastAPI app: lifespan wiring, WS `/chat`, WS `/telemetry`, MJPEG `/camera`, static. |
-| `src/dronebot/web/static/index.html` | Cockpit markup (4 panels). |
-| `src/dronebot/web/static/cockpit.css` | Cockpit styling. |
-| `src/dronebot/web/static/cockpit.js` | Chat WS, telemetry WS, camera img, map canvas. |
-| `src/dronebot/app.py` | (modified) reuse `build_stack`/`start_stack`/`stop_stack`. |
-| `src/dronebot/agent/claude_agent.py` | (modified) slim `ClaudeAgentOptions` context. |
+| `src/squawd/stack.py` | `build_stack`/`start_stack`/`stop_stack` — shared wiring for REPL + web (DRY). |
+| `src/squawd/web/framing.py` | Pure helpers: MJPEG part framing + telemetry-frame serializer. |
+| `src/squawd/web/server.py` | FastAPI app: lifespan wiring, WS `/chat`, WS `/telemetry`, MJPEG `/camera`, static. |
+| `src/squawd/web/static/index.html` | Cockpit markup (4 panels). |
+| `src/squawd/web/static/cockpit.css` | Cockpit styling. |
+| `src/squawd/web/static/cockpit.js` | Chat WS, telemetry WS, camera img, map canvas. |
+| `src/squawd/app.py` | (modified) reuse `build_stack`/`start_stack`/`stop_stack`. |
+| `src/squawd/agent/claude_agent.py` | (modified) slim `ClaudeAgentOptions` context. |
 | `tests/test_framing.py` | Unit tests for `framing.py` (no sim). |
 | `README.md` | How to launch the container + cockpit. |
 
@@ -97,12 +97,12 @@ ENTRYPOINT ["/gl_probe.sh"]
 
 - [ ] **Step 4: Build the probe image**
 
-Run: `docker build -f .devcontainer/Dockerfile.probe -t dronebot-glprobe .`
+Run: `docker build -f .devcontainer/Dockerfile.probe -t squawd-glprobe .`
 Expected: image builds with no errors.
 
 - [ ] **Step 5: Run the probe with the Intel GPU passed through (THE GATE)**
 
-Run: `docker run --rm --device /dev/dri dronebot-glprobe`
+Run: `docker run --rm --device /dev/dri squawd-glprobe`
 Expected: prints an `OpenGL renderer` line and `GL PROBE PASS`.
 - If it prints `HARDWARE_GL_OK` with an Intel/Mesa renderer → hardware path; record it.
 - If it falls back to `SOFTWARE_GL_OK` (llvmpipe) → software path; the cockpit will work but Gazebo will be slow. Record this and set `LIBGL_ALWAYS_SOFTWARE=1` as the container default.
@@ -176,28 +176,28 @@ RUN git clone --depth 1 --recurse-submodules \
 # Prebuild the gz_x500_depth target so first run is fast (DONT_RUN avoids launch).
 RUN cd PX4-Autopilot && DONT_RUN=1 make px4_sitl gz_x500_depth || true
 
-# --- Python deps + dronebot (editable) ---
+# --- Python deps + squawd (editable) ---
 COPY --chown=${USERNAME}:${USERNAME} . /workspace
 WORKDIR /workspace
 RUN pip3 install --break-system-packages -e ".[dev]" \
     && pip3 install --break-system-packages fastapi uvicorn
 
 ENV PX4_DIR=/home/${USERNAME}/PX4-Autopilot
-ENV DRONEBOT_CONNECTION_URL=udp://:14540
+ENV SQUAWD_CONNECTION_URL=udp://:14540
 EXPOSE 8000 6080
 CMD ["bash", "scripts/start-all.sh"]
 ```
 
 - [ ] **Step 2: Verify the image builds (long — 10–20+ min)**
 
-Run: `docker build -f .devcontainer/Dockerfile --build-arg RENDER_GID=$(getent group render | cut -d: -f3) --build-arg VIDEO_GID=$(getent group video | cut -d: -f3) -t dronebot .`
+Run: `docker build -f .devcontainer/Dockerfile --build-arg RENDER_GID=$(getent group render | cut -d: -f3) --build-arg VIDEO_GID=$(getent group video | cut -d: -f3) -t squawd .`
 Expected: builds to completion. (PX4 build is slow; the `|| true` keeps a model-fetch hiccup from failing the image — the model is fetched again at first run if needed.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .devcontainer/Dockerfile
-git commit -m "feat: self-contained dronebot image (PX4 + Gazebo Harmonic + noVNC)"
+git commit -m "feat: self-contained squawd image (PX4 + Gazebo Harmonic + noVNC)"
 ```
 
 ### Task 3: Supervisor script
@@ -246,10 +246,10 @@ websockify --web=/usr/share/novnc 6080 localhost:5900 >/tmp/novnc.log 2>&1 &
 PIDS+=($!)
 
 # 4. Web app (FastAPI) on port 8000
-uvicorn dronebot.web.server:app --host 0.0.0.0 --port 8000 >/tmp/web.log 2>&1 &
+uvicorn squawd.web.server:app --host 0.0.0.0 --port 8000 >/tmp/web.log 2>&1 &
 PIDS+=($!)
 
-echo "dronebot up: cockpit http://localhost:8000  noVNC http://localhost:6080/vnc.html"
+echo "squawd up: cockpit http://localhost:8000  noVNC http://localhost:6080/vnc.html"
 wait
 ```
 
@@ -274,7 +274,7 @@ git commit -m "feat: container supervisor (display, sim, noVNC, web)"
 
 ```yaml
 services:
-  dronebot:
+  squawd:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
@@ -297,9 +297,9 @@ services:
 
 ```json
 {
-  "name": "dronebot",
+  "name": "squawd",
   "dockerComposeFile": "../docker-compose.yml",
-  "service": "dronebot",
+  "service": "squawd",
   "workspaceFolder": "/workspace",
   "forwardPorts": [8000, 6080],
   "portsAttributes": {
@@ -331,19 +331,19 @@ git commit -m "feat: dev container + compose (dri passthrough, OAuth mount, port
 ### Task 5: Pure framing helpers (TDD)
 
 **Files:**
-- Create: `src/dronebot/web/__init__.py` (empty)
-- Create: `src/dronebot/web/framing.py`
+- Create: `src/squawd/web/__init__.py` (empty)
+- Create: `src/squawd/web/framing.py`
 - Test: `tests/test_framing.py`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_framing.py
-from dronebot.web.framing import mjpeg_part, telemetry_frame
-from dronebot.control.state import StateStore
-from dronebot.control.geo import GeoPoint
-from dronebot.perception.store import PerceptionStore
-from dronebot.perception.provider import PerceptionSnapshot, Obstacle
+from squawd.web.framing import mjpeg_part, telemetry_frame
+from squawd.control.state import StateStore
+from squawd.control.geo import GeoPoint
+from squawd.perception.store import PerceptionStore
+from squawd.perception.provider import PerceptionSnapshot, Obstacle
 
 
 def test_mjpeg_part_has_boundary_and_payload():
@@ -385,17 +385,17 @@ def test_telemetry_frame_no_fix():
 - [ ] **Step 2: Run to verify failure**
 
 Run: `python3 -m pytest tests/test_framing.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'dronebot.web'`.
+Expected: FAIL with `ModuleNotFoundError: No module named 'squawd.web'`.
 
 - [ ] **Step 3: Implement `framing.py`**
 
 ```python
-# src/dronebot/web/framing.py
+# src/squawd/web/framing.py
 """Pure helpers for the web layer. No I/O — unit-testable without the sim."""
 from __future__ import annotations
 
-from dronebot.control.state import StateStore
-from dronebot.perception.store import PerceptionStore
+from squawd.control.state import StateStore
+from squawd.perception.store import PerceptionStore
 
 _BOUNDARY = b"frame"
 
@@ -447,23 +447,23 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/web/__init__.py src/dronebot/web/framing.py tests/test_framing.py
+git add src/squawd/web/__init__.py src/squawd/web/framing.py tests/test_framing.py
 git commit -m "feat: pure web framing helpers (MJPEG + telemetry frame)"
 ```
 
 ### Task 6: Shared stack wiring (`stack.py`) + REPL refactor
 
 **Files:**
-- Create: `src/dronebot/stack.py`
-- Modify: `src/dronebot/app.py`
+- Create: `src/squawd/stack.py`
+- Modify: `src/squawd/app.py`
 
 > Extracts the layer wiring so the REPL and the web server share ONE path (DRY). No unit test (imports mavsdk/SDK); verified when the container runs.
 
-- [ ] **Step 1: Implement `src/dronebot/stack.py`**
+- [ ] **Step 1: Implement `src/squawd/stack.py`**
 
 ```python
-# src/dronebot/stack.py
-"""Shared wiring for the dronebot stack — used by both the terminal REPL
+# src/squawd/stack.py
+"""Shared wiring for the squawd stack — used by both the terminal REPL
 (app.py) and the web server. One construction + lifecycle path (DRY).
 """
 from __future__ import annotations
@@ -474,19 +474,19 @@ from dataclasses import dataclass, field
 
 from mavsdk import System
 
-from dronebot.agent.claude_agent import DroneAgent
-from dronebot.config import Config
-from dronebot.control.controller import DroneController
-from dronebot.control.executor import CommandExecutor
-from dronebot.control.safety import SafetyGuard
-from dronebot.control.state import StateStore
-from dronebot.control.telemetry import start_telemetry
-from dronebot.flight_log import FlightLog
-from dronebot.perception.gazebo_perception import GazeboPerception
-from dronebot.perception.store import PerceptionStore
+from squawd.agent.claude_agent import DroneAgent
+from squawd.config import Config
+from squawd.control.controller import DroneController
+from squawd.control.executor import CommandExecutor
+from squawd.control.safety import SafetyGuard
+from squawd.control.state import StateStore
+from squawd.control.telemetry import start_telemetry
+from squawd.flight_log import FlightLog
+from squawd.perception.gazebo_perception import GazeboPerception
+from squawd.perception.store import PerceptionStore
 
-_RGB_TOPIC = os.environ.get("DRONEBOT_RGB_TOPIC", "/camera")
-_DEPTH_TOPIC = os.environ.get("DRONEBOT_DEPTH_TOPIC", "/depth_camera")
+_RGB_TOPIC = os.environ.get("SQUAWD_RGB_TOPIC", "/camera")
+_DEPTH_TOPIC = os.environ.get("SQUAWD_DEPTH_TOPIC", "/depth_camera")
 
 
 @dataclass
@@ -536,10 +536,10 @@ async def stop_stack(stack: Stack) -> None:
         task.cancel()
 ```
 
-- [ ] **Step 2: Rewrite `src/dronebot/app.py` to use the shared stack**
+- [ ] **Step 2: Rewrite `src/squawd/app.py` to use the shared stack**
 
 ```python
-# src/dronebot/app.py
+# src/squawd/app.py
 """Terminal entrypoint. Owns the single asyncio loop; reuses the shared stack."""
 from __future__ import annotations
 
@@ -547,9 +547,9 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from dronebot.chat.repl import run_repl
-from dronebot.config import load_config
-from dronebot.stack import build_stack, start_stack, stop_stack
+from squawd.chat.repl import run_repl
+from squawd.config import load_config
+from squawd.stack import build_stack, start_stack, stop_stack
 
 
 async def main() -> None:
@@ -571,7 +571,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 3: Verify it still imports/compiles**
 
-Run: `python3 -m py_compile src/dronebot/stack.py src/dronebot/app.py`
+Run: `python3 -m py_compile src/squawd/stack.py src/squawd/app.py`
 Expected: no output. (Runtime needs the sim; deferred.)
 
 - [ ] **Step 4: Run the full no-sim suite to confirm nothing broke**
@@ -582,14 +582,14 @@ Expected: still passes (framing + all v1 unit tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/stack.py src/dronebot/app.py
+git add src/squawd/stack.py src/squawd/app.py
 git commit -m "refactor: shared stack wiring for REPL + web (DRY)"
 ```
 
 ### Task 7: Slim the SDK context
 
 **Files:**
-- Modify: `src/dronebot/agent/claude_agent.py`
+- Modify: `src/squawd/agent/claude_agent.py`
 
 > The spike showed the SDK inherits the full Claude Code session (~53k tokens/turn). Restrict it so turns carry only the drone prompt + tools.
 
@@ -603,37 +603,37 @@ In `DroneAgent.__init__`, extend the options to NOT inherit host settings/hooks.
             mcp_servers={"flight": server},
             allowed_tools=ALLOWED_TOOLS,
             setting_sources=[],          # do NOT load user/project/local settings
-            cwd="/tmp/dronebot-agent",   # clean cwd: no project CLAUDE.md / hooks
+            cwd="/tmp/squawd-agent",   # clean cwd: no project CLAUDE.md / hooks
         )
 ```
-Also add, before constructing options, `import os; os.makedirs("/tmp/dronebot-agent", exist_ok=True)`.
+Also add, before constructing options, `import os; os.makedirs("/tmp/squawd-agent", exist_ok=True)`.
 
 > NOTE: `setting_sources=[]` is the documented Agent SDK switch to stop loading filesystem settings (which is what pulls in the SessionStart/superpowers hook). If a future SDK version renames it, the goal is unchanged: exclude host settings/hooks from this agent.
 
 - [ ] **Step 2: Verify it compiles**
 
-Run: `python3 -m py_compile src/dronebot/agent/claude_agent.py`
+Run: `python3 -m py_compile src/squawd/agent/claude_agent.py`
 Expected: no output.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/dronebot/agent/claude_agent.py
+git add src/squawd/agent/claude_agent.py
 git commit -m "perf: slim Agent SDK context (no host settings/hooks per turn)"
 ```
 
 ### Task 8: FastAPI server
 
 **Files:**
-- Create: `src/dronebot/web/server.py`
+- Create: `src/squawd/web/server.py`
 
 > No unit test (owns the live stack + SDK); verified in the container (Milestone 5). Uses a FastAPI lifespan so the whole stack runs on uvicorn's single asyncio loop.
 
-- [ ] **Step 1: Implement `src/dronebot/web/server.py`**
+- [ ] **Step 1: Implement `src/squawd/web/server.py`**
 
 ```python
-# src/dronebot/web/server.py
-"""FastAPI cockpit backend. Runs the shared dronebot stack inside the app
+# src/squawd/web/server.py
+"""FastAPI cockpit backend. Runs the shared squawd stack inside the app
 lifespan (single asyncio loop) and exposes chat, telemetry, and camera.
 """
 from __future__ import annotations
@@ -647,9 +647,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from dronebot.config import load_config
-from dronebot.stack import build_stack, start_stack, stop_stack
-from dronebot.web.framing import mjpeg_part, telemetry_frame
+from squawd.config import load_config
+from squawd.stack import build_stack, start_stack, stop_stack
+from squawd.web.framing import mjpeg_part, telemetry_frame
 
 _ABORT_WORDS = {"stop", "abort", "emergency", "land now"}
 _STATIC = Path(__file__).parent / "static"
@@ -737,13 +737,13 @@ app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
 
 - [ ] **Step 2: Verify it compiles**
 
-Run: `python3 -m py_compile src/dronebot/web/server.py`
+Run: `python3 -m py_compile src/squawd/web/server.py`
 Expected: no output (FastAPI is installed in the container; locally this only checks syntax).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/dronebot/web/server.py
+git add src/squawd/web/server.py
 git commit -m "feat: FastAPI cockpit backend (chat/telemetry/camera)"
 ```
 
@@ -754,8 +754,8 @@ git commit -m "feat: FastAPI cockpit backend (chat/telemetry/camera)"
 ### Task 9: Cockpit markup + styling
 
 **Files:**
-- Create: `src/dronebot/web/static/index.html`
-- Create: `src/dronebot/web/static/cockpit.css`
+- Create: `src/squawd/web/static/index.html`
+- Create: `src/squawd/web/static/cockpit.css`
 
 - [ ] **Step 1: Create `index.html`**
 
@@ -765,11 +765,11 @@ git commit -m "feat: FastAPI cockpit backend (chat/telemetry/camera)"
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>dronebot · mission control</title>
+  <title>squawd · mission control</title>
   <link rel="stylesheet" href="/cockpit.css" />
 </head>
 <body>
-  <header><span class="logo">▲ dronebot</span><span id="conn" class="badge">offline</span></header>
+  <header><span class="logo">▲ squawd</span><span id="conn" class="badge">offline</span></header>
   <main>
     <section class="panel chat">
       <h2>chat</h2>
@@ -839,14 +839,14 @@ button.abort { background:var(--warn); color:#fff; }
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/dronebot/web/static/index.html src/dronebot/web/static/cockpit.css
+git add src/squawd/web/static/index.html src/squawd/web/static/cockpit.css
 git commit -m "feat: cockpit markup + mission-control styling"
 ```
 
 ### Task 10: Cockpit JS (chat, telemetry, camera, map)
 
 **Files:**
-- Create: `src/dronebot/web/static/cockpit.js`
+- Create: `src/squawd/web/static/cockpit.js`
 
 - [ ] **Step 1: Create `cockpit.js`**
 
@@ -917,13 +917,13 @@ function drawMap(t) {
 
 - [ ] **Step 2: Sanity-check the JS parses**
 
-Run: `node --check src/dronebot/web/static/cockpit.js`
+Run: `node --check src/squawd/web/static/cockpit.js`
 Expected: no output (valid syntax). (If `node` isn't on the host, this is verified in the container.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/dronebot/web/static/cockpit.js
+git add src/squawd/web/static/cockpit.js
 git commit -m "feat: cockpit client (chat, telemetry, camera, map)"
 ```
 
@@ -943,7 +943,7 @@ export RENDER_GID=$(getent group render | cut -d: -f3)
 export VIDEO_GID=$(getent group video | cut -d: -f3)
 docker compose up --build
 ```
-Expected: build completes; logs show `dronebot up: cockpit http://localhost:8000 ...`. Give Gazebo ~30–60s.
+Expected: build completes; logs show `squawd up: cockpit http://localhost:8000 ...`. Give Gazebo ~30–60s.
 
 - [ ] **Step 2: Verify the sim + noVNC**
 
@@ -957,7 +957,7 @@ Expected: cockpit loads; `online` badge; the 3D iframe shows Gazebo; telemetry p
 
 - [ ] **Step 4: Confirm topic names if camera is blank**
 
-If the camera panel stays blank, inside the container run `gz topic -l | grep -Ei 'camera|depth|image'`, set `DRONEBOT_RGB_TOPIC` / `DRONEBOT_DEPTH_TOPIC` (and adjust the pixel-format assumption in `gazebo_perception.py` if needed per v1 Task 13), and restart.
+If the camera panel stays blank, inside the container run `gz topic -l | grep -Ei 'camera|depth|image'`, set `SQUAWD_RGB_TOPIC` / `SQUAWD_DEPTH_TOPIC` (and adjust the pixel-format assumption in `gazebo_perception.py` if needed per v1 Task 13), and restart.
 
 - [ ] **Step 5: Fly a conversation from the cockpit**
 

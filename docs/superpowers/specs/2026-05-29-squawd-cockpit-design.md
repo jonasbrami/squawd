@@ -1,4 +1,4 @@
-# Dronebot Cockpit & Dev Container — Design (Increment 2)
+# Squawd Cockpit & Dev Container — Design (Increment 2)
 
 **Date:** 2026-05-29
 **Status:** Approved (pending spec review)
@@ -6,7 +6,7 @@
 
 ## 1. Summary
 
-Make the dronebot fully self-contained and give it a browser-based "mission
+Make the squawd fully self-contained and give it a browser-based "mission
 control" cockpit. Everything — PX4 SITL, Gazebo Harmonic, the agent app, the
 web UI — runs inside a single dev container. The cockpit shows the live Gazebo
 3D world, a chat panel to talk to the drone, live telemetry, a home-relative
@@ -103,7 +103,7 @@ Published ports: **8000** (cockpit), **6080** (noVNC). The cockpit embeds noVNC
 `/dev/dri` permissions: the Dockerfile creates a `render`/`video` group with the
 host's GID (passed as build args) and adds the user; documented in the README.
 
-## 7. Web backend — `src/dronebot/web/server.py`
+## 7. Web backend — `src/squawd/web/server.py`
 
 FastAPI app; all the async stack lives in a **lifespan** context (single loop,
 per the v1 single-loop principle):
@@ -136,7 +136,7 @@ settings/hooks (e.g. `setting_sources=[]`, no `SessionStart` hook injection,
 `cwd` set to a clean dir), so each turn carries only the drone system prompt +
 tools. Verify the per-turn token count drops to ~system-prompt size.
 
-## 9. Cockpit frontend — `src/dronebot/web/static/`
+## 9. Cockpit frontend — `src/squawd/web/static/`
 
 Vanilla HTML/CSS/JS, built with the frontend-design skill for a real
 "mission-control" aesthetic (dark, high-contrast, monospace telemetry).

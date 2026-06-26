@@ -1,5 +1,5 @@
 [project]
-name = "dronebot-swarm"
+name = "squawd"
 version = "0.1.0"
 description = "LLM-piloted UAV swarm (simulation)"
 requires-python = ">=3.10"

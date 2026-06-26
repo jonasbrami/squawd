@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 
 N="${1:-3}"
 WORLD="${WORLD:-baylands}"
-IMG="dronebot-swarm:dev"
+IMG="squawd:dev"
 GPU="${GPU:-1}"
 RENDER_GID="$(getent group render | cut -d: -f3 || echo 992)"
 VIDEO_GID="$(getent group video | cut -d: -f3 || echo 44)"

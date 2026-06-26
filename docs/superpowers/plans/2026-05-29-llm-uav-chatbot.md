@@ -19,22 +19,22 @@
 | `pyproject.toml` | Project metadata, deps, pytest config (`asyncio_mode = "auto"`). |
 | `.env.example` | `ANTHROPIC_API_KEY`, connection URL, model name. |
 | `scripts/run_sim.sh` | Launch PX4 SITL + Gazebo with the camera/depth model + safety params. |
-| `src/dronebot/config.py` | The single sim-vs-real seam: limits, geofence, connection URL, model, sensor selection. Fail-closed defaults. |
-| `src/dronebot/control/geo.py` | Pure geodetic offset math. NED-frame conventions. No I/O. |
-| `src/dronebot/control/safety.py` | `SafetyGuard` + `SafetyLimits` + `DroneSnapshot`. Pure invariants. No I/O. |
-| `src/dronebot/control/state.py` | `StateStore` — authoritative drone state. |
-| `src/dronebot/control/telemetry.py` | Background task: MAVSDK streams → `StateStore`. |
-| `src/dronebot/control/controller.py` | `DroneController` — MAVSDK wrapper, fire-and-monitor actions, timeouts. |
-| `src/dronebot/control/executor.py` | `CommandExecutor` — portable command boundary; combines controller + safety + state. |
-| `src/dronebot/perception/provider.py` | `PerceptionProvider` interface + `PerceptionSnapshot`. |
-| `src/dronebot/perception/gazebo_perception.py` | v1 sensor reader (Gazebo). |
-| `src/dronebot/perception/store.py` | `PerceptionStore` — latest snapshot. |
-| `src/dronebot/agent/tools.py` | `@tool` adapters → `CommandExecutor` / `PerceptionStore`; return `is_error` on failure. |
-| `src/dronebot/agent/prompts.py` | System prompt. |
-| `src/dronebot/agent/claude_agent.py` | `ClaudeSDKClient` wiring + options. |
-| `src/dronebot/chat/repl.py` | Async stdin, status rendering, direct abort. |
-| `src/dronebot/flight_log.py` | Structured flight-record (utterance→tool→safety→result→telemetry). |
-| `src/dronebot/app.py` | Owns the single event loop; wires all layers; entrypoint. |
+| `src/squawd/config.py` | The single sim-vs-real seam: limits, geofence, connection URL, model, sensor selection. Fail-closed defaults. |
+| `src/squawd/control/geo.py` | Pure geodetic offset math. NED-frame conventions. No I/O. |
+| `src/squawd/control/safety.py` | `SafetyGuard` + `SafetyLimits` + `DroneSnapshot`. Pure invariants. No I/O. |
+| `src/squawd/control/state.py` | `StateStore` — authoritative drone state. |
+| `src/squawd/control/telemetry.py` | Background task: MAVSDK streams → `StateStore`. |
+| `src/squawd/control/controller.py` | `DroneController` — MAVSDK wrapper, fire-and-monitor actions, timeouts. |
+| `src/squawd/control/executor.py` | `CommandExecutor` — portable command boundary; combines controller + safety + state. |
+| `src/squawd/perception/provider.py` | `PerceptionProvider` interface + `PerceptionSnapshot`. |
+| `src/squawd/perception/gazebo_perception.py` | v1 sensor reader (Gazebo). |
+| `src/squawd/perception/store.py` | `PerceptionStore` — latest snapshot. |
+| `src/squawd/agent/tools.py` | `@tool` adapters → `CommandExecutor` / `PerceptionStore`; return `is_error` on failure. |
+| `src/squawd/agent/prompts.py` | System prompt. |
+| `src/squawd/agent/claude_agent.py` | `ClaudeSDKClient` wiring + options. |
+| `src/squawd/chat/repl.py` | Async stdin, status rendering, direct abort. |
+| `src/squawd/flight_log.py` | Structured flight-record (utterance→tool→safety→result→telemetry). |
+| `src/squawd/app.py` | Owns the single event loop; wires all layers; entrypoint. |
 | `spikes/loop_spike.py` | Throwaway go/no-go: MAVSDK coroutine awaited inside a Claude SDK in-process tool. |
 
 ---
@@ -45,11 +45,11 @@
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/dronebot/__init__.py` (empty)
-- Create: `src/dronebot/control/__init__.py` (empty)
-- Create: `src/dronebot/perception/__init__.py` (empty)
-- Create: `src/dronebot/agent/__init__.py` (empty)
-- Create: `src/dronebot/chat/__init__.py` (empty)
+- Create: `src/squawd/__init__.py` (empty)
+- Create: `src/squawd/control/__init__.py` (empty)
+- Create: `src/squawd/perception/__init__.py` (empty)
+- Create: `src/squawd/agent/__init__.py` (empty)
+- Create: `src/squawd/chat/__init__.py` (empty)
 - Create: `tests/__init__.py` (empty)
 - Create: `.env.example`
 - Create: `.gitignore`
@@ -58,7 +58,7 @@
 
 ```toml
 [project]
-name = "dronebot"
+name = "squawd"
 version = "0.1.0"
 description = "LLM-piloted UAV chatbot (simulation)"
 requires-python = ">=3.10"
@@ -101,8 +101,8 @@ flight_logs/
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 # MAVSDK connection to PX4 SITL (PX4 offboard API port)
-DRONEBOT_CONNECTION_URL=udp://:14540
-DRONEBOT_MODEL=claude-opus-4-8
+SQUAWD_CONNECTION_URL=udp://:14540
+SQUAWD_MODEL=claude-opus-4-8
 ```
 
 - [ ] **Step 4: Create the empty package files**
@@ -129,7 +129,7 @@ Expected: prints `ok`; pytest reports `no tests ran`.
 
 ```bash
 git add pyproject.toml .gitignore .env.example src tests
-git commit -m "chore: scaffold dronebot python project"
+git commit -m "chore: scaffold squawd python project"
 ```
 
 ### Task 2: Simulator launch script
@@ -321,7 +321,7 @@ These are the safety-critical, fully testable units. A sign error here flies the
 ### Task 5: Geodetic offset math (`geo.py`)
 
 **Files:**
-- Create: `src/dronebot/control/geo.py`
+- Create: `src/squawd/control/geo.py`
 - Test: `tests/test_geo.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -329,7 +329,7 @@ These are the safety-critical, fully testable units. A sign error here flies the
 ```python
 # tests/test_geo.py
 import math
-from dronebot.control.geo import GeoPoint, offset_point, horizontal_distance_m
+from squawd.control.geo import GeoPoint, offset_point, horizontal_distance_m
 
 # Zurich-ish reference; values are convention checks, not site-specific.
 ORIGIN = GeoPoint(latitude_deg=47.3977, longitude_deg=8.5456, absolute_altitude_m=500.0)
@@ -365,12 +365,12 @@ def test_distance_roundtrip_50m():
 - [ ] **Step 2: Run to verify failure**
 
 Run: `pytest tests/test_geo.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'dronebot.control.geo'`.
+Expected: FAIL with `ModuleNotFoundError: No module named 'squawd.control.geo'`.
 
 - [ ] **Step 3: Implement `geo.py`**
 
 ```python
-# src/dronebot/control/geo.py
+# src/squawd/control/geo.py
 """Geodetic offset math. Frame convention (NED-style inputs):
   north_m: + toward geographic north
   east_m:  + toward geographic east
@@ -421,14 +421,14 @@ Expected: 5 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/control/geo.py tests/test_geo.py
+git add src/squawd/control/geo.py tests/test_geo.py
 git commit -m "feat: geodetic NED offset math with frame conventions"
 ```
 
 ### Task 6: Safety invariants (`safety.py`)
 
 **Files:**
-- Create: `src/dronebot/control/safety.py`
+- Create: `src/squawd/control/safety.py`
 - Test: `tests/test_safety.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -436,8 +436,8 @@ git commit -m "feat: geodetic NED offset math with frame conventions"
 ```python
 # tests/test_safety.py
 import pytest
-from dronebot.control.geo import GeoPoint, offset_point
-from dronebot.control.safety import (
+from squawd.control.geo import GeoPoint, offset_point
+from squawd.control.safety import (
     SafetyGuard, SafetyLimits, SafetyError, DroneSnapshot,
 )
 
@@ -532,12 +532,12 @@ def test_goto_ok_within_all_limits():
 - [ ] **Step 2: Run to verify failure**
 
 Run: `pytest tests/test_safety.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'dronebot.control.safety'`.
+Expected: FAIL with `ModuleNotFoundError: No module named 'squawd.control.safety'`.
 
 - [ ] **Step 3: Implement `safety.py`**
 
 ```python
-# src/dronebot/control/safety.py
+# src/squawd/control/safety.py
 """Non-bypassable safety supervisor. Pure, LLM-agnostic, unit-tested.
 The prompt is NEVER a safety boundary; these invariants are.
 """
@@ -651,26 +651,26 @@ Expected: 10 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/control/safety.py tests/test_safety.py
+git add src/squawd/control/safety.py tests/test_safety.py
 git commit -m "feat: non-bypassable safety invariants"
 ```
 
 ### Task 7: Configuration (`config.py`)
 
 **Files:**
-- Create: `src/dronebot/config.py`
+- Create: `src/squawd/config.py`
 - Test: `tests/test_config.py`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_config.py
-from dronebot.config import load_config, Config
-from dronebot.control.safety import SafetyLimits
+from squawd.config import load_config, Config
+from squawd.control.safety import SafetyLimits
 
 
 def test_defaults_are_conservative(monkeypatch):
-    monkeypatch.delenv("DRONEBOT_MAX_ALTITUDE_M", raising=False)
+    monkeypatch.delenv("SQUAWD_MAX_ALTITUDE_M", raising=False)
     cfg = load_config()
     assert isinstance(cfg, Config)
     assert isinstance(cfg.limits, SafetyLimits)
@@ -680,13 +680,13 @@ def test_defaults_are_conservative(monkeypatch):
 
 
 def test_env_overrides_limit(monkeypatch):
-    monkeypatch.setenv("DRONEBOT_MAX_ALTITUDE_M", "15")
+    monkeypatch.setenv("SQUAWD_MAX_ALTITUDE_M", "15")
     cfg = load_config()
     assert cfg.limits.max_altitude_m == 15.0
 
 
 def test_connection_url_default(monkeypatch):
-    monkeypatch.delenv("DRONEBOT_CONNECTION_URL", raising=False)
+    monkeypatch.delenv("SQUAWD_CONNECTION_URL", raising=False)
     cfg = load_config()
     assert cfg.connection_url == "udp://:14540"
 ```
@@ -694,12 +694,12 @@ def test_connection_url_default(monkeypatch):
 - [ ] **Step 2: Run to verify failure**
 
 Run: `pytest tests/test_config.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'dronebot.config'`.
+Expected: FAIL with `ModuleNotFoundError: No module named 'squawd.config'`.
 
 - [ ] **Step 3: Implement `config.py`**
 
 ```python
-# src/dronebot/config.py
+# src/squawd/config.py
 """The single sim-vs-real seam. All limits fail closed (conservative
 defaults if unset). sim->hardware should be a config + connection change.
 """
@@ -708,7 +708,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from dronebot.control.safety import SafetyLimits
+from squawd.control.safety import SafetyLimits
 
 
 @dataclass(frozen=True)
@@ -726,15 +726,15 @@ def _envf(name: str, default: float) -> float:
 
 def load_config() -> Config:
     return Config(
-        connection_url=os.environ.get("DRONEBOT_CONNECTION_URL", "udp://:14540"),
-        model=os.environ.get("DRONEBOT_MODEL", "claude-opus-4-8"),
-        telemetry_rate_hz=_envf("DRONEBOT_TELEMETRY_RATE_HZ", 4.0),
+        connection_url=os.environ.get("SQUAWD_CONNECTION_URL", "udp://:14540"),
+        model=os.environ.get("SQUAWD_MODEL", "claude-opus-4-8"),
+        telemetry_rate_hz=_envf("SQUAWD_TELEMETRY_RATE_HZ", 4.0),
         limits=SafetyLimits(
-            max_altitude_m=_envf("DRONEBOT_MAX_ALTITUDE_M", 30.0),
-            geofence_radius_m=_envf("DRONEBOT_GEOFENCE_RADIUS_M", 100.0),
-            max_goto_distance_m=_envf("DRONEBOT_MAX_GOTO_DISTANCE_M", 60.0),
-            min_takeoff_altitude_m=_envf("DRONEBOT_MIN_TAKEOFF_ALT_M", 2.0),
-            max_takeoff_altitude_m=_envf("DRONEBOT_MAX_TAKEOFF_ALT_M", 20.0),
+            max_altitude_m=_envf("SQUAWD_MAX_ALTITUDE_M", 30.0),
+            geofence_radius_m=_envf("SQUAWD_GEOFENCE_RADIUS_M", 100.0),
+            max_goto_distance_m=_envf("SQUAWD_MAX_GOTO_DISTANCE_M", 60.0),
+            min_takeoff_altitude_m=_envf("SQUAWD_MIN_TAKEOFF_ALT_M", 2.0),
+            max_takeoff_altitude_m=_envf("SQUAWD_MAX_TAKEOFF_ALT_M", 20.0),
         ),
     )
 ```
@@ -747,7 +747,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/config.py tests/test_config.py
+git add src/squawd/config.py tests/test_config.py
 git commit -m "feat: fail-closed configuration seam"
 ```
 
@@ -758,16 +758,16 @@ git commit -m "feat: fail-closed configuration seam"
 ### Task 8: Authoritative `StateStore`
 
 **Files:**
-- Create: `src/dronebot/control/state.py`
+- Create: `src/squawd/control/state.py`
 - Test: `tests/test_state.py`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_state.py
-from dronebot.control.state import StateStore
-from dronebot.control.geo import GeoPoint
-from dronebot.control.safety import DroneSnapshot
+from squawd.control.state import StateStore
+from squawd.control.geo import GeoPoint
+from squawd.control.safety import DroneSnapshot
 
 
 def test_initial_state_is_disconnected():
@@ -809,14 +809,14 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `state.py`**
 
 ```python
-# src/dronebot/control/state.py
+# src/squawd/control/state.py
 """Single authoritative drone state, fed by the telemetry task. The LLM is
 never the source of truth; every safety check and status report reads here.
 """
 from __future__ import annotations
 
-from dronebot.control.geo import GeoPoint
-from dronebot.control.safety import DroneSnapshot
+from squawd.control.geo import GeoPoint
+from squawd.control.safety import DroneSnapshot
 
 
 class StateStore:
@@ -886,14 +886,14 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/control/state.py tests/test_state.py
+git add src/squawd/control/state.py tests/test_state.py
 git commit -m "feat: authoritative StateStore"
 ```
 
 ### Task 9: Telemetry background task
 
 **Files:**
-- Create: `src/dronebot/control/telemetry.py`
+- Create: `src/squawd/control/telemetry.py`
 - Test: `tests/test_telemetry.py`
 
 > Telemetry is fed by MAVSDK async-generator streams. To keep this unit-testable without the sim, `run_telemetry` takes the drone object via duck-typed accessors; the test passes a fake exposing async generators.
@@ -903,8 +903,8 @@ git commit -m "feat: authoritative StateStore"
 ```python
 # tests/test_telemetry.py
 import asyncio
-from dronebot.control.state import StateStore
-from dronebot.control.telemetry import update_position_stream
+from squawd.control.state import StateStore
+from squawd.control.telemetry import update_position_stream
 
 
 class _FakePosition:
@@ -934,7 +934,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `telemetry.py`**
 
 ```python
-# src/dronebot/control/telemetry.py
+# src/squawd/control/telemetry.py
 """Background tasks draining MAVSDK telemetry streams into the StateStore.
 Each stream is its own coroutine; run them with asyncio.gather in app.py.
 No blocking work here — these only update the store.
@@ -945,8 +945,8 @@ import asyncio
 import time
 from typing import AsyncIterator
 
-from dronebot.control.geo import GeoPoint
-from dronebot.control.state import StateStore
+from squawd.control.geo import GeoPoint
+from squawd.control.state import StateStore
 
 
 async def update_position_stream(stream: AsyncIterator, store: StateStore) -> None:
@@ -1001,21 +1001,21 @@ Expected: 1 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/control/telemetry.py tests/test_telemetry.py
+git add src/squawd/control/telemetry.py tests/test_telemetry.py
 git commit -m "feat: telemetry streams -> StateStore"
 ```
 
 ### Task 10: `DroneController` (MAVSDK, fire-and-monitor)
 
 **Files:**
-- Create: `src/dronebot/control/controller.py`
+- Create: `src/squawd/control/controller.py`
 
 > Integration-tested against SITL (no TDD-failing-test; it needs the sim). Actions issue the command and return quickly; monitoring of completion is the StateStore's job. Every action has a timeout.
 
 - [ ] **Step 1: Implement `controller.py`**
 
 ```python
-# src/dronebot/control/controller.py
+# src/squawd/control/controller.py
 """Thin async wrapper over MAVSDK actions. Fire-and-monitor: each method
 issues the command with a timeout and returns; it does NOT block until the
 maneuver completes. This is the code that transfers to real PX4 hardware.
@@ -1026,7 +1026,7 @@ import asyncio
 
 from mavsdk import System
 
-from dronebot.control.geo import GeoPoint
+from squawd.control.geo import GeoPoint
 
 _ACTION_TIMEOUT_S = 10.0
 
@@ -1092,7 +1092,7 @@ With the sim running, in a Python REPL (`. .venv/bin/activate && python`):
 ```python
 import asyncio
 from mavsdk import System
-from dronebot.control.controller import DroneController
+from squawd.control.controller import DroneController
 
 async def go():
     c = DroneController(System())
@@ -1108,14 +1108,14 @@ Expected: the quad arms, climbs to ~10m in Gazebo, then lands. No `ControllerErr
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/dronebot/control/controller.py
+git add src/squawd/control/controller.py
 git commit -m "feat: fire-and-monitor DroneController over MAVSDK"
 ```
 
 ### Task 11: `CommandExecutor` (the portable command boundary)
 
 **Files:**
-- Create: `src/dronebot/control/executor.py`
+- Create: `src/squawd/control/executor.py`
 - Test: `tests/test_executor.py`
 
 > This is the genuine swap-seam. Plain Python, typed args, structured `CommandResult`. The agent's `@tool`s are thin adapters over it. Unit-tested with a fake controller so safety logic is verified without the sim.
@@ -1124,10 +1124,10 @@ git commit -m "feat: fire-and-monitor DroneController over MAVSDK"
 
 ```python
 # tests/test_executor.py
-from dronebot.control.executor import CommandExecutor, CommandResult
-from dronebot.control.state import StateStore
-from dronebot.control.safety import SafetyGuard, SafetyLimits
-from dronebot.control.geo import GeoPoint
+from squawd.control.executor import CommandExecutor, CommandResult
+from squawd.control.state import StateStore
+from squawd.control.safety import SafetyGuard, SafetyLimits
+from squawd.control.geo import GeoPoint
 
 LIMITS = SafetyLimits(30.0, 100.0, 60.0, 2.0, 20.0)
 HOME = GeoPoint(47.3977, 8.5456, 500.0)
@@ -1194,7 +1194,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `executor.py`**
 
 ```python
-# src/dronebot/control/executor.py
+# src/squawd/control/executor.py
 """Portable command boundary. SDK-agnostic. Combines controller + safety +
 state into typed commands returning structured results. Any agent (Claude,
 other LLM, scripted) targets this interface.
@@ -1203,10 +1203,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dronebot.control.controller import ControllerError
-from dronebot.control.geo import GeoPoint, offset_point
-from dronebot.control.safety import SafetyError, SafetyGuard
-from dronebot.control.state import StateStore
+from squawd.control.controller import ControllerError
+from squawd.control.geo import GeoPoint, offset_point
+from squawd.control.safety import SafetyError, SafetyGuard
+from squawd.control.state import StateStore
 
 
 @dataclass(frozen=True)
@@ -1285,7 +1285,7 @@ Expected: 4 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/control/executor.py tests/test_executor.py
+git add src/squawd/control/executor.py tests/test_executor.py
 git commit -m "feat: CommandExecutor portable command boundary"
 ```
 
@@ -1296,16 +1296,16 @@ git commit -m "feat: CommandExecutor portable command boundary"
 ### Task 12: `PerceptionProvider` interface + `PerceptionStore`
 
 **Files:**
-- Create: `src/dronebot/perception/provider.py`
-- Create: `src/dronebot/perception/store.py`
+- Create: `src/squawd/perception/provider.py`
+- Create: `src/squawd/perception/store.py`
 - Test: `tests/test_perception_store.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_perception_store.py
-from dronebot.perception.provider import PerceptionSnapshot, Obstacle
-from dronebot.perception.store import PerceptionStore
+from squawd.perception.provider import PerceptionSnapshot, Obstacle
+from squawd.perception.store import PerceptionStore
 
 
 def test_store_starts_empty():
@@ -1342,7 +1342,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `provider.py`**
 
 ```python
-# src/dronebot/perception/provider.py
+# src/squawd/perception/provider.py
 """Perception modularity contract. The agent and control layers only ever
 see PerceptionSnapshot — never the sensor source. Swap GazeboPerception for
 a ROS2 / real-sensor provider later without touching anything above.
@@ -1379,11 +1379,11 @@ class PerceptionProvider(ABC):
 - [ ] **Step 4: Implement `store.py`**
 
 ```python
-# src/dronebot/perception/store.py
+# src/squawd/perception/store.py
 """Authoritative latest perception snapshot. Mirrors StateStore."""
 from __future__ import annotations
 
-from dronebot.perception.provider import PerceptionSnapshot
+from squawd.perception.provider import PerceptionSnapshot
 
 
 class PerceptionStore:
@@ -1413,21 +1413,21 @@ Expected: 3 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/dronebot/perception/provider.py src/dronebot/perception/store.py tests/test_perception_store.py
+git add src/squawd/perception/provider.py src/squawd/perception/store.py tests/test_perception_store.py
 git commit -m "feat: perception interface + store"
 ```
 
 ### Task 13: `GazeboPerception` (v1 sensor reader)
 
 **Files:**
-- Create: `src/dronebot/perception/gazebo_perception.py`
+- Create: `src/squawd/perception/gazebo_perception.py`
 
 > Reads the depth/camera sensor the `gz_x500_depth` model publishes on Gazebo transport topics. Gazebo's Python transport API (`gz.transport`) callbacks are synchronous; we marshal frames into the async store via `asyncio.to_thread` / a thread-safe handoff so we never block the main loop (per spec §5.1/§7). No failing-test TDD — verified against the running sim.
 
 - [ ] **Step 1: Implement `gazebo_perception.py`**
 
 ```python
-# src/dronebot/perception/gazebo_perception.py
+# src/squawd/perception/gazebo_perception.py
 """v1 perception: subscribe to the sim's RGB + depth camera, derive a coarse
 nearest-obstacle reading and the latest JPEG frame, push PerceptionSnapshots
 into the PerceptionStore. Easy-sensors-first; swappable later.
@@ -1442,7 +1442,7 @@ import asyncio
 import time
 from queue import Empty, Queue
 
-from dronebot.perception.provider import (
+from squawd.perception.provider import (
     Obstacle, PerceptionProvider, PerceptionSnapshot,
 )
 
@@ -1518,7 +1518,7 @@ Expected: a non-empty JPEG length and a plausible summary ("surroundings clear" 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/dronebot/perception/gazebo_perception.py
+git add src/squawd/perception/gazebo_perception.py
 git commit -m "feat: Gazebo RGB+depth perception provider"
 ```
 
@@ -1529,14 +1529,14 @@ git commit -m "feat: Gazebo RGB+depth perception provider"
 ### Task 14: System prompt
 
 **Files:**
-- Create: `src/dronebot/agent/prompts.py`
+- Create: `src/squawd/agent/prompts.py`
 - Test: `tests/test_prompts.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_prompts.py
-from dronebot.agent.prompts import SYSTEM_PROMPT
+from squawd.agent.prompts import SYSTEM_PROMPT
 
 
 def test_prompt_sets_role_and_safety_framing():
@@ -1554,7 +1554,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `prompts.py`**
 
 ```python
-# src/dronebot/agent/prompts.py
+# src/squawd/agent/prompts.py
 """System prompt for the drone-piloting agent."""
 
 SYSTEM_PROMPT = """\
@@ -1584,14 +1584,14 @@ Expected: 1 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/agent/prompts.py tests/test_prompts.py
+git add src/squawd/agent/prompts.py tests/test_prompts.py
 git commit -m "feat: drone pilot system prompt"
 ```
 
 ### Task 15: Tool adapters
 
 **Files:**
-- Create: `src/dronebot/agent/tools.py`
+- Create: `src/squawd/agent/tools.py`
 - Test: `tests/test_tools.py`
 
 > Tools are thin adapters: call `CommandExecutor`/`PerceptionStore`, format the result, and **return `is_error: True` rather than raising** (an uncaught exception kills the SDK query loop, per spec §5.4). `build_flight_tools(executor, perception_store)` returns the SDK server so dependencies are injected (testable).
@@ -1600,8 +1600,8 @@ git commit -m "feat: drone pilot system prompt"
 
 ```python
 # tests/test_tools.py
-from dronebot.agent.tools import make_takeoff_tool, make_status_tool
-from dronebot.control.executor import CommandResult
+from squawd.agent.tools import make_takeoff_tool, make_status_tool
+from squawd.control.executor import CommandResult
 
 
 class FakeExecutor:
@@ -1641,7 +1641,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `tools.py`**
 
 ```python
-# src/dronebot/agent/tools.py
+# src/squawd/agent/tools.py
 """Claude Agent SDK in-process tool adapters over CommandExecutor and
 PerceptionStore. Thin: translate, format, and surface errors as is_error.
 """
@@ -1651,8 +1651,8 @@ import base64
 
 from claude_agent_sdk import tool, create_sdk_mcp_server
 
-from dronebot.control.executor import CommandExecutor, CommandResult
-from dronebot.perception.store import PerceptionStore
+from squawd.control.executor import CommandExecutor, CommandResult
+from squawd.perception.store import PerceptionStore
 
 
 def _text(msg: str, is_error: bool = False) -> dict:
@@ -1758,21 +1758,21 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/agent/tools.py tests/test_tools.py
+git add src/squawd/agent/tools.py tests/test_tools.py
 git commit -m "feat: flight tool adapters (is_error on failure)"
 ```
 
 ### Task 16: Agent wiring (`claude_agent.py`)
 
 **Files:**
-- Create: `src/dronebot/agent/claude_agent.py`
+- Create: `src/squawd/agent/claude_agent.py`
 
 > Wires the SDK options and exposes a small async interface (`ask`, `interrupt`) the REPL uses. No failing-test TDD (it owns a live SDK client); verified in the end-to-end task.
 
 - [ ] **Step 1: Implement `claude_agent.py`**
 
 ```python
-# src/dronebot/agent/claude_agent.py
+# src/squawd/agent/claude_agent.py
 """Claude Agent SDK wiring. Owns the ClaudeSDKClient lifecycle and exposes a
 minimal interface to the REPL: ask(text) streams a reply; interrupt() aborts
 the current turn (the hard safety abort is separate and bypasses this).
@@ -1783,10 +1783,10 @@ from typing import AsyncIterator
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
-from dronebot.agent.prompts import SYSTEM_PROMPT
-from dronebot.agent.tools import build_flight_server, ALLOWED_TOOLS
-from dronebot.control.executor import CommandExecutor
-from dronebot.perception.store import PerceptionStore
+from squawd.agent.prompts import SYSTEM_PROMPT
+from squawd.agent.tools import build_flight_server, ALLOWED_TOOLS
+from squawd.control.executor import CommandExecutor
+from squawd.perception.store import PerceptionStore
 
 
 class DroneAgent:
@@ -1823,7 +1823,7 @@ class DroneAgent:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add src/dronebot/agent/claude_agent.py
+git add src/squawd/agent/claude_agent.py
 git commit -m "feat: DroneAgent SDK wiring"
 ```
 
@@ -1834,7 +1834,7 @@ git commit -m "feat: DroneAgent SDK wiring"
 ### Task 17: Structured flight log
 
 **Files:**
-- Create: `src/dronebot/flight_log.py`
+- Create: `src/squawd/flight_log.py`
 - Test: `tests/test_flight_log.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1842,7 +1842,7 @@ git commit -m "feat: DroneAgent SDK wiring"
 ```python
 # tests/test_flight_log.py
 import json
-from dronebot.flight_log import FlightLog
+from squawd.flight_log import FlightLog
 
 
 def test_log_writes_jsonl_records(tmp_path):
@@ -1866,7 +1866,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Implement `flight_log.py`**
 
 ```python
-# src/dronebot/flight_log.py
+# src/squawd/flight_log.py
 """Append-only JSONL flight record: utterance -> tool call -> safety
 decision -> result -> telemetry. The experiment's audit trail.
 """
@@ -1895,21 +1895,21 @@ Expected: 1 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/dronebot/flight_log.py tests/test_flight_log.py
+git add src/squawd/flight_log.py tests/test_flight_log.py
 git commit -m "feat: structured JSONL flight log"
 ```
 
 ### Task 18: REPL with direct (non-LLM) abort
 
 **Files:**
-- Create: `src/dronebot/chat/repl.py`
+- Create: `src/squawd/chat/repl.py`
 
 > Async stdin via `loop.run_in_executor(None, input, ...)`. Typing `stop`/`abort`/`land` (or empty line + Ctrl-C handling) triggers a **direct** controller hold/land that bypasses the agent (spec §5.2), and also calls `agent.interrupt()`. Verified end-to-end in Task 20.
 
 - [ ] **Step 1: Implement `repl.py`**
 
 ```python
-# src/dronebot/chat/repl.py
+# src/squawd/chat/repl.py
 """Terminal chat loop. Renders agent replies and status; owns the direct,
 non-LLM abort path.
 """
@@ -1917,9 +1917,9 @@ from __future__ import annotations
 
 import asyncio
 
-from dronebot.agent.claude_agent import DroneAgent
-from dronebot.control.executor import CommandExecutor
-from dronebot.flight_log import FlightLog
+from squawd.agent.claude_agent import DroneAgent
+from squawd.control.executor import CommandExecutor
+from squawd.flight_log import FlightLog
 
 _ABORT_WORDS = {"stop", "abort", "emergency", "land now"}
 
@@ -1974,21 +1974,21 @@ async def run_repl(agent: DroneAgent, executor: CommandExecutor, log: FlightLog)
 - [ ] **Step 2: Commit**
 
 ```bash
-git add src/dronebot/chat/repl.py
+git add src/squawd/chat/repl.py
 git commit -m "feat: REPL with direct non-LLM abort"
 ```
 
 ### Task 19: Application wiring (`app.py`) — single loop owner
 
 **Files:**
-- Create: `src/dronebot/app.py`
+- Create: `src/squawd/app.py`
 
 > Owns the one event loop. Order matters: connect the controller, start telemetry, start perception, enter the agent, then run the REPL. On exit, cancel telemetry + stop perception cleanly.
 
 - [ ] **Step 1: Implement `app.py`**
 
 ```python
-# src/dronebot/app.py
+# src/squawd/app.py
 """Entrypoint. Owns the single asyncio loop and wires all layers."""
 from __future__ import annotations
 
@@ -1998,21 +1998,21 @@ import os
 from dotenv import load_dotenv
 from mavsdk import System
 
-from dronebot.agent.claude_agent import DroneAgent
-from dronebot.chat.repl import run_repl
-from dronebot.config import load_config
-from dronebot.control.controller import DroneController
-from dronebot.control.executor import CommandExecutor
-from dronebot.control.safety import SafetyGuard
-from dronebot.control.state import StateStore
-from dronebot.control.telemetry import start_telemetry
-from dronebot.flight_log import FlightLog
-from dronebot.perception.gazebo_perception import GazeboPerception
-from dronebot.perception.store import PerceptionStore
+from squawd.agent.claude_agent import DroneAgent
+from squawd.chat.repl import run_repl
+from squawd.config import load_config
+from squawd.control.controller import DroneController
+from squawd.control.executor import CommandExecutor
+from squawd.control.safety import SafetyGuard
+from squawd.control.state import StateStore
+from squawd.control.telemetry import start_telemetry
+from squawd.flight_log import FlightLog
+from squawd.perception.gazebo_perception import GazeboPerception
+from squawd.perception.store import PerceptionStore
 
 # Topic names confirmed via `gz topic -l` in Task 13.
-_RGB_TOPIC = os.environ.get("DRONEBOT_RGB_TOPIC", "/camera")
-_DEPTH_TOPIC = os.environ.get("DRONEBOT_DEPTH_TOPIC", "/depth_camera")
+_RGB_TOPIC = os.environ.get("SQUAWD_RGB_TOPIC", "/camera")
+_DEPTH_TOPIC = os.environ.get("SQUAWD_DEPTH_TOPIC", "/depth_camera")
 
 
 async def main() -> None:
@@ -2061,7 +2061,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Commit**
 
 ```bash
-git add src/dronebot/app.py
+git add src/squawd/app.py
 git commit -m "feat: app entrypoint owning the single event loop"
 ```
 
@@ -2081,7 +2081,7 @@ Expected: Gazebo up, `Ready for takeoff!`.
 
 - [ ] **Step 3: Run the app and fly a scripted conversation**
 
-Run (new terminal, `ANTHROPIC_API_KEY` set): `. .venv/bin/activate && python -m dronebot.app`
+Run (new terminal, `ANTHROPIC_API_KEY` set): `. .venv/bin/activate && python -m squawd.app`
 Then type, one at a time:
 ```
 arm

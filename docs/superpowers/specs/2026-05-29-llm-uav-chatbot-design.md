@@ -233,7 +233,7 @@ not a code change.
 ```
 drone/
   README.md            .env.example      pyproject.toml
-  src/dronebot/
+  src/squawd/
     config.py          # fail-closed limits, geofence, conn URLs — sim-vs-real seam
     flight_log.py      # structured flight-record
     app.py             # owns the single event loop; wires layers
