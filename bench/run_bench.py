@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -92,7 +93,7 @@ def run_one(backend: str, res: str, n: int, settle: float, measure: float,
 
     sample_path = os.path.join(outdir, f"samples-{backend}-{res}-{n}.jsonl")
     sampler = subprocess.Popen(
-        ["python", "-m", "bench.sample_host", "--out", sample_path],
+        [sys.executable, "-m", "bench.sample_host", "--out", sample_path],
         cwd=ROOT)
     try:
         env = (f"RENDER_BACKEND={backend} CAM_W={w} CAM_H={h} CAM_FPS={cam_fps} "
@@ -118,7 +119,11 @@ def run_one(backend: str, res: str, n: int, settle: float, measure: float,
         rtf = _rtf()
         alive = sum(1 for d in st1["drones"] if d.get("armed") is True)
 
-        samples = [json.loads(l) for l in open(sample_path)] if os.path.exists(sample_path) else []
+        if os.path.exists(sample_path):
+            with open(sample_path) as fh:
+                samples = [json.loads(l) for l in fh]
+        else:
+            samples = []
         window = slice_samples(samples, t0, t0 + dt)
         peak = peak_sample(window)
         limit = probes.limiting_resource(peak) if peak else "none"
@@ -127,8 +132,16 @@ def run_one(backend: str, res: str, n: int, settle: float, measure: float,
         return {"backend": backend, "resolution": res, "n": n,
                 "fps": fsum, "rtf": rtf, "alive": alive,
                 "limiting": limit, "peak": peak, "verdict": verdict}
+    except Exception as e:
+        return {"backend": backend, "resolution": res, "n": n,
+                "verdict": {"pass": False, "reasons": [f"infra: {type(e).__name__}"]},
+                "infra_fail": True}
     finally:
         sampler.terminate()
+        try:
+            sampler.wait(timeout=5)
+        except Exception:
+            pass
         _sh("docker rm -f swarm-multi 2>/dev/null || true", timeout=60)
 
 
@@ -158,7 +171,8 @@ def run_sweep(backends, resolutions, n_cap, settle, measure, outdir, cam_fps=10)
             kr_path = os.path.join(outdir, f"run-{backend}-{res}-{knee}.json")
             limiting = "none"
             if os.path.exists(kr_path):
-                limiting = json.load(open(kr_path)).get("limiting", "none")
+                with open(kr_path) as fh:
+                    limiting = json.load(fh).get("limiting", "none")
             rows.append({"backend": backend, "resolution": res,
                          "knee_n": knee, "limiting": limiting})
     table = frontier.build_frontier_table(rows)
@@ -180,7 +194,7 @@ def main():
     ap.add_argument("--settle", type=float, default=30.0)
     ap.add_argument("--measure", type=float, default=60.0)
     ap.add_argument("--cam-fps", type=int, default=10)
-    ap.add_argument("--out", default=os.path.join("docs", "benchmarks", "run"))
+    ap.add_argument("--out", default=os.path.join("docs", "benchmarks", time.strftime("%Y%m%dT%H%M%S")))
     args = ap.parse_args()
     backends = args.backends.split(",")
     resolutions = args.resolutions.split(",")
@@ -189,15 +203,11 @@ def main():
 
     if args.smoke:
         # one fixed N across the resolution sweep, no knee search
-        rows = []
         for backend in backends:
             for res in resolutions:
                 r = run_one(backend, res, 8, args.settle, args.measure, outdir, args.cam_fps)
                 with open(os.path.join(outdir, f"smoke-{backend}-{res}.json"), "w") as jf:
                     json.dump(r, jf, indent=2)
-                rows.append({"backend": backend, "resolution": res,
-                             "knee_n": 8 if r["verdict"]["pass"] else 0,
-                             "limiting": r.get("limiting", "none")})
                 print(f"[smoke] {backend} {res} N=8 -> "
                       f"{'PASS' if r['verdict']['pass'] else 'FAIL'} {r.get('fps',{})}")
         return
