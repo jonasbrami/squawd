@@ -71,6 +71,7 @@ async def state(request):
             _text(bridge.latest(f"/swarm/cmd/drone_{i}")),
             _text(bridge.latest(f"/swarm/report/drone_{i}")),
             cameras.has(i),
+            cameras.seq(i),
         ))
     return JSONResponse({"n": N, "drones": drones, "chat": chat.all()})
 
