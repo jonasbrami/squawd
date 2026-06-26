@@ -39,6 +39,18 @@ def peak_sample(samples: list[dict]) -> dict:
     return max(samples, key=_load) if samples else {}
 
 
+def run_with_retry(run_fn, attempts: int = 2):
+    """Call run_fn() up to `attempts` times; retry only while the result is an
+    infra failure (transient bring-up), and return the last result. A capacity
+    PASS/FAIL is returned immediately (never retried)."""
+    result = None
+    for _ in range(max(1, attempts)):
+        result = run_fn()
+        if not (result and result.get("infra_fail")):
+            return result
+    return result
+
+
 # ---- glue ----
 def _sh(cmd: str, timeout: float = 60.0) -> str:
     return subprocess.run(cmd, shell=True, capture_output=True, text=True,
@@ -155,7 +167,7 @@ def run_sweep(backends, resolutions, n_cap, settle, measure, outdir, cam_fps=10)
         seed = 1
         for res in resolutions:                    # ascending res -> capacity non-increasing
             def passes(n, _b=backend, _r=res):
-                r = run_one(_b, _r, n, settle, measure, outdir, cam_fps)
+                r = run_with_retry(lambda: run_one(_b, _r, n, settle, measure, outdir, cam_fps))
                 with open(os.path.join(outdir, f"run-{_b}-{_r}-{n}.json"), "w") as jf:
                     json.dump(r, jf, indent=2)
                 v = r["verdict"]

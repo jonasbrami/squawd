@@ -17,3 +17,22 @@ def test_peak_sample_picks_busiest():
 
 def test_peak_sample_empty():
     assert run_bench.peak_sample([]) == {}
+
+
+def test_run_with_retry_returns_pass_immediately():
+    calls = []
+    def run_fn():
+        calls.append(1)
+        return {"verdict": {"pass": True}}
+    assert run_bench.run_with_retry(run_fn)["verdict"]["pass"] is True
+    assert len(calls) == 1                    # no retry on a clean result
+
+def test_run_with_retry_retries_once_on_infra_fail_then_succeeds():
+    results = [{"infra_fail": True, "verdict": {"pass": False}},
+               {"verdict": {"pass": True}}]
+    it = iter(results)
+    assert run_bench.run_with_retry(lambda: next(it))["verdict"]["pass"] is True
+
+def test_run_with_retry_gives_up_after_attempts():
+    r = run_bench.run_with_retry(lambda: {"infra_fail": True, "verdict": {"pass": False}}, attempts=2)
+    assert r["infra_fail"] is True            # exhausted retries, returns last
