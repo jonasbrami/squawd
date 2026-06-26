@@ -1,8 +1,9 @@
-"""World: loading city_boxes.json, frame mapping, and target resolution."""
+"""World: loading <world>_boxes.json, frame mapping, and target resolution."""
 import json
 from types import SimpleNamespace
 
 from agents.world import World
+from agents.world.model import _default_boxes_path
 
 
 def _world(tmp_path):
@@ -25,6 +26,22 @@ class FakeBridge:
 def test_missing_file_falls_back_to_empty(tmp_path):
     w = World(str(tmp_path / "nope.json"))
     assert w.buildings == [] and w.spawn_spacing == 3.0
+
+
+def test_default_boxes_path_is_world_aware(monkeypatch):
+    monkeypatch.delenv("CITY_BOXES", raising=False)
+    monkeypatch.setenv("GZ_WORLD", "baylands")
+    assert _default_boxes_path().endswith("/baylands_boxes.json")
+    monkeypatch.setenv("GZ_WORLD", "city")
+    assert _default_boxes_path().endswith("/city_boxes.json")
+
+
+def test_baylands_default_has_no_buildings(monkeypatch):
+    # baylands ships no *_boxes.json -> World falls back to empty buildings, so
+    # scan reports only drones (no phantom city buildings leaking across worlds).
+    monkeypatch.delenv("CITY_BOXES", raising=False)
+    monkeypatch.setenv("GZ_WORLD", "baylands")
+    assert World().buildings == []
 
 
 def test_resolve_building_and_unknown(tmp_path):

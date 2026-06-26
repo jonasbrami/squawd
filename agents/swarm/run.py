@@ -19,6 +19,7 @@ import shutil
 
 from agents.core.bus import RosBridge
 from agents.core.camera import GzCameras
+from agents.core.singleton import acquire_singleton_lock
 from agents.world import World
 from agents.swarm.commander import CommanderAgent
 from agents.swarm.drone import DroneAgent
@@ -67,4 +68,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    # Refuse to start a second agents process (stacked Commanders -> dispatch storm).
+    # Held for the process lifetime; released automatically on exit.
+    _swarm_lock = acquire_singleton_lock()
     asyncio.run(main())

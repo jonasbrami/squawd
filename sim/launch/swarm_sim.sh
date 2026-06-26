@@ -35,17 +35,37 @@ export PATH=/usr/bin:$PATH
 export GZ_CONFIG_PATH=/usr/share/gz
 
 cd /workspace/PX4-Autopilot
-
-# Build a richer 'city' world (buildings) from default.sdf, idempotently, and use
-# it — so the drones + cameras have something to see. Override with PX4_GZ_WORLD.
 WORLDS="Tools/simulation/gz/worlds"
-if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_city_world.py ]; then
-  python3 /workspace/sim/worlds/make_city_world.py "$WORLDS/default.sdf" "$WORLDS/city.sdf" || true
+
+# Default world: 'baylands' — PX4's realistic coastal scene (road, grass, water,
+# trees). Override with PX4_GZ_WORLD=city for the procedural building world (which
+# also gives the drones building obstacle-awareness via scan). NB: baylands' trees
+# render as black silhouettes under headless EGL (known artifact, scene is fine).
+export PX4_GZ_WORLD="${PX4_GZ_WORLD:-baylands}"
+
+# Per-world asset setup.
+if [ "$PX4_GZ_WORLD" = "city" ]; then
+  # Build the 'city' world (buildings) from default.sdf, idempotently — and the
+  # matching city_boxes.json the agents read for obstacle/proximity awareness.
+  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_city_world.py ]; then
+    python3 /workspace/sim/worlds/make_city_world.py "$WORLDS/default.sdf" "$WORLDS/city.sdf" || true
+  fi
+elif [ "$PX4_GZ_WORLD" = "baylands" ]; then
+  # baylands.sdf <include>s two Gazebo Fuel models (terrain + Coast Water). Cache
+  # them once (needs internet on the first run; mount /root/.gz/fuel to persist).
+  if [ ! -d "$HOME/.gz/fuel/fuel.gazebosim.org/openrobotics/models/baylands" ]; then
+    echo "downloading baylands Fuel models (one-time, ~400MB)…"
+    gz fuel download -u "https://fuel.gazebosim.org/1.0/OpenRobotics/models/baylands" -t model || true
+    gz fuel download -u "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Coast Water" -t model || true
+  fi
 fi
-export PX4_GZ_WORLD="${PX4_GZ_WORLD:-city}"
 
 N=${SWARM_N:-3}
 MODEL=${PX4_MODEL:-gz_x500_depth}
+
+# PX4_GZ_STANDALONE needs the model/world resource path so it can spawn into the
+# already-running gz server (below).
+export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH}:/workspace/PX4-Autopilot/$WORLDS/../models:/workspace/PX4-Autopilot/$WORLDS"
 
 # Patch the OakD-Lite camera (idempotent) so each drone gets a UNIQUE, low-res
 # camera topic: drop the shared `<topic>camera</topic>` override (-> gz scopes the
@@ -61,17 +81,28 @@ if [ -f "$OAKD" ] && grep -q "<topic>camera</topic>" "$OAKD"; then
     "$OAKD"
 fi
 
+# Start gz as a PERSISTENT standalone server FIRST, then attach every PX4 instance
+# to it (PX4_GZ_STANDALONE=1). Previously instance 0 launched gz itself and raced
+# its own create-service — on a busy host (or the heavier baylands world) it timed
+# out and KILLED the gz it spawned, taking the whole swarm down. Starting gz up
+# front and waiting until its spawn service is live removes the race entirely.
+echo "starting gz server ($PX4_GZ_WORLD)…"
+gz sim -v1 -r -s "$WORLDS/$PX4_GZ_WORLD.sdf" >/tmp/gz.log 2>&1 &
+for _ in $(seq 1 60); do
+  gz service -l 2>/dev/null | grep -q "/world/$PX4_GZ_WORLD/create" && break
+  sleep 2
+done
+
 # Single uXRCE-DDS Agent bridges all instances to ROS2.
 MicroXRCEAgent udp4 -p 8888 >/tmp/xrce.log 2>&1 &
 sleep 2
 
 for i in $(seq 0 $((N-1))); do
   y=$((i * 3))
-  PX4_SYS_AUTOSTART=4001 PX4_SIM_MODEL="${MODEL}" \
+  PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4001 PX4_SIM_MODEL="${MODEL}" \
     PX4_GZ_MODEL_POSE="0,${y},0.5" PX4_UXRCE_DDS_NS="px4_${i}" \
     ./build/px4_sitl_default/bin/px4 -i "${i}" -d >"/tmp/px4_${i}.log" 2>&1 &
-  # first instance starts the gz server; give it time before others join
-  if [ "$i" -eq 0 ]; then sleep 18; else sleep 6; fi
+  sleep 3                                  # stagger model spawns into the live gz
 done
 
 # one mavsdk_server per drone
@@ -79,5 +110,5 @@ for i in $(seq 0 $((N-1))); do
   mavsdk_server -p $((50051 + i)) "udpin://0.0.0.0:$((14540 + i))" >"/tmp/mav_${i}.log" 2>&1 &
 done
 
-echo "swarm bring-up launched (N=$N)"
+echo "swarm bring-up launched (N=$N, world=$PX4_GZ_WORLD)"
 wait

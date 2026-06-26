@@ -11,7 +11,8 @@ the Commander sees the whole picture (the situation map) and decides follow-ups.
 import asyncio
 
 from std_msgs.msg import String
-from claude_agent_sdk import tool, create_sdk_mcp_server, ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import (tool, create_sdk_mcp_server, ClaudeAgentOptions,
+                              ClaudeSDKClient, AssistantMessage, TextBlock, ThinkingBlock)
 
 from agents import perception
 from agents.core.bus import CHAT_QOS, publish_str
@@ -79,12 +80,43 @@ class CommanderAgent:
         publish_str(self._bridge, f"/swarm/cmd/drone_{i}", task)
         publish_str(self._bridge, "/swarm/chat", f"commander→drone_{i}: {task}")
 
+    async def _drain(self) -> None:
+        """Consume one Commander turn, mirroring its thinking/replies onto /swarm/chat.
+
+        The Commander's only tool is dispatch (already mirrored), but its
+        natural-language reasoning + answers to the human would otherwise be
+        discarded. Surface every text/thinking block as `commander: ...` so the
+        human sees the Commander's thinking and its summaries/answers in the UI."""
+        async for msg in self.client.receive_response():
+            if not isinstance(msg, AssistantMessage):
+                continue
+            for blk in msg.content:
+                text = blk.text if isinstance(blk, TextBlock) else (
+                    blk.thinking if isinstance(blk, ThinkingBlock) else None)
+                if text and text.strip():
+                    publish_str(self._bridge, "/swarm/chat", f"commander: {text.strip()}")
+
+    def _skip_replay_backlog(self) -> None:
+        """Advance all cursors past whatever is already buffered.
+
+        /swarm/user_input and /swarm/report/* use TRANSIENT_LOCAL QoS, so on
+        subscribe ROS REPLAYS the retained history (up to depth=100) to this fresh
+        Commander. Without this, a (re)started Commander re-executes every past
+        command and report — re-dispatching the whole session. Call this once, after
+        the retained burst has been delivered, so the Commander acts only on
+        commands/reports that arrive AFTER it comes online."""
+        _, self._user_seen = self._user.since(self._user_seen)
+        for i in range(self.n):
+            _, self._report_seen[i] = self._reports[i].since(self._report_seen[i])
+
     async def run(self) -> None:
         """Poll /swarm/user_input AND every /swarm/report/drone_<i>.
 
         A new user command triggers fresh dispatches (with the live situation map);
         a new report lets the Commander decide any follow-up."""
         async with self.client:
+            await asyncio.sleep(1.0)        # let the TRANSIENT_LOCAL backlog arrive,
+            self._skip_replay_backlog()     # then ignore it — only act on new traffic
             while True:
                 await asyncio.sleep(1.0)
                 new_user, self._user_seen = self._user.since(self._user_seen)
@@ -95,8 +127,7 @@ class CommanderAgent:
                         f"{perception.situation_text(self._world, self._bridge, self.n)}\n\n"
                         "Dispatch a concrete task to each drone that should act now. Route "
                         "drones around buildings when relevant.")
-                    async for _ in self.client.receive_response():
-                        pass
+                    await self._drain()
                 for i in range(self.n):
                     new_rep, self._report_seen[i] = self._reports[i].since(self._report_seen[i])
                     for rep in new_rep:
@@ -104,5 +135,4 @@ class CommanderAgent:
                             f"drone_{i} reports: {rep}\n\nDecide if any follow-up is needed. "
                             "Dispatch more tasks only if the goal isn't met yet; otherwise just "
                             "note it for the human and take no action.")
-                        async for _ in self.client.receive_response():
-                            pass
+                        await self._drain()
