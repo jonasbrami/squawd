@@ -7,6 +7,8 @@ what is the exact minimal config for a `RENDER_BACKEND=nvidia` benchmark switch?
 
 ## VERDICT: **WORKS-WITH-CAVEATS**
 
+> **Update 2026-06-27:** `nvidia-container-toolkit` v1.19.1 has since been INSTALLED and the Docker `nvidia` runtime registered, so the benchmark uses the clean `--gpus all` path (Option A), NOT the bind-mount workaround (Option B). `docker run --gpus all squawd:dev nvidia-smi` works.
+
 ogre2 camera sensors render correctly and headlessly on the NVIDIA dGPU. The
 render is confirmed attributed to the RTX 3070 Ti by `nvidia-smi` (the gz process
 holds GPU memory on GPU 0). **No segfault** in `handleContextCreationFailure` —
