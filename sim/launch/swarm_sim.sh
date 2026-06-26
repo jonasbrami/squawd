@@ -6,18 +6,35 @@
 # NB: no `-u` — ROS setup.bash references unbound vars.
 set -eo pipefail
 
-# Rendering backend: software GL (llvmpipe) by default so cameras work with no GPU.
-# Set GPU_RENDER=1 (and pass --device /dev/dri) to use hardware EGL instead — far
-# faster, lets N camera feeds + live flight coexist.
-if [ "${GPU_RENDER:-0}" = "1" ]; then
-  unset LIBGL_ALWAYS_SOFTWARE
-  # Headless EGL on the Intel iGPU. Expose ONLY renderD128 to the container so
-  # Mesa can't grab the NVIDIA node (no Mesa driver there -> ogre2 segfault).
-  export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-iris}"
-  export QT_QPA_PLATFORM=offscreen
-else
-  export LIBGL_ALWAYS_SOFTWARE=1
+# Rendering backend selector.
+#   RENDER_BACKEND=cpu     -> software GL (llvmpipe), no GPU needed (default if GPU_RENDER!=1)
+#   RENDER_BACKEND=intel   -> headless EGL on the Intel iGPU (current GPU_RENDER=1 behaviour)
+#   RENDER_BACKEND=nvidia  -> headless EGL on the NVIDIA dGPU (needs NVIDIA EGL libs + /dev/nvidia*)
+# Back-compat: GPU_RENDER=1 with no RENDER_BACKEND == intel.
+RENDER_BACKEND="${RENDER_BACKEND:-}"
+if [ -z "$RENDER_BACKEND" ]; then
+  [ "${GPU_RENDER:-0}" = "1" ] && RENDER_BACKEND=intel || RENDER_BACKEND=cpu
 fi
+case "$RENDER_BACKEND" in
+  nvidia)
+    unset LIBGL_ALWAYS_SOFTWARE
+    # ogre2 must use NVIDIA's EGL, never Mesa: force the glvnd vendor ICD and
+    # make sure no Mesa driver override is set.
+    unset MESA_LOADER_DRIVER_OVERRIDE
+    export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
+    export QT_QPA_PLATFORM=offscreen
+    ;;
+  intel)
+    unset LIBGL_ALWAYS_SOFTWARE
+    # Headless EGL on the Intel iGPU. Expose ONLY renderD128 to the container so
+    # Mesa can't grab the NVIDIA node (no Mesa driver there -> ogre2 segfault).
+    export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-iris}"
+    export QT_QPA_PLATFORM=offscreen
+    ;;
+  *)  # cpu / llvmpipe
+    export LIBGL_ALWAYS_SOFTWARE=1
+    ;;
+esac
 
 # Server-only Gazebo. There's no display in the container, and under the GPU path
 # (QT_QPA_PLATFORM=offscreen) the gz GUI aborts in handleContextCreationFailure,
@@ -71,12 +88,13 @@ export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH}:/workspace/PX4-Autopilot/$W
 # camera topic: drop the shared `<topic>camera</topic>` override (-> gz scopes the
 # topic per model: /world/default/model/x500_depth_<i>/.../IMX214/image) and cut
 # it to 640x360@10Hz so N feeds render on software GL.
+CAM_W="${CAM_W:-640}"; CAM_H="${CAM_H:-360}"; CAM_FPS="${CAM_FPS:-10}"
 OAKD="Tools/simulation/gz/models/OakD-Lite/model.sdf"
 if [ -f "$OAKD" ] && grep -q "<topic>camera</topic>" "$OAKD"; then
   sed -i \
-    -e "s|<width>1920</width>|<width>640</width>|" \
-    -e "s|<height>1080</height>|<height>360</height>|" \
-    -e "s|<update_rate>30</update_rate>|<update_rate>10</update_rate>|g" \
+    -e "s|<width>1920</width>|<width>${CAM_W}</width>|" \
+    -e "s|<height>1080</height>|<height>${CAM_H}</height>|" \
+    -e "s|<update_rate>30</update_rate>|<update_rate>${CAM_FPS}</update_rate>|g" \
     -e "/<topic>camera<\/topic>/d" \
     "$OAKD"
 fi
