@@ -141,7 +141,7 @@ def test_fps_summary():
     s = metrics.fps_summary({0: 10.0, 1: 9.0, 2: 8.0})
     assert s["min"] == 8.0
     assert round(s["mean"], 2) == 9.0
-    assert s["p10"] == 8.0     # 10th percentile of 3 values -> the min here
+    assert round(s["p10"], 1) == 8.2   # linear-interp 10th pct of [8,9,10]
 
 
 def test_fps_summary_empty():
