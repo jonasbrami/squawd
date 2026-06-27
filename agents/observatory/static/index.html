@@ -485,6 +485,9 @@ const $ = (s, r=document) => r.querySelector(s);
 const prefersReduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let sel = 0, built = 0, lastState = null, drones = [];
+// Deep-link: ?drone=N opens with that drone focused (clamped once the count is known).
+const _qDrone = new URLSearchParams(location.search).get("drone");
+if (_qDrone !== null && /^\d+$/.test(_qDrone)) sel = +_qDrone;
 
 /* ---------- formatting helpers (every field can be null pre-lock) ---------- */
 const csName = id => "DRONE_" + id;

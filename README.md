@@ -13,10 +13,12 @@ cameras** + a web **Observatory**.
 
 ![Swarm Observatory](docs/img/observatory.png)
 
-The Observatory (above) shows, live: each drone's **onboard camera POV** (top),
-a **top-down map** of the swarm, and the **swarm feed** where the Commander's
-dispatches and the drones' reports scroll by. Type a command at the bottom and
-watch the Commander delegate.
+The Observatory (above) shows, live: the selected drone's **onboard camera POV**
+with a heads-up overlay (left), a **PPI radar scope** of the whole swarm in the
+GPS frame (center), and the **comms feed** where the Commander's dispatches and
+the drones' reports scroll by as flight strips (right). Click any blip or camera
+tile to focus a drone; type a command at the bottom and watch the Commander
+delegate.
 
 ---
 
