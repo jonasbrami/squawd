@@ -162,6 +162,11 @@ flowchart TD
     `look` (live camera frame **fed to Claude's vision** — see below)
   - **report** — `report(message)` (the `DroneAgent.report` method, exposed as a tool)
     → publishes the result to `/swarm/report/drone_<i>` (mirrored to `/swarm/chat`)
+  - **author** — `run_mission(code, timeout)` (the escape hatch when the primitives
+    aren't expressive enough): Claude writes its own async MAVSDK body for a
+    multi-leg or smooth trajectory, with `drone`, `mission_item`, `world_to_geo`,
+    `arm_and_start`, `log` pre-bound; uninterruptible until the mission ends or
+    `timeout` fires
 - System prompt: carry out the task with your tools, then report back; be terse.
 
 ### Claude is the vision model too (multimodal, not just text)
@@ -243,7 +248,7 @@ flowchart TB
     DroneN -- "report()" --> Store
 
     %% Flight actuation
-    Drone0 -- "Claude flight tools<br/>(goto, orbit, look…)" --> FlightOps
+    Drone0 -- "Claude flight tools<br/>(goto, orbit, look, run_mission…)" --> FlightOps
     FlightOps -. "read latest()<br/>vehicle_local_position" .-> Store
     FlightOps -- "MAVSDK gRPC<br/>goto_location / arm / takeoff" --> PX4
 
