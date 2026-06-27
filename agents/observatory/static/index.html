@@ -1,365 +1,945 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Squawd Swarm Observatory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
-  :root { --bg:#0b1020; --panel:#141b2e; --ink:#dfe6f5; --accent:#5ad1ff;
-          --grid:#23304d; --muted:#8da2c8; --tile:#0e1626;
-          --ok:#3ad07a; --warn:#ffd65a; --bad:#ff6b6b; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;
-         height:100vh; overflow:hidden; display:flex; flex-direction:column; }
-  header { padding:10px 18px; border-bottom:1px solid var(--grid);
-           display:flex; align-items:center; gap:12px; }
-  header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
-  header .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); }
-  .meta { color:var(--muted); font-size:12px; margin-left:auto; }
-  .wrap { flex:1; min-height:0; overflow:hidden; padding:14px;
-          display:flex; flex-direction:column; gap:14px; }
-  .wrap > .focus { flex:1; min-height:0; }
-  .wrap > .card { flex:none; }
-  .wrap > .row { flex:none; }
-  h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px;
-       color:var(--muted); margin:0 0 8px; }
-  .card { background:var(--panel); border:1px solid var(--grid);
-          border-radius:10px; padding:12px; }
+  :root {
+    --bg:        #0a0d0b;
+    --panel:     #0e120f;
+    --raised:    #121712;
+    --green:     #4ade80;
+    --amber:     #fbbf24;
+    --dim:       #3f6b50;
+    --ink:       #d6f0dd;
+    --alert:     #ff6b6b;
+    --hair:      #1c241d;
+    --hair-strong:#27332a;
+    --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
 
-  /* focus row: hero camera + metrics rail */
-  .focus { display:flex; gap:14px; align-items:stretch; }
-  #herocard { flex:1; min-width:0; display:flex; flex-direction:column; }
-  #herocard h2 { flex:none; }
-  #hero { width:100%; flex:1; min-height:0; object-fit:cover; background:#000;
-          border-radius:8px; display:block; }
-  #herocard .nocam { display:flex; align-items:center; justify-content:center;
-          width:100%; flex:1; min-height:0; background:#000; border-radius:8px;
-          color:var(--muted); }
-  #metricscard { width:260px; flex:none; overflow-y:auto; }
-  .mhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
-  .mhead b { font-size:15px; }
-  .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;
-           background:var(--tile); border:1px solid var(--grid); }
-  .badge.armed { color:var(--ok); border-color:var(--ok); }
-  .badge.disarmed { color:var(--muted); }
-  .mgrid { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; }
-  .mgrid .k { color:var(--muted); }
-  .mgrid .v { text-align:right; font-variant-numeric:tabular-nums; }
-  .v.ok { color:var(--ok); } .v.warn { color:var(--warn); } .v.bad { color:var(--bad); }
-  .agent { margin-top:12px; border-top:1px solid var(--grid); padding-top:10px; }
-  .agent .k { color:var(--muted); font-size:11px; text-transform:uppercase;
-              letter-spacing:.5px; }
-  .agent .t { margin:2px 0 8px; word-break:break-word; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
 
-  /* thumbnail strip — single scrollable row so it never grows the page */
-  #thumbs { display:flex; gap:10px; overflow-x:auto; padding-bottom:2px; }
-  .thumb { flex:none; background:var(--tile); border:2px solid var(--grid); border-radius:8px;
-           padding:5px; width:150px; cursor:pointer; transition:border-color .12s; }
-  .thumb.sel { border-color:var(--accent); }
-  .thumb img, .thumb canvas { width:138px; height:78px; object-fit:cover; background:#000;
-               border-radius:5px; display:block; }
-  .thumb .lbl { display:flex; justify-content:space-between; align-items:center;
-                margin-top:5px; font-size:12px; }
-  .thumb .lbl b { font-weight:700; }
-  .sdot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
-  .sdot.ok { background:var(--ok); } .sdot.warn { background:var(--warn); }
-  .sdot.bad { background:var(--bad); }
+  .tnum { font-variant-numeric: tabular-nums; }
+  .up   { text-transform: uppercase; letter-spacing: 0.16em; }
 
-  /* bottom row: map + chat — bounded height so the whole app fits one screen */
-  .row { display:flex; gap:14px; align-items:stretch;
-         height:clamp(200px, 32vh, 320px); }
-  #mapcard { flex:none; display:flex; flex-direction:column; }
-  #mapcard h2 { flex:none; }
-  /* align-self:center stops the flex cross-axis stretch so aspect-ratio governs the
-     width from the (definite) flex height — otherwise width falls back to the canvas's
-     480px intrinsic attr and the square map renders stretched (~1.8:1). */
-  #map { flex:1; min-height:0; aspect-ratio:1; width:auto; height:auto;
-         align-self:center; cursor:pointer; }
-  #chatcard { flex:1; min-width:320px; display:flex; flex-direction:column; }
-  #chat { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:7px; }
-  .msg { background:var(--tile); border-left:3px solid var(--accent);
-         padding:6px 9px; border-radius:6px; }
-  .msg.cmd { border-left-color:var(--warn); }
-  .msg b { color:var(--accent); } .msg.cmd b { color:var(--warn); }
-  #cmdbar { display:flex; gap:8px; }
-  #cmd { flex:1; background:var(--tile); border:1px solid var(--grid); color:var(--ink);
-         padding:10px 12px; border-radius:8px; font:inherit; }
-  #send { background:var(--accent); color:#04121b; border:0; border-radius:8px;
-          padding:0 18px; font-weight:700; cursor:pointer; }
+  /* ---------- shell ---------- */
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+    width: 100vw;
+    padding: 10px;
+    gap: 10px;
+  }
+
+  /* ---------- header ---------- */
+  header.bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--hair-strong);
+    background: var(--panel);
+    padding: 8px 14px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand .mark {
+    color: var(--green);
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    font-size: 16px;
+  }
+  .brand .sub {
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+  .status .live {
+    display: inline-flex; align-items: center; gap: 7px;
+    color: var(--green);
+  }
+  .status .live.down { color: var(--amber); }
+  .status .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 0 rgba(74,222,128,0.5);
+    animation: ping 2.4s ease-out infinite;
+  }
+  .status .live.down .dot { background: var(--amber); animation: none; }
+  .status .clock { color: var(--amber); }
+  @keyframes ping {
+    0%   { box-shadow: 0 0 0 0 rgba(74,222,128,0.45); }
+    70%  { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+  }
+
+  /* ---------- main grid ---------- */
+  .main {
+    display: grid;
+    /* hero takes the lion's share; rail + chat are wide enough to read; the
+       scope column is moderate and the canvas itself is capped (see resizeScope)
+       so the radar never balloons on a wide monitor. */
+    grid-template-columns: minmax(0, 1.7fr) 270px minmax(360px, 0.95fr) 380px;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .panel {
+    border: 1px solid var(--hair-strong);
+    background: var(--panel);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel > .phead {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 11px;
+    border-bottom: 1px solid var(--hair);
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    flex: 0 0 auto;
+  }
+  .phead .tag { color: var(--green); }
+  .phead .tag.amber { color: var(--amber); }
+
+  /* ---------- column: hero + strip ---------- */
+  .col-feed { display: grid; grid-template-rows: 1fr auto; gap: 10px; min-height: 0; min-width: 0; }
+
+  /* HERO camera — feed is a flex child that fills the panel under the phead */
+  .hero { position: relative; overflow: hidden; }
+  .hero > .feed { flex: 1 1 auto; min-height: 0; }
+  .feed { position: relative; width: 100%; height: 100%; overflow: hidden; background: #05080a; }
+  /* live video element (canvas via WebCodecs, or <img> fallback) fills the feed */
+  .feed > #hero, .feed > .cam {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; display: block; background: #05080a; z-index: 0;
+  }
+  .scan {
+    position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    background:
+      repeating-linear-gradient(0deg, rgba(74,222,128,0.05) 0px, rgba(74,222,128,0.05) 1px, transparent 1px, transparent 3px);
+    mix-blend-mode: screen;
+  }
+  .tint {
+    position: absolute; inset: 0; pointer-events: none; z-index: 1;
+    background: radial-gradient(120% 90% at 50% 18%, transparent 55%, rgba(10,13,11,0.85) 100%);
+  }
+  .feed-osd {
+    position: absolute; inset: 0; pointer-events: none; z-index: 3;
+    color: var(--green);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+  }
+  .feed-osd .tl { position: absolute; top: 10px; left: 12px; }
+  .feed-osd .tr { position: absolute; top: 10px; right: 12px; text-align: right; color: var(--amber); }
+  .feed-osd .bl { position: absolute; bottom: 12px; left: 12px; }
+  .feed-osd .br { position: absolute; bottom: 12px; right: 12px; text-align: right; }
+  .feed-osd .recdot { display:inline-block; width:7px;height:7px;border-radius:50%;background:var(--alert); margin-right:6px; vertical-align: baseline; }
+  .crosshair {
+    position:absolute; top:50%; left:50%; width:54px; height:54px; z-index: 2;
+    transform: translate(-50%,-50%);
+    border: 1px solid rgba(74,222,128,0.35);
+    pointer-events: none;
+  }
+  .crosshair:before, .crosshair:after {
+    content:""; position:absolute; background: rgba(74,222,128,0.45);
+  }
+  .crosshair:before { left:50%; top:-12px; bottom:-12px; width:1px; transform: translateX(-0.5px); }
+  .crosshair:after  { top:50%; left:-12px; right:-12px; height:1px; transform: translateY(-0.5px); }
+
+  .nosignal {
+    position:absolute; inset:0; display:none; z-index: 4;
+    align-items:center; justify-content:center; flex-direction:column; gap:8px;
+    background: repeating-linear-gradient(45deg, #0b0f0c 0 8px, #0e120f 8px 16px);
+    color: var(--amber);
+    letter-spacing: 0.3em; font-size: 12px;
+  }
+  .feed.nosig .nosignal { display:flex; }
+  .feed.nosig > #hero, .feed.nosig .scan, .feed.nosig .crosshair { opacity: 0; }
+
+  /* swarm strip */
+  .strip { flex: 0 0 auto; }
+  .strip .thumbs {
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    gap: 8px; padding: 8px; overflow-x: auto;
+  }
+  .thumb {
+    position: relative;
+    border: 1px solid var(--hair-strong);
+    background: #05080a;
+    cursor: pointer;
+    aspect-ratio: 16/10;
+    min-width: 96px;
+    overflow: hidden;
+    padding: 0;
+    outline: none;
+  }
+  .thumb .feed { position:absolute; inset:0; }
+  .thumb .feed > .cam {
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; display:block; background:#05080a; z-index:0;
+  }
+  .thumb .tlabel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 3px 6px;
+    background: linear-gradient(0deg, rgba(5,8,10,0.92), rgba(5,8,10,0));
+    font-size: 10.5px; letter-spacing: 0.08em;
+    color: var(--ink);
+    z-index: 3;
+  }
+  .thumb .sdot { width:7px; height:7px; border-radius:50%; background: var(--dim); }
+  .thumb.sel { border-color: var(--amber); }
+  .thumb.sel:after {
+    content:""; position:absolute; inset:0; border:1px solid var(--amber); pointer-events:none; z-index:4;
+  }
+  .thumb:focus-visible { border-color: var(--green); box-shadow: 0 0 0 2px rgba(74,222,128,0.5); }
+  .thumb .nsmini {
+    position:absolute; inset:0; z-index:2; display:none;
+    align-items:center; justify-content:center;
+    background: repeating-linear-gradient(45deg, #0b0f0c 0 6px, #0e120f 6px 12px);
+    color: var(--amber); font-size: 9px; letter-spacing:0.2em;
+  }
+  .thumb.nosig .nsmini { display:flex; }
+  .thumb.nosig .feed > .cam, .thumb.nosig .scan { opacity: 0; }
+
+  /* ---------- telemetry rail ---------- */
+  .rail { min-width: 0; }
+  .rail .body { overflow-y: auto; padding: 0; }
+  .rail-id {
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 10px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .rail-id { padding: 12px 11px; }
+  .rail-id .cs { font-size: 18px; font-weight: 700; letter-spacing: 0.1em; color: var(--green); }
+  .badge {
+    font-size: 10px; letter-spacing: 0.16em; padding: 4px 8px;
+    border: 1px solid currentColor;
+  }
+  .badge.armed { color: var(--alert); }
+  .badge.disarmed { color: var(--dim); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; }
+  .cell {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .cell:nth-child(odd) { border-right: 1px solid var(--hair); }
+  .cell .k { color: var(--dim); font-size: 10.5px; letter-spacing: 0.16em; }
+  .cell .v { font-size: 20px; font-weight: 500; margin-top: 4px; letter-spacing: 0.02em; }
+  .cell .v small { font-size: 11px; color: var(--dim); letter-spacing: 0.06em; }
+  .v.green { color: var(--green); }
+  .v.amber { color: var(--amber); }
+  .v.alert { color: var(--alert); }
+
+  .battwrap { padding: 12px; border-bottom: 1px solid var(--hair); }
+  .battrow { display:flex; align-items:baseline; justify-content:space-between; }
+  .battrow .k { color: var(--dim); font-size: 10.5px; letter-spacing:0.16em; }
+  .battrow .pv { font-size: 20px; font-weight:500; }
+  .battbar { height: 7px; margin-top: 8px; background: #0a0d0b; border:1px solid var(--hair-strong); position:relative; }
+  .battbar > i { position:absolute; left:0; top:0; bottom:0; display:block; width:0; }
+
+  .note { padding: 12px; border-bottom: 1px solid var(--hair); }
+  .note:last-child { border-bottom: 0; }
+  .note .k { color: var(--dim); font-size: 10.5px; letter-spacing: 0.16em; margin-bottom: 6px; }
+  .note .t { color: var(--ink); font-size: 12.5px; line-height: 1.5; word-break: break-word; }
+  .note .t.task { color: var(--green); }
+
+  /* ---------- scope ---------- */
+  .scope-panel { min-width: 0; }
+  .scope-body { position: relative; flex: 1 1 auto; min-height: 0; padding: 8px; }
+  #scope { display:block; width:100%; height:100%; cursor: pointer; }
+  .scope-foot {
+    flex: 0 0 auto;
+    display:flex; align-items:center; justify-content:space-between;
+    border-top: 1px solid var(--hair);
+    padding: 7px 11px;
+    color: var(--dim); font-size: 10.5px; letter-spacing: 0.12em;
+  }
+  .scope-foot .legend { display:flex; gap:14px; }
+  .scope-foot .lg { display:inline-flex; align-items:center; gap:5px; }
+  .scope-foot .lg i { width:8px; height:8px; display:inline-block; }
+
+  /* ---------- chat / strips ---------- */
+  .chat { min-width: 0; }
+  .chat .feed-list {
+    flex: 1 1 auto; overflow-y: auto; padding: 8px;
+    display:flex; flex-direction:column; gap: 6px;
+  }
+  .fstrip {
+    display: grid; grid-template-columns: 92px 1fr;
+    border: 1px solid var(--hair-strong);
+    background: var(--raised);
+  }
+  .fstrip .who {
+    padding: 6px 8px;
+    border-right: 1px solid var(--hair-strong);
+    color: var(--green);
+    font-size: 10px; letter-spacing: 0.05em;
+    word-break: break-all;
+    display:flex; align-items:center;
+    background: rgba(74,222,128,0.04);
+  }
+  .fstrip .msg { padding: 6px 9px; color: var(--ink); font-size: 12.5px; line-height:1.45; word-break: break-word; }
+  .fstrip.cmd { border-color: rgba(251,191,36,0.4); }
+  .fstrip.cmd .who { color: var(--amber); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.06); }
+
+  .composer {
+    flex: 0 0 auto;
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 8px;
+    border-top: 1px solid var(--hair);
+  }
+  .composer input {
+    background: #05080a;
+    border: 1px solid var(--hair-strong);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px 11px;
+    outline: none;
+    letter-spacing: 0.03em;
+    min-width: 0;
+  }
+  .composer input::placeholder { color: var(--dim); }
+  .composer input:focus-visible { border-color: var(--green); box-shadow: 0 0 0 2px rgba(74,222,128,0.4); }
+  .composer button {
+    background: rgba(74,222,128,0.08);
+    border: 1px solid var(--green);
+    color: var(--green);
+    font-family: var(--mono);
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    font-size: 12px;
+    padding: 0 20px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .composer button:hover { background: rgba(74,222,128,0.16); }
+  .composer button:focus-visible { box-shadow: 0 0 0 2px rgba(74,222,128,0.5); outline: none; }
+  .composer button:active { background: rgba(74,222,128,0.24); }
+
+  /* scrollbars */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--hair-strong); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .status .dot { animation: none; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <span class="dot"></span><h1>SQUAWD · SWARM OBSERVATORY</h1>
-  <span class="meta" id="status">connecting…</span>
-</header>
-<div class="wrap">
-  <div class="focus">
-    <div class="card" id="herocard">
-      <h2 id="herotitle">Drone POV · select a drone</h2>
-      <!-- hero media element (canvas or img) + nocam placeholder injected by setupHero() -->
+<div class="app">
+
+  <!-- HEADER -->
+  <header class="bar">
+    <div class="brand">
+      <span class="mark">SQUAWD</span>
+      <span class="sub up">Swarm Observatory · PPI Console</span>
     </div>
-    <div class="card" id="metricscard">
-      <div class="mhead">
-        <b id="m-name">drone_—</b>
-        <span class="badge disarmed" id="m-arm">—</span>
-      </div>
-      <div class="mgrid">
-        <div class="k">ALT</div>  <div class="v" id="m-alt">—</div>
-        <div class="k">SPD</div>  <div class="v" id="m-spd">—</div>
-        <div class="k">V/S</div>  <div class="v" id="m-vs">—</div>
-        <div class="k">HDG</div>  <div class="v" id="m-hdg">—</div>
-        <div class="k">MODE</div> <div class="v" id="m-mode">—</div>
-        <div class="k">BATT</div> <div class="v" id="m-batt">—</div>
-        <div class="k">POS</div>  <div class="v" id="m-pos">—</div>
-      </div>
-      <div class="agent">
-        <div class="k">Current task</div>
-        <div class="t" id="m-task">—</div>
-        <div class="k">Last report</div>
-        <div class="t" id="m-report">—</div>
-      </div>
+    <div class="status">
+      <span class="live" id="live"><span class="dot"></span><span class="up" id="liveline">connecting…</span></span>
+      <span class="up">RANGE 90 M</span>
+      <span class="clock tnum up" id="clock">--:--:--Z</span>
     </div>
+  </header>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- COL 1: hero + strip -->
+    <div class="col-feed">
+      <section class="panel hero" aria-label="Primary camera POV">
+        <div class="phead">
+          <span>POV · <span class="tag" id="hero-cs">DRONE_—</span></span>
+          <span>FWD CAM</span>
+        </div>
+        <div class="feed" id="hero-feed">
+          <!-- live video element (#hero) injected by setupHero() as first child -->
+          <div class="scan"></div>
+          <div class="tint"></div>
+          <div class="crosshair"></div>
+          <div class="feed-osd">
+            <div class="tl tnum"><span class="recdot"></span>REC · <span id="osd-cs">D—</span></div>
+            <div class="tr tnum" id="osd-mode">—</div>
+            <div class="bl tnum" id="osd-alt">ALT —</div>
+            <div class="br tnum" id="osd-hdg">HDG —</div>
+          </div>
+          <div class="nosignal">▚ NO SIGNAL ▚</div>
+        </div>
+      </section>
+
+      <section class="panel strip" aria-label="Swarm camera thumbnails">
+        <div class="phead"><span>SWARM · CAM ARRAY</span><span class="tag" id="feeds-tag">— FEEDS</span></div>
+        <div class="thumbs" id="thumbs"></div>
+      </section>
+    </div>
+
+    <!-- COL 2: telemetry rail -->
+    <section class="panel rail" aria-label="Selected drone telemetry">
+      <div class="phead"><span>TELEMETRY</span><span class="tag" id="rail-tag">SEL</span></div>
+      <div class="body">
+        <div class="rail-id">
+          <span class="cs" id="rail-cs">DRONE_—</span>
+          <span class="badge disarmed" id="rail-arm">—</span>
+        </div>
+        <div class="grid2">
+          <div class="cell"><div class="k">ALT</div><div class="v green tnum" id="t-alt">—</div></div>
+          <div class="cell"><div class="k">SPD</div><div class="v tnum" id="t-spd">—</div></div>
+          <div class="cell"><div class="k">V/S</div><div class="v tnum" id="t-vs">—</div></div>
+          <div class="cell"><div class="k">HDG</div><div class="v tnum" id="t-hdg">—</div></div>
+          <div class="cell"><div class="k">MODE</div><div class="v amber" id="t-mode" style="font-size:14px;">—</div></div>
+          <div class="cell"><div class="k">POS N/E</div><div class="v tnum" id="t-pos" style="font-size:13px;">—</div></div>
+        </div>
+        <div class="battwrap">
+          <div class="battrow">
+            <span class="k">BATTERY</span>
+            <span class="pv tnum" id="t-batt">—</span>
+          </div>
+          <div class="battbar"><i id="t-battbar"></i></div>
+        </div>
+        <div class="note">
+          <div class="k">CURRENT TASK</div>
+          <div class="t task" id="t-task">—</div>
+        </div>
+        <div class="note">
+          <div class="k">LAST REPORT</div>
+          <div class="t" id="t-report">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- COL 3: SCOPE -->
+    <section class="panel scope-panel" aria-label="PPI radar scope tactical map">
+      <div class="phead"><span>PPI SCOPE · N-UP</span><span class="tag amber">SECTOR 360°</span></div>
+      <div class="scope-body"><canvas id="scope"></canvas></div>
+      <div class="scope-foot">
+        <div class="legend">
+          <span class="lg"><i style="background:var(--green)"></i>BLIP</span>
+          <span class="lg"><i style="background:var(--amber)"></i>SELECTED</span>
+          <span class="lg"><i style="background:var(--alert)"></i>LOW BATT</span>
+        </div>
+        <span class="tnum">RINGS 30 / 60 / 90 M</span>
+      </div>
+    </section>
+
+    <!-- COL 4: CHAT -->
+    <section class="panel chat" aria-label="Swarm comms and command">
+      <div class="phead"><span>COMMS · PROGRESS STRIPS</span><span class="tag" id="chat-count">0</span></div>
+      <div class="feed-list" id="chat" role="log" aria-live="polite"></div>
+      <form class="composer" id="composer">
+        <input id="cmd" type="text" autocomplete="off" placeholder="Command the swarm… e.g. 'everyone take off and spread out'" aria-label="Command input" />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
   </div>
 
-  <div class="card"><h2>Swarm · click a drone to focus</h2><div id="thumbs"></div></div>
-
-  <div class="row">
-    <div class="card" id="mapcard"><h2>Map · top-down (N↑ E→)</h2>
-      <canvas id="map" width="480" height="480"></canvas></div>
-    <div class="card" id="chatcard"><h2>Swarm chat · you = commander</h2>
-      <div id="chat"></div>
-      <div id="cmdbar" style="margin-top:10px;">
-        <input id="cmd" placeholder="Command the swarm… e.g. 'everyone take off and spread out'" autocomplete="off"/>
-        <button id="send">Send</button>
-      </div>
+  <!-- FOOTER status -->
+  <footer class="bar" style="padding:5px 14px;">
+    <div class="status" style="gap:22px;">
+      <span class="up">SIM · GZ-HARMONIC</span>
+      <span class="up">LINK <span id="f-link" style="color:var(--green)">NOMINAL</span></span>
+      <span class="up">FRAME GPS-FUSED</span>
     </div>
-  </div>
+    <div class="status" style="gap:22px;">
+      <span class="up tnum">ARMED <span id="f-armed" style="color:var(--alert)">—</span>/<span id="f-total">—</span></span>
+      <span class="up tnum">MEAN BATT <span id="f-batt" style="color:var(--green)">—</span></span>
+    </div>
+  </footer>
+
 </div>
+
 <script>
-const COLORS=["#5ad1ff","#ff8a5a","#9d7bff","#3ad07a","#ffd65a","#ff6b9d","#6bffb8","#c0c0ff"];
-const RANGE=90, cv=document.getElementById("map"), ctx=cv.getContext("2d"), W=cv.width, C=W/2;
-let built=0, sel=0, lastState=null;
-function col(i){return COLORS[i%COLORS.length];}
-function toPx(n,e){return [C+(e/RANGE)*C, C-(n/RANGE)*C];}
-function fmt(v,suffix=""){return (v===null||v===undefined)?"—":v+suffix;}
+"use strict";
+const $ = (s, r=document) => r.querySelector(s);
+const prefersReduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// battery → severity class for color coding
-function battClass(pct,warn){
-  if(pct===null||pct===undefined) return "";
-  if((warn!=null && warn>1) || pct<20) return "bad";
-  if(pct<50) return "warn";
-  return "ok";
+let sel = 0, built = 0, lastState = null, drones = [];
+
+/* ---------- formatting helpers (every field can be null pre-lock) ---------- */
+const csName = id => "DRONE_" + id;
+const pad = (n, w=2) => String(Math.abs(Math.round(n))).padStart(w, "0");
+const sgn = n => (n >= 0 ? "+" : "-") + pad(Math.abs(n));
+function num(v, digits, suffix="") {
+  return (v === null || v === undefined) ? "—" : v.toFixed(digits) + suffix;
 }
+// battery → severity class, folding PX4's battery-warning level in too.
+function battClass(pct, warn) {
+  if (pct === null || pct === undefined) return "";
+  if ((warn != null && warn > 1) || pct < 20) return "alert";
+  if (pct < 50) return "amber";
+  return "green";
+}
+function battColor(pct, warn) {
+  return { alert:"#ff6b6b", amber:"#fbbf24", green:"#4ade80" }[battClass(pct, warn)] || "#3f6b50";
+}
+function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 
-// Modern browsers decode H.264 in-process via WebCodecs onto a <canvas>; older
-// ones fall back to polling /frame/{id} JPEGs into an <img>. The selected drone's
-// frames are drawn to BOTH its thumbnail and the large hero view.
+/* ====================================================
+   LIVE VIDEO  — one WebSocket of H.264 decoded by WebCodecs onto per-tile
+   <canvas>; browsers without WebCodecs poll /frame/{id} JPEGs into <img>.
+   (Pipeline preserved from the original observatory.)
+==================================================== */
 const HAS_WEBCODECS = ("VideoDecoder" in window) && ("EncodedVideoChunk" in window);
-const codecFor={}, tiles={};
+const codecFor = {}, tiles = {};
 
-function setupHero(){
-  const box=document.getElementById("herocard");
-  const media = HAS_WEBCODECS ? '<canvas id="hero"></canvas>' : '<img id="hero" alt="hero"/>';
-  box.insertAdjacentHTML("beforeend",
-    media + '<div id="nocam" class="nocam" style="display:none">no camera signal</div>');
+function setupHero() {
+  const feed = $("#hero-feed");
+  const tag = HAS_WEBCODECS ? "canvas" : "img";
+  const el = document.createElement(tag);
+  el.id = "hero";
+  feed.insertAdjacentHTML("afterbegin", "");      // ensure feed exists
+  feed.insertBefore(el, feed.firstChild);          // video sits beneath the overlays
 }
 
 // Draw a decoded VideoFrame into a <canvas>, sizing the canvas to the frame.
-function paint(canvas, frame){
-  if(canvas.width!==frame.displayWidth) canvas.width=frame.displayWidth;
-  if(canvas.height!==frame.displayHeight) canvas.height=frame.displayHeight;
-  canvas.getContext("2d").drawImage(frame,0,0,canvas.width,canvas.height);
+function paint(canvas, frame) {
+  if (canvas.width !== frame.displayWidth) canvas.width = frame.displayWidth;
+  if (canvas.height !== frame.displayHeight) canvas.height = frame.displayHeight;
+  canvas.getContext("2d").drawImage(frame, 0, 0, canvas.width, canvas.height);
 }
 
-function ensureDecoder(i){
-  let t=tiles[i];
-  if(t) return t;
-  const canvas=document.getElementById("cam"+i);
-  if(!canvas) return null;
-  const dec=new VideoDecoder({
-    output:frame=>{
-      paint(canvas, frame);                                    // thumbnail
-      if(i===sel){ const h=document.getElementById("hero");
-        if(h && h.tagName==="CANVAS") paint(h, frame); }       // hero (selected)
+function ensureDecoder(i) {
+  let t = tiles[i];
+  if (t) return t;
+  const canvas = document.getElementById("cam" + i);
+  if (!canvas) return null;
+  const dec = new VideoDecoder({
+    output: frame => {
+      paint(canvas, frame);                                   // thumbnail
+      if (i === sel) { const h = document.getElementById("hero");
+        if (h && h.tagName === "CANVAS") paint(h, frame); }   // hero (selected)
       frame.close();
     },
-    error:e=>console.warn("decoder",i,e)
+    error: e => console.warn("decoder", i, e)
   });
-  t={dec,configured:false,gotKey:false,ts:0};
-  tiles[i]=t;
+  t = { dec, configured:false, gotKey:false, ts:0 };
+  tiles[i] = t;
   return t;
 }
-// ONE WebSocket carries every tile's H.264. Text msg {d,codec} announces a drone's
-// codec; binary msg = [drone id, flags(bit0=keyframe), ...Annex-B NALs]. One
-// connection for all N tiles, so the ~6-per-host cap can't starve tiles 7..N.
-function startWS(){
-  if(startWS._sock && startWS._sock.readyState<=1) return;   // already connected
-  const proto = location.protocol==="https:" ? "wss" : "ws";
+
+// ONE WebSocket carries every tile's H.264 (text {d,codec} announce, then binary
+// [drone id, flags(bit0=keyframe), ...Annex-B NALs]).
+function startWS() {
+  if (startWS._sock && startWS._sock.readyState <= 1) return;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
   const sock = new WebSocket(`${proto}://${location.host}/ws`);
-  startWS._sock=sock;
-  sock.binaryType="arraybuffer";
-  sock.onmessage=ev=>{
-    if(typeof ev.data==="string"){ const c=JSON.parse(ev.data); codecFor[c.d]=c.codec; return; }
-    const buf=new Uint8Array(ev.data);
-    const i=buf[0], isKey=(buf[1]&1)===1, data=buf.subarray(2);
-    const t=ensureDecoder(i);
-    if(!t) return;
-    if(!t.configured){
-      if(!isKey) return;                                       // need a keyframe to start
-      try{ t.dec.configure({codec:codecFor[i]||"avc1.42C01F", optimizeForLatency:true}); t.configured=true; }
-      catch(e){ console.warn("configure",codecFor[i],e); return; }
+  startWS._sock = sock;
+  sock.binaryType = "arraybuffer";
+  sock.onmessage = ev => {
+    if (typeof ev.data === "string") { const c = JSON.parse(ev.data); codecFor[c.d] = c.codec; return; }
+    const buf = new Uint8Array(ev.data);
+    const i = buf[0], isKey = (buf[1] & 1) === 1, data = buf.subarray(2);
+    const t = ensureDecoder(i);
+    if (!t) return;
+    if (!t.configured) {
+      if (!isKey) return;
+      try { t.dec.configure({ codec: codecFor[i] || "avc1.42C01F", optimizeForLatency:true }); t.configured = true; }
+      catch(e) { console.warn("configure", codecFor[i], e); return; }
     }
-    if(!t.gotKey){ if(!isKey) return; t.gotKey=true; }
-    try{
-      t.dec.decode(new EncodedVideoChunk({type:isKey?"key":"delta", timestamp:t.ts, data}));
-      t.ts+=83333;                                             // ~12fps in microseconds
-    }catch(e){ console.warn("decode",e); }
+    if (!t.gotKey) { if (!isKey) return; t.gotKey = true; }
+    try {
+      t.dec.decode(new EncodedVideoChunk({ type: isKey ? "key" : "delta", timestamp: t.ts, data }));
+      t.ts += 83333;                                          // ~12fps in microseconds
+    } catch(e) { console.warn("decode", e); }
   };
-  sock.onclose=()=>setTimeout(startWS,1000);
-  sock.onerror=()=>sock.close();
-}
-// Fallback: poll the latest JPEG per tile into an <img> (no WebCodecs). The
-// selected drone's frame is mirrored into the hero <img>.
-function startPolling(n){
-  if(startPolling._t) clearInterval(startPolling._t);
-  startPolling._t=setInterval(()=>{
-    for(let i=0;i<n;i++){
-      const img=document.getElementById("cam"+i); if(!img) continue;
-      fetch("/frame/"+i,{cache:"no-store"}).then(r=>r.status===200?r.blob():null).then(b=>{
-        if(!b) return;
-        const url=URL.createObjectURL(b);
-        const prev=img._url; img._url=url; img.src=url;
-        if(i===sel){ const h=document.getElementById("hero"); if(h && h.tagName==="IMG") h.src=url; }
-        if(prev) URL.revokeObjectURL(prev);
-      }).catch(()=>{});
-    }
-  },200);
+  sock.onclose = () => setTimeout(startWS, 1000);
+  sock.onerror = () => sock.close();
 }
 
-function buildThumbs(n){
-  const c=document.getElementById("thumbs"); c.innerHTML="";
-  for(const k in tiles){ try{ tiles[k].dec.close(); }catch(e){} delete tiles[k]; }  // tiles rebuilt
-  for(let i=0;i<n;i++){
-    const media = HAS_WEBCODECS ? `<canvas id="cam${i}"></canvas>`
-                                : `<img id="cam${i}" alt="drone_${i}"/>`;
-    c.insertAdjacentHTML("beforeend",
-      `<div class="thumb" data-id="${i}">${media}`+
-      `<div class="lbl"><b style="color:${col(i)}">drone_${i}</b>`+
-      `<span class="sdot" id="sdot${i}"></span></div></div>`);
+// Fallback for browsers without WebCodecs: poll the latest JPEG per tile.
+function startPolling(n) {
+  if (startPolling._t) clearInterval(startPolling._t);
+  startPolling._t = setInterval(() => {
+    for (let i = 0; i < n; i++) {
+      const img = document.getElementById("cam" + i); if (!img) continue;
+      fetch("/frame/" + i, { cache:"no-store" }).then(r => r.status === 200 ? r.blob() : null).then(b => {
+        if (!b) return;
+        const url = URL.createObjectURL(b);
+        const prev = img._url; img._url = url; img.src = url;
+        if (i === sel) { const h = document.getElementById("hero"); if (h && h.tagName === "IMG") h.src = url; }
+        if (prev) URL.revokeObjectURL(prev);
+      }).catch(() => {});
+    }
+  }, 200);
+}
+
+/* ---------- swarm strip ---------- */
+function buildThumbs(n) {
+  const wrap = $("#thumbs");
+  wrap.innerHTML = "";
+  for (const k in tiles) { try { tiles[k].dec.close(); } catch(e){} delete tiles[k]; }
+  const mediaTag = HAS_WEBCODECS ? "canvas" : "img";
+  for (let i = 0; i < n; i++) {
+    const b = document.createElement("button");
+    b.className = "thumb";
+    b.dataset.id = i;
+    b.setAttribute("aria-label", csName(i) + " camera, select");
+    b.setAttribute("aria-pressed", i === sel ? "true" : "false");
+    b.innerHTML =
+      `<div class="feed"><${mediaTag} id="cam${i}" class="cam" alt="drone_${i}"></${mediaTag}><div class="scan"></div></div>` +
+      `<div class="nsmini">NO SIGNAL</div>` +
+      `<div class="tlabel"><span>D${i}</span><span class="sdot" id="sdot${i}"></span></div>`;
+    b.addEventListener("click", () => select(i));
+    wrap.appendChild(b);
   }
-  c.querySelectorAll(".thumb").forEach(t=>t.onclick=()=>select(+t.dataset.id));
-  built=n;
-  if(sel>=n) sel=0;
-  if(HAS_WEBCODECS) startWS(); else startPolling(n);
+  built = n;
+  $("#feeds-tag").textContent = n + " FEED" + (n === 1 ? "" : "S");
+  if (sel >= n) sel = 0;
+  if (HAS_WEBCODECS) startWS(); else startPolling(n);
   select(sel);
 }
 
-function select(i){
-  sel=i;
-  const thumbs=[...document.querySelectorAll(".thumb")];
-  thumbs.forEach(t=>t.classList.toggle("sel", +t.dataset.id===i));
-  const selThumb=thumbs.find(t=>+t.dataset.id===i);
-  if(selThumb) selThumb.scrollIntoView({block:"nearest", inline:"nearest"});
-  if(lastState) renderMetrics(lastState.drones[i]);
-  document.getElementById("herotitle").textContent="Drone POV · drone_"+i;
-  // Show the selected drone's current frame in the hero immediately (no wait for
-  // the next decoded frame): copy the thumbnail's current pixels into the hero.
-  const hero=document.getElementById("hero"), cam=document.getElementById("cam"+i);
-  if(hero && cam){
-    if(hero.tagName==="CANVAS" && cam.tagName==="CANVAS" && cam.width){
-      hero.width=cam.width; hero.height=cam.height;
-      hero.getContext("2d").drawImage(cam,0,0,hero.width,hero.height);
-    } else if(hero.tagName==="IMG" && cam.tagName==="IMG" && cam.src){
-      hero.src=cam.src;
+function select(i) {
+  sel = i;
+  document.querySelectorAll(".thumb").forEach(t => {
+    const on = +t.dataset.id === i;
+    t.classList.toggle("sel", on);
+    t.setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) t.scrollIntoView({ block:"nearest", inline:"nearest" });
+  });
+  // Show the selected drone's current frame in the hero immediately.
+  const hero = document.getElementById("hero"), cam = document.getElementById("cam" + i);
+  if (hero && cam) {
+    if (hero.tagName === "CANVAS" && cam.tagName === "CANVAS" && cam.width) {
+      hero.width = cam.width; hero.height = cam.height;
+      hero.getContext("2d").drawImage(cam, 0, 0, hero.width, hero.height);
+    } else if (hero.tagName === "IMG" && cam.tagName === "IMG" && cam.src) {
+      hero.src = cam.src;
     }
   }
+  if (drones[i]) renderRail(drones[i]);
+  drawScope();
 }
 
-function renderMetrics(d){
-  if(!d) return;
-  document.getElementById("m-name").textContent="drone_"+d.id;
-  document.getElementById("m-name").style.color=col(d.id);
-  const arm=document.getElementById("m-arm");
-  if(d.armed===null){arm.textContent="—";arm.className="badge disarmed";}
-  else if(d.armed){arm.textContent="ARMED";arm.className="badge armed";}
-  else {arm.textContent="DISARMED";arm.className="badge disarmed";}
-  document.getElementById("m-alt").textContent=fmt(d.alt," m");
-  document.getElementById("m-spd").textContent=fmt(d.speed," m/s");
-  document.getElementById("m-vs").textContent=fmt(d.vspeed," m/s");
-  document.getElementById("m-hdg").textContent=d.heading===null?"—":String(d.heading).padStart(3,"0")+"°";
-  document.getElementById("m-mode").textContent=fmt(d.mode);
-  const batt=document.getElementById("m-batt");
-  batt.textContent=(d.batt_pct===null?"—":d.batt_pct+"%")+(d.voltage===null?"":" · "+d.voltage+"V");
-  batt.className="v "+battClass(d.batt_pct,d.warn);
-  document.getElementById("m-pos").textContent=
-    (d.north===null?"—":d.north+"N")+(d.east===null?"":" "+d.east+"E");
-  document.getElementById("m-task").textContent=fmt(d.task);
-  document.getElementById("m-report").textContent=fmt(d.report);
-  // Show the "no signal" placeholder when the selected drone has no camera topic.
-  const hero=document.getElementById("hero"), nocam=document.getElementById("nocam");
-  if(hero && nocam){
-    if(d.cam===false){ hero.style.display="none"; nocam.style.display="flex"; }
-    else { hero.style.display=""; nocam.style.display="none"; }
+/* ---------- telemetry rail + hero OSD ---------- */
+function renderRail(d) {
+  if (!d) return;
+  $("#hero-cs").textContent = csName(d.id);
+  $("#rail-cs").textContent = csName(d.id);
+  $("#rail-tag").textContent = "D" + d.id;
+  $("#osd-cs").textContent = "D" + d.id;
+
+  const arm = $("#rail-arm");
+  if (d.armed === null || d.armed === undefined) { arm.textContent = "—"; arm.className = "badge disarmed"; }
+  else if (d.armed) { arm.textContent = "ARMED"; arm.className = "badge armed"; }
+  else { arm.textContent = "DISARMED"; arm.className = "badge disarmed"; }
+
+  $("#t-alt").innerHTML = num(d.alt, 1) + (d.alt == null ? "" : ' <small>M</small>');
+  $("#t-spd").innerHTML = num(d.speed, 1) + (d.speed == null ? "" : ' <small>M/S</small>');
+  const vs = $("#t-vs");
+  vs.innerHTML = (d.vspeed == null ? "—" : (d.vspeed >= 0 ? "+" : "") + d.vspeed.toFixed(1) + ' <small>M/S</small>');
+  vs.className = "v tnum " + (d.vspeed != null && d.vspeed < -1 ? "amber" : "");
+  $("#t-hdg").innerHTML = d.heading == null ? "—" : pad(d.heading, 3) + '<small>°</small>';
+  $("#t-mode").textContent = d.mode || "—";
+  $("#t-pos").textContent = (d.north == null ? "—" : sgn(d.north)) + " / " + (d.east == null ? "—" : sgn(d.east));
+
+  const batt = $("#t-batt");
+  batt.innerHTML = (d.batt_pct == null ? "—" : d.batt_pct + "%") +
+    (d.voltage == null ? "" : ' <small style="color:var(--dim)">' + d.voltage.toFixed(1) + 'V</small>');
+  batt.className = "pv tnum " + battClass(d.batt_pct, d.warn);
+  const bb = $("#t-battbar");
+  bb.style.width = (d.batt_pct == null ? 0 : d.batt_pct) + "%";
+  bb.style.background = battColor(d.batt_pct, d.warn);
+
+  $("#t-task").textContent = d.task || "—";
+  $("#t-report").textContent = d.report || "—";
+
+  // hero OSD
+  $("#osd-mode").textContent = d.mode || "—";
+  $("#osd-alt").textContent = "ALT " + (d.alt == null ? "—" : d.alt.toFixed(1) + " M");
+  $("#osd-hdg").textContent = "HDG " + (d.heading == null ? "—" : pad(d.heading, 3) + "°");
+
+  // no-camera placeholder for the hero
+  $("#hero-feed").classList.toggle("nosig", d.cam === false);
+}
+
+// Per-tile status dot + no-signal overlay, refreshed each poll.
+function refreshTiles() {
+  drones.forEach(d => {
+    const sdot = document.getElementById("sdot" + d.id);
+    if (sdot) sdot.style.background = d.armed ? battColor(d.batt_pct, d.warn) : "var(--dim)";
+    const thumb = document.querySelector('.thumb[data-id="' + d.id + '"]');
+    if (thumb) thumb.classList.toggle("nosig", d.cam === false);
+  });
+}
+
+/* ---------- comms · flight-progress strips ---------- */
+function renderChat(msgs) {
+  const box = $("#chat");
+  box.innerHTML = msgs.map(l => {
+    const i = l.indexOf(":");
+    const who = (i > 0 ? l.slice(0, i) : "").trim();
+    const rest = (i > 0 ? l.slice(i + 1) : l).trim();
+    const cls = /commander|^you$/i.test(who) ? "fstrip cmd" : "fstrip";
+    return `<div class="${cls}"><div class="who">${escapeHtml(who.toUpperCase())}</div>` +
+           `<div class="msg">${escapeHtml(rest)}</div></div>`;
+  }).join("");
+  $("#chat-count").textContent = msgs.length;
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ---------- footer aggregates ---------- */
+function renderFooter() {
+  const armed = drones.filter(d => d.armed).length;
+  $("#f-armed").textContent = armed;
+  $("#f-total").textContent = drones.length;
+  const batts = drones.map(d => d.batt_pct).filter(v => v != null);
+  const fb = $("#f-batt");
+  if (batts.length) {
+    const mean = Math.round(batts.reduce((a, b) => a + b, 0) / batts.length);
+    fb.textContent = mean + "%";
+    fb.style.color = battColor(mean, 0);
+  } else { fb.textContent = "—"; fb.style.color = "var(--dim)"; }
+}
+
+/* ====================================================
+   PPI RADAR SCOPE  — N-up tactical map drawn from live drone positions.
+==================================================== */
+const canvas = $("#scope"), ctx = canvas.getContext("2d");
+const RANGE_M = 90;
+let dpr = 1, cw = 0, ch = 0, cxp = 0, cyp = 0, R = 0, sweepAngle = 0;
+let blips = [];   // {id, x, y} screen px, for click hit-testing
+
+function resizeScope() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  cw = rect.width; ch = rect.height;
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cxp = cw / 2; cyp = ch / 2;
+  // Cap the radar so it stays a readable instrument instead of filling a wide
+  // column on big monitors; it centers in whatever space the column gives it.
+  R = Math.min(Math.min(cw, ch) / 2 - 24, 230);
+  drawScope();
+}
+// world (north,east meters) -> screen. N up (=-y), E right (=+x)
+function worldToScreen(north, east) {
+  return [cxp + (east / RANGE_M) * R, cyp - (north / RANGE_M) * R];
+}
+
+function drawScope() {
+  if (!R) return;
+  ctx.clearRect(0, 0, cw, ch);
+
+  const g = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, R);
+  g.addColorStop(0, "rgba(74,222,128,0.05)");
+  g.addColorStop(1, "rgba(10,13,11,0)");
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cxp, cyp, R, 0, Math.PI * 2); ctx.fill();
+
+  // range rings 30/60/90
+  ctx.font = "10.5px 'JetBrains Mono', monospace";
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  [30, 60, 90].forEach(rm => {
+    const rr = (rm / RANGE_M) * R;
+    ctx.beginPath(); ctx.arc(cxp, cyp, rr, 0, Math.PI * 2);
+    ctx.strokeStyle = rm === 90 ? "rgba(63,107,80,0.9)" : "rgba(63,107,80,0.5)";
+    ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = "rgba(63,107,80,0.95)";
+    ctx.fillText(rm + "m", cxp + rr * 0.707 - 1, cyp - rr * 0.707);
+  });
+
+  // axes
+  ctx.strokeStyle = "rgba(63,107,80,0.35)"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cxp - R, cyp); ctx.lineTo(cxp + R, cyp);
+  ctx.moveTo(cxp, cyp - R); ctx.lineTo(cxp, cyp + R);
+  ctx.stroke();
+
+  // bearing scale (every 5°, major every 30°)
+  for (let a = 0; a < 360; a += 5) {
+    const rad = (a - 90) * Math.PI / 180;
+    const major = a % 30 === 0;
+    const t1 = major ? R - 9 : R - 4;
+    ctx.beginPath();
+    ctx.strokeStyle = major ? "rgba(74,222,128,0.55)" : "rgba(63,107,80,0.5)";
+    ctx.lineWidth = major ? 1.2 : 0.8;
+    ctx.moveTo(cxp + Math.cos(rad) * t1, cyp + Math.sin(rad) * t1);
+    ctx.lineTo(cxp + Math.cos(rad) * R, cyp + Math.sin(rad) * R);
+    ctx.stroke();
+    if (major) {
+      ctx.fillStyle = "rgba(63,107,80,0.95)";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(String(a).padStart(3, "0"), cxp + Math.cos(rad) * (R - 17), cyp + Math.sin(rad) * (R - 17));
+    }
+  }
+
+  // compass cardinals
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#fbbf24"; ctx.font = "bold 12px 'JetBrains Mono', monospace";
+  ctx.fillText("N", cxp, cyp - R - 11);
+  ctx.fillStyle = "rgba(63,107,80,0.9)"; ctx.font = "10.5px 'JetBrains Mono', monospace";
+  ctx.fillText("S", cxp, cyp + R + 11);
+  ctx.textAlign = "left";  ctx.fillText("E", cxp + R + 7, cyp);
+  ctx.textAlign = "right"; ctx.fillText("W", cxp - R - 7, cyp);
+
+  if (!prefersReduce) drawSweep();
+
+  blips = [];
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  drones.forEach(d => drawBlip(d));
+}
+
+function drawSweep() {
+  const rad = (sweepAngle - 90) * Math.PI / 180;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cxp, cyp);
+  ctx.arc(cxp, cyp, R, rad - 0.5, rad);
+  ctx.closePath();
+  const wg = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, R);
+  wg.addColorStop(0, "rgba(74,222,128,0.18)");
+  wg.addColorStop(1, "rgba(74,222,128,0)");
+  ctx.fillStyle = wg; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(cxp, cyp);
+  ctx.lineTo(cxp + Math.cos(rad) * R, cyp + Math.sin(rad) * R);
+  ctx.strokeStyle = "rgba(74,222,128,0.7)"; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.restore();
+}
+
+function drawBlip(d) {
+  if (d.north == null || d.east == null) return;     // no position fix yet
+  const [x, y] = worldToScreen(d.north, d.east);
+  const isSel = d.id === sel;
+  const low = battClass(d.batt_pct, d.warn) === "alert";
+  const color = low ? "#ff6b6b" : (isSel ? "#fbbf24" : "#4ade80");
+  blips.push({ id: d.id, x, y });
+
+  // heading vector
+  if (d.armed && d.heading != null && d.speed != null && d.speed > 0.2) {
+    const rad = (d.heading - 90) * Math.PI / 180;
+    const len = 10 + Math.min(d.speed, 8) * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(rad) * len, y + Math.sin(rad) * len);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+
+  // blip mark (filled = armed, hollow square = on pad / disarmed)
+  if (d.armed) {
+    ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+  } else {
+    ctx.strokeStyle = "#3f6b50"; ctx.lineWidth = 1.2;
+    ctx.strokeRect(x - 3, y - 3, 6, 6);
+  }
+
+  // selection bracket
+  if (isSel) {
+    const b = 9, seg = 4;
+    ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 1.2;
+    [[-b,-b,1,1],[b,-b,-1,1],[-b,b,1,-1],[b,b,-1,-1]].forEach(([dx,dy,sx,sy]) => {
+      ctx.beginPath();
+      ctx.moveTo(x+dx, y+dy); ctx.lineTo(x+dx + sx*seg, y+dy);
+      ctx.moveTo(x+dx, y+dy); ctx.lineTo(x+dx, y+dy + sy*seg);
+      ctx.stroke();
+    });
+  }
+
+  // callsign + altitude tags
+  ctx.font = "10.5px 'JetBrains Mono', monospace";
+  ctx.fillStyle = isSel ? "#fbbf24" : (low ? "#ff6b6b" : "#d6f0dd");
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillText("D" + d.id + (low ? " ↓" : ""), x + 7, y - 6);
+  ctx.fillStyle = "rgba(63,107,80,0.95)";
+  ctx.fillText(d.armed ? (d.alt == null ? "—" : d.alt.toFixed(0) + "m") : "PAD", x + 7, y + 5);
+}
+
+canvas.onclick = ev => {
+  const rect = canvas.getBoundingClientRect();
+  const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+  let best = null, bd = 1e9;
+  blips.forEach(m => { const dd = (m.x - x)**2 + (m.y - y)**2; if (dd < bd) { bd = dd; best = m; } });
+  if (best && bd <= 18*18) select(best.id);
+};
+
+/* ---------- sweep animation ---------- */
+let lastT = 0;
+function animateSweep(t) {
+  if (!lastT) lastT = t;
+  const dt = (t - lastT) / 1000; lastT = t;
+  sweepAngle = (sweepAngle + dt * 36) % 360;     // ~10 s / revolution
+  drawScope();
+  requestAnimationFrame(animateSweep);
+}
+
+/* ---------- clock ---------- */
+function tickClock() {
+  const d = new Date(), z = n => String(n).padStart(2, "0");
+  $("#clock").textContent = `${z(d.getUTCHours())}:${z(d.getUTCMinutes())}:${z(d.getUTCSeconds())}Z`;
+}
+
+/* ---------- command composer ---------- */
+$("#composer").addEventListener("submit", async e => {
+  e.preventDefault();
+  const inp = $("#cmd"), text = inp.value.trim();
+  if (!text) return;
+  inp.value = "";
+  await fetch("/command", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ text }) });
+});
+
+/* ---------- /state poll ---------- */
+async function poll() {
+  const live = $("#live"), line = $("#liveline");
+  try {
+    const s = await (await fetch("/state")).json();
+    lastState = s; drones = s.drones;
+    if (s.n !== built) buildThumbs(s.n);
+    refreshTiles();
+    renderRail(drones[sel]);
+    renderChat(s.chat);
+    renderFooter();
+    drawScope();
+    live.classList.remove("down");
+    $("#f-link").textContent = "NOMINAL"; $("#f-link").style.color = "var(--green)";
+    line.textContent = `${s.n} DRONES · ${s.chat.length} MSG · LIVE`;
+  } catch(e) {
+    live.classList.add("down");
+    line.textContent = "RECONNECTING…";
+    $("#f-link").textContent = "LOST"; $("#f-link").style.color = "var(--amber)";
   }
 }
 
-function grid(){
-  ctx.fillStyle="#0b1020";ctx.fillRect(0,0,W,W);
-  ctx.strokeStyle="#23304d";
-  for(let m=-RANGE;m<=RANGE;m+=30){let a=toPx(m,-RANGE),b=toPx(m,RANGE);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
-    let d=toPx(-RANGE,m),e=toPx(RANGE,m);ctx.beginPath();ctx.moveTo(d[0],d[1]);ctx.lineTo(e[0],e[1]);ctx.stroke();}
-  ctx.strokeStyle="#34507f";ctx.beginPath();ctx.moveTo(C,0);ctx.lineTo(C,W);ctx.moveTo(0,C);ctx.lineTo(W,C);ctx.stroke();
-  ctx.fillStyle="#8da2c8";ctx.fillText("N",C-4,12);ctx.fillText("E",W-12,C-6);
-}
-let markers=[];   // {id, x, y} in canvas px, for click hit-testing
-function drones(ds){
-  markers=[];
-  ds.forEach(d=>{
-    const sdot=document.getElementById("sdot"+d.id);
-    if(sdot) sdot.className="sdot "+battClass(d.batt_pct,d.warn);
-    if(d.north===null) return;
-    const p=toPx(d.north,d.east);
-    markers.push({id:d.id,x:p[0],y:p[1]});
-    const r=d.id===sel?10:7;
-    if(d.id===sel){ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],r+3,0,7);ctx.stroke();ctx.lineWidth=1;}
-    ctx.fillStyle=col(d.id);ctx.beginPath();ctx.arc(p[0],p[1],r,0,7);ctx.fill();
-    ctx.fillStyle="#dfe6f5";ctx.fillText("drone_"+d.id,p[0]+13,p[1]+4);
-  });
-}
-cv.onclick=ev=>{
-  const rect=cv.getBoundingClientRect();
-  const x=(ev.clientX-rect.left)*(W/rect.width), y=(ev.clientY-rect.top)*(W/rect.height);
-  let best=null,bd=1e9;
-  markers.forEach(m=>{const dd=(m.x-x)**2+(m.y-y)**2; if(dd<bd){bd=dd;best=m;}});
-  if(best && bd<=18*18) select(best.id);
-};
-
-function chat(msgs){
-  const el=document.getElementById("chat");
-  el.innerHTML=msgs.map(l=>{const i=l.indexOf(":");const who=i>0?l.slice(0,i):"";const rest=i>0?l.slice(i+1):l;
-    const cls=/commander|^you/i.test(who)?"msg cmd":"msg";
-    return `<div class="${cls}"><b>${who}</b>${rest}</div>`;}).join("");
-  el.scrollTop=el.scrollHeight;
-}
-async function tick(){
-  try{
-    const s=await (await fetch("/state")).json();
-    lastState=s;
-    if(s.n!==built) buildThumbs(s.n);
-    grid(); drones(s.drones); chat(s.chat);
-    renderMetrics(s.drones[sel]);
-    document.getElementById("status").textContent=`${s.n} drones · ${s.chat.length} messages · live`;
-  }catch(e){document.getElementById("status").textContent="reconnecting…";}
-}
-async function send(){
-  const inp=document.getElementById("cmd");const text=inp.value.trim();if(!text)return;
-  inp.value="";
-  await fetch("/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
-}
-document.getElementById("send").onclick=send;
-document.getElementById("cmd").addEventListener("keydown",e=>{if(e.key==="Enter")send();});
-setupHero(); grid(); setInterval(tick,500); tick();   // tick() builds tiles, which starts WS/polling
+/* ---------- init ---------- */
+setupHero();
+resizeScope();
+window.addEventListener("resize", resizeScope);
+tickClock(); setInterval(tickClock, 1000);
+if (!prefersReduce) requestAnimationFrame(animateSweep);
+setInterval(poll, 500); poll();
 </script>
 </body>
 </html>
