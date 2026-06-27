@@ -482,7 +482,6 @@
 <script>
 "use strict";
 const $ = (s, r=document) => r.querySelector(s);
-const prefersReduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let sel = 0, built = 0, lastState = null, drones = [];
 // Deep-link: ?drone=N opens with that drone focused (clamped once the count is known).
@@ -505,6 +504,11 @@ function battClass(pct, warn) {
 }
 function battColor(pct, warn) {
   return { alert:"#ff6b6b", amber:"#fbbf24", green:"#4ade80" }[battClass(pct, warn)] || "#3f6b50";
+}
+// "#rrggbb" -> "rgba(r,g,b,a)" for translucent scope overlays.
+function rgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 
@@ -731,7 +735,8 @@ function renderFooter() {
 ==================================================== */
 const canvas = $("#scope"), ctx = canvas.getContext("2d");
 const RANGE_M = 90;
-let dpr = 1, cw = 0, ch = 0, cxp = 0, cyp = 0, R = 0, sweepAngle = 0;
+const FOV_RAD = 1.204;   // IMX214 onboard camera horizontal FOV (~69°), drawn as a look cone
+let dpr = 1, cw = 0, ch = 0, cxp = 0, cyp = 0, R = 0;
 let blips = [];   // {id, x, y} screen px, for click hit-testing
 
 function resizeScope() {
@@ -808,29 +813,9 @@ function drawScope() {
   ctx.textAlign = "left";  ctx.fillText("E", cxp + R + 7, cyp);
   ctx.textAlign = "right"; ctx.fillText("W", cxp - R - 7, cyp);
 
-  if (!prefersReduce) drawSweep();
-
   blips = [];
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   drones.forEach(d => drawBlip(d));
-}
-
-function drawSweep() {
-  const rad = (sweepAngle - 90) * Math.PI / 180;
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(cxp, cyp);
-  ctx.arc(cxp, cyp, R, rad - 0.5, rad);
-  ctx.closePath();
-  const wg = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, R);
-  wg.addColorStop(0, "rgba(74,222,128,0.18)");
-  wg.addColorStop(1, "rgba(74,222,128,0)");
-  ctx.fillStyle = wg; ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(cxp, cyp);
-  ctx.lineTo(cxp + Math.cos(rad) * R, cyp + Math.sin(rad) * R);
-  ctx.strokeStyle = "rgba(74,222,128,0.7)"; ctx.lineWidth = 1.2; ctx.stroke();
-  ctx.restore();
 }
 
 function drawBlip(d) {
@@ -841,14 +826,29 @@ function drawBlip(d) {
   const color = low ? "#ff6b6b" : (isSel ? "#fbbf24" : "#4ade80");
   blips.push({ id: d.id, x, y });
 
-  // heading vector
-  if (d.armed && d.heading != null && d.speed != null && d.speed > 0.2) {
-    const rad = (d.heading - 90) * Math.PI / 180;
-    const len = 10 + Math.min(d.speed, 8) * 1.6;
+  // camera field-of-view cone — where the drone's forward camera is looking.
+  // Centred on heading (yaw = camera bore), spanning the IMX214's ~69° HFOV.
+  if (d.heading != null) {
+    const c = (d.heading - 90) * Math.PI / 180;
+    const a0 = c - FOV_RAD / 2, a1 = c + FOV_RAD / 2;
+    const reach = isSel ? 34 : 28;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.cos(rad) * len, y + Math.sin(rad) * len);
-    ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.arc(x, y, reach, a0, a1);
+    ctx.closePath();
+    const g = ctx.createRadialGradient(x, y, 2, x, y, reach);
+    g.addColorStop(0, rgba(color, isSel ? 0.40 : 0.28));
+    g.addColorStop(1, rgba(color, 0));
+    ctx.fillStyle = g; ctx.fill();
+    // edge rays + a faint boresight so the look direction reads at a glance
+    ctx.strokeStyle = rgba(color, isSel ? 0.7 : 0.45); ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a0) * reach, y + Math.sin(a0) * reach);
+    ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * reach, y + Math.sin(a1) * reach);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(c) * reach, y + Math.sin(c) * reach);
+    ctx.strokeStyle = rgba(color, isSel ? 0.55 : 0.3); ctx.stroke();
   }
 
   // blip mark (filled = armed, hollow square = on pad / disarmed)
@@ -888,16 +888,6 @@ canvas.onclick = ev => {
   blips.forEach(m => { const dd = (m.x - x)**2 + (m.y - y)**2; if (dd < bd) { bd = dd; best = m; } });
   if (best && bd <= 18*18) select(best.id);
 };
-
-/* ---------- sweep animation ---------- */
-let lastT = 0;
-function animateSweep(t) {
-  if (!lastT) lastT = t;
-  const dt = (t - lastT) / 1000; lastT = t;
-  sweepAngle = (sweepAngle + dt * 36) % 360;     // ~10 s / revolution
-  drawScope();
-  requestAnimationFrame(animateSweep);
-}
 
 /* ---------- clock ---------- */
 function tickClock() {
@@ -941,7 +931,6 @@ setupHero();
 resizeScope();
 window.addEventListener("resize", resizeScope);
 tickClock(); setInterval(tickClock, 1000);
-if (!prefersReduce) requestAnimationFrame(animateSweep);
 setInterval(poll, 500); poll();
 </script>
 </body>

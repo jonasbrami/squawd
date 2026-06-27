@@ -15,7 +15,8 @@ cameras** + a web **Observatory**.
 
 The Observatory (above) shows, live: the selected drone's **onboard camera POV**
 with a heads-up overlay (left), a **PPI radar scope** of the whole swarm in the
-GPS frame (center), and the **comms feed** where the Commander's dispatches and
+GPS frame — each blip projecting its camera's field-of-view cone (center) — and
+the **comms feed** where the Commander's dispatches and
 the drones' reports scroll by as flight strips (right). Click any blip or camera
 tile to focus a drone; type a command at the bottom and watch the Commander
 delegate.
