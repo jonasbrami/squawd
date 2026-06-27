@@ -113,7 +113,15 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    /* own stacking context so the camera feed's compositing layer can't paint
+       past its panel into a neighbour (only visible during headless capture). */
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
   }
+  /* the camera column sits beneath the data panels in the stack */
+  .col-feed { z-index: 0; }
+  .rail, .scope-panel, .chat { z-index: 1; }
   .panel > .phead {
     display: flex; align-items: center; justify-content: space-between;
     padding: 7px 11px;
@@ -517,7 +525,8 @@ function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","
    <canvas>; browsers without WebCodecs poll /frame/{id} JPEGs into <img>.
    (Pipeline preserved from the original observatory.)
 ==================================================== */
-const HAS_WEBCODECS = ("VideoDecoder" in window) && ("EncodedVideoChunk" in window);
+const HAS_WEBCODECS = ("VideoDecoder" in window) && ("EncodedVideoChunk" in window)
+  && !new URLSearchParams(location.search).has("nocodec");   // ?nocodec forces the JPEG path
 const codecFor = {}, tiles = {};
 
 function setupHero() {
