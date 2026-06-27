@@ -1,0 +1,11 @@
+backend,resolution,n,fps_min,rtf,alive,limiting,verdict
+intel,960x540,6,9.95,1.00,6,dgpu,PASS
+intel,960x540,8,9.90,1.00,8,none,PASS
+intel,1280x720,8,9.90,1.00,8,none,PASS
+intel,1280x720,10,9.80,1.00,10,none,PASS
+intel,1280x720,12,8.30,0.10,0,none,FAIL
+nvidia,960x540,6,9.90,1.00,6,dgpu,PASS
+nvidia,960x540,8,9.95,1.00,8,none,PASS
+nvidia,1280x720,8,9.82,1.00,8,none,PASS
+nvidia,1280x720,10,9.80,1.00,10,none,PASS
+nvidia,1280x720,12,8.79,0.81,0,dgpu,FAIL

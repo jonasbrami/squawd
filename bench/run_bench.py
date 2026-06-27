@@ -343,7 +343,7 @@ def write_quick_report(summary, outdir, world, budget_s, start, end,
 
 
 def main():
-    global WORLD               # run_one's env + _rtf both read this module global
+    global WORLD, QUICK_LADDER  # reassignable module globals (env/_rtf + ladder)
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true",
                     help="fixed N=8, sweep resolutions per backend (harness validation)")
@@ -351,6 +351,12 @@ def main():
                     help="time-boxed 'best you can get' per platform via the demand ladder")
     ap.add_argument("--budget", type=float, default=1700.0,
                     help="--quick total wall-clock budget in seconds (default 1700 ~= 28min)")
+    ap.add_argument("--ladder", default=None,
+                    help="--quick demand ladder, e.g. '6x960x540,8x1280x720,...' (NxWxH, increasing demand)")
+    ap.add_argument("--run-cap", type=int, default=4,
+                    help="--quick max rungs climbed per platform (default 4)")
+    ap.add_argument("--seed-idx", type=int, default=QUICK_SEED_IDX,
+                    help="--quick ladder index to start each platform's climb from")
     ap.add_argument("--world", default=WORLD, help="Gazebo world (default baylands)")
     ap.add_argument("--backends", default=",".join(DEFAULT_BACKENDS))
     ap.add_argument("--resolutions", default=",".join(DEFAULT_RES))
@@ -361,6 +367,9 @@ def main():
     ap.add_argument("--out", default=os.path.join("docs", "benchmarks", time.strftime("%Y%m%dT%H%M%S")))
     args = ap.parse_args()
     WORLD = args.world          # run_one's env + _rtf both read this module global
+    if args.ladder:             # override the demand ladder, e.g. "6x960x540,8x1280x720"
+        QUICK_LADDER = [(int(p.split("x")[0]), f"{p.split('x')[1]}x{p.split('x')[2]}")
+                        for p in args.ladder.split(",")]
     backends = args.backends.split(",")
     resolutions = args.resolutions.split(",")
     os.makedirs(os.path.join(ROOT, args.out), exist_ok=True)
@@ -368,7 +377,7 @@ def main():
 
     if args.quick:
         quick_best(backends, args.world, args.settle, args.measure, outdir,
-                   args.cam_fps, args.budget)
+                   args.cam_fps, args.budget, seed_idx=args.seed_idx, run_cap=args.run_cap)
         return
     if args.smoke:
         # one fixed N across the resolution sweep, no knee search

@@ -1,0 +1,33 @@
+{
+  "backend": "nvidia",
+  "resolution": "960x540",
+  "n": 8,
+  "fps": {
+    "min": 9.94923737530323,
+    "mean": 9.94923737530323,
+    "p10": 9.94923737530323
+  },
+  "rtf": 1.0001022604561316,
+  "alive": 8,
+  "limiting": "none",
+  "peak": {
+    "t": 1782593839.8192184,
+    "cpu_pct": 31.6,
+    "load1": 7.95849609375,
+    "ram_used_gb": 13.821960192,
+    "nvidia": {
+      "util": 40.0,
+      "mem_used_mb": 1884.0,
+      "power_w": 19.94
+    },
+    "intel": {},
+    "container": {
+      "cpu_pct": 417.97,
+      "mem_mb": 2995.2
+    }
+  },
+  "verdict": {
+    "pass": true,
+    "reasons": []
+  }
+}
