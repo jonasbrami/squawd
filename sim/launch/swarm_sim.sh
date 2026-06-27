@@ -25,8 +25,22 @@ case "$RENDER_BACKEND" in
     # ogre2 must use NVIDIA's EGL, never Mesa: force the glvnd vendor ICD and
     # make sure no Mesa driver override is set.
     unset MESA_LOADER_DRIVER_OVERRIDE
-    export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
+    NV_ICD="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
+    # The nvidia-container-toolkit (`--gpus all`, caps incl. graphics) injects
+    # libEGL_nvidia.so.0 but does NOT create the glvnd vendor ICD json. Without it
+    # __EGL_VENDOR_LIBRARY_FILENAMES points at a missing file -> glvnd loads no
+    # NVIDIA ICD -> ogre2 null-derefs in Ogre2RenderEngine::CreateRenderSystem
+    # (the reported segfault). Create it here, idempotently, when the NVIDIA EGL
+    # lib is actually present.
+    if [ ! -f "$NV_ICD" ] && ls /usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0 >/dev/null 2>&1; then
+      mkdir -p "$(dirname "$NV_ICD")"
+      printf '{\n  "file_format_version":"1.0.0",\n  "ICD":{"library_path":"libEGL_nvidia.so.0"}\n}\n' > "$NV_ICD"
+    fi
+    export __EGL_VENDOR_LIBRARY_FILENAMES="$NV_ICD"
     export QT_QPA_PLATFORM=offscreen
+    # NVIDIA EGL needs the explicit headless-rendering surface or ogre2 segfaults
+    # in CreateRenderSystem (the Mesa/iris path tolerates its absence).
+    GZ_HR="--headless-rendering"
     ;;
   intel)
     unset LIBGL_ALWAYS_SOFTWARE
@@ -110,7 +124,7 @@ fi
 # out and KILLED the gz it spawned, taking the whole swarm down. Starting gz up
 # front and waiting until its spawn service is live removes the race entirely.
 echo "starting gz server ($PX4_GZ_WORLD)…"
-gz sim -v1 -r -s "$WORLDS/$PX4_GZ_WORLD.sdf" >/tmp/gz.log 2>&1 &
+gz sim -v1 -r -s ${GZ_HR:-} "$WORLDS/$PX4_GZ_WORLD.sdf" >/tmp/gz.log 2>&1 &
 for _ in $(seq 1 60); do
   gz service -l 2>/dev/null | grep -q "/world/$PX4_GZ_WORLD/create" && break
   sleep 2

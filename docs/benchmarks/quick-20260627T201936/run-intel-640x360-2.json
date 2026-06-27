@@ -1,0 +1,33 @@
+{
+  "backend": "intel",
+  "resolution": "640x360",
+  "n": 2,
+  "fps": {
+    "min": 9.999286583302009,
+    "mean": 10.024284799760263,
+    "p10": 10.00428622659366
+  },
+  "rtf": 1.0000127501625646,
+  "alive": 2,
+  "limiting": "none",
+  "peak": {
+    "t": 1782577244.6016715,
+    "cpu_pct": 9.4,
+    "load1": 1.6669921875,
+    "ram_used_gb": 13.18985728,
+    "nvidia": {
+      "util": 0.0,
+      "mem_used_mb": 879.0,
+      "power_w": 14.06
+    },
+    "intel": {},
+    "container": {
+      "cpu_pct": 96.69,
+      "mem_mb": 2881.536
+    }
+  },
+  "verdict": {
+    "pass": true,
+    "reasons": []
+  }
+}

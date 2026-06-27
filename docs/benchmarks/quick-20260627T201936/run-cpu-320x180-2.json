@@ -1,0 +1,12 @@
+{
+  "backend": "cpu",
+  "resolution": "320x180",
+  "n": 2,
+  "verdict": {
+    "pass": false,
+    "reasons": [
+      "infra: not ready"
+    ]
+  },
+  "infra_fail": true
+}
