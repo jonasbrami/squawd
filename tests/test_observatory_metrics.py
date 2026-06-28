@@ -58,3 +58,13 @@ def test_battery_none_fields_do_not_crash():
     batt = SimpleNamespace(remaining=None, voltage_v=None, warning=0)
     d = metrics.build_drone_state(0, None, None, batt, None, None, False)
     assert d["batt_pct"] is None and d["voltage"] is None and d["warn"] == 0
+
+
+def test_build_drone_state_includes_cam_seq():
+    d = metrics.build_drone_state(2, None, None, None, None, None, True, cam_seq=57)
+    assert d["cam_seq"] == 57
+
+
+def test_build_drone_state_cam_seq_defaults_zero():
+    d = metrics.build_drone_state(0, None, None, None, None, None, False)
+    assert d["cam_seq"] == 0

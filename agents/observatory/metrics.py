@@ -40,7 +40,7 @@ def _r(v, n=1):
     return round(v, n) if v is not None else None
 
 
-def build_drone_state(i, pos, status, batt, task, report, has_cam):
+def build_drone_state(i, pos, status, batt, task, report, has_cam, cam_seq=0):
     """Assemble one drone's /state dict from the latest messages (any may be None).
 
     pos    -> VehicleLocalPosition (x, y, z, vx, vy, vz, heading)
@@ -49,6 +49,7 @@ def build_drone_state(i, pos, status, batt, task, report, has_cam):
     task   -> last /swarm/cmd/drone_<i> text, or None
     report -> last /swarm/report/drone_<i> text, or None
     has_cam-> whether a camera topic exists for this drone
+    cam_seq-> GzCameras.seq(i), the per-drone frame counter
     """
     return {
         "id": i,
@@ -66,4 +67,5 @@ def build_drone_state(i, pos, status, batt, task, report, has_cam):
         "task": task,
         "report": report,
         "cam": has_cam,
+        "cam_seq": cam_seq,
     }

@@ -6,18 +6,54 @@
 # NB: no `-u` — ROS setup.bash references unbound vars.
 set -eo pipefail
 
-# Rendering backend: software GL (llvmpipe) by default so cameras work with no GPU.
-# Set GPU_RENDER=1 (and pass --device /dev/dri) to use hardware EGL instead — far
-# faster, lets N camera feeds + live flight coexist.
-if [ "${GPU_RENDER:-0}" = "1" ]; then
-  unset LIBGL_ALWAYS_SOFTWARE
-  # Headless EGL on the Intel iGPU. Expose ONLY renderD128 to the container so
-  # Mesa can't grab the NVIDIA node (no Mesa driver there -> ogre2 segfault).
-  export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-iris}"
-  export QT_QPA_PLATFORM=offscreen
-else
-  export LIBGL_ALWAYS_SOFTWARE=1
+# Rendering backend selector.
+#   RENDER_BACKEND=cpu     -> software GL (llvmpipe), no GPU needed (default if GPU_RENDER!=1)
+#   RENDER_BACKEND=intel   -> headless EGL on the Intel iGPU (current GPU_RENDER=1 behaviour)
+#   RENDER_BACKEND=nvidia  -> headless EGL on the NVIDIA dGPU (needs NVIDIA EGL libs + /dev/nvidia*)
+# Back-compat: GPU_RENDER=1 with no RENDER_BACKEND == intel.
+RENDER_BACKEND="${RENDER_BACKEND:-}"
+if [ -z "$RENDER_BACKEND" ]; then
+  if [ "${GPU_RENDER:-0}" = "1" ]; then
+    RENDER_BACKEND=intel
+  else
+    RENDER_BACKEND=cpu
+  fi
 fi
+case "$RENDER_BACKEND" in
+  nvidia)
+    unset LIBGL_ALWAYS_SOFTWARE
+    # ogre2 must use NVIDIA's EGL, never Mesa: force the glvnd vendor ICD and
+    # make sure no Mesa driver override is set.
+    unset MESA_LOADER_DRIVER_OVERRIDE
+    NV_ICD="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
+    # The nvidia-container-toolkit (`--gpus all`, caps incl. graphics) injects
+    # libEGL_nvidia.so.0 but does NOT create the glvnd vendor ICD json. Without it
+    # __EGL_VENDOR_LIBRARY_FILENAMES points at a missing file -> glvnd loads no
+    # NVIDIA ICD -> ogre2 null-derefs in Ogre2RenderEngine::CreateRenderSystem
+    # (the reported segfault). Create it here, idempotently, when the NVIDIA EGL
+    # lib is actually present.
+    if [ ! -f "$NV_ICD" ] && ls /usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0 >/dev/null 2>&1; then
+      mkdir -p "$(dirname "$NV_ICD")"
+      printf '{\n  "file_format_version":"1.0.0",\n  "ICD":{"library_path":"libEGL_nvidia.so.0"}\n}\n' > "$NV_ICD"
+    fi
+    export __EGL_VENDOR_LIBRARY_FILENAMES="$NV_ICD"
+    export QT_QPA_PLATFORM=offscreen
+    # NVIDIA EGL needs the explicit headless-rendering surface or ogre2 segfaults
+    # in CreateRenderSystem (the Mesa/iris path tolerates its absence).
+    GZ_HR="--headless-rendering"
+    ;;
+  intel)
+    unset LIBGL_ALWAYS_SOFTWARE
+    # Headless EGL on the Intel iGPU. Expose ONLY renderD128 to the container so
+    # Mesa can't grab the NVIDIA node (no Mesa driver there -> ogre2 segfault).
+    export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-iris}"
+    export QT_QPA_PLATFORM=offscreen
+    ;;
+  *)  # cpu / llvmpipe
+    export LIBGL_ALWAYS_SOFTWARE=1
+    unset MESA_LOADER_DRIVER_OVERRIDE
+    ;;
+esac
 
 # Server-only Gazebo. There's no display in the container, and under the GPU path
 # (QT_QPA_PLATFORM=offscreen) the gz GUI aborts in handleContextCreationFailure,
@@ -71,12 +107,13 @@ export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH}:/workspace/PX4-Autopilot/$W
 # camera topic: drop the shared `<topic>camera</topic>` override (-> gz scopes the
 # topic per model: /world/default/model/x500_depth_<i>/.../IMX214/image) and cut
 # it to 640x360@10Hz so N feeds render on software GL.
+CAM_W="${CAM_W:-640}"; CAM_H="${CAM_H:-360}"; CAM_FPS="${CAM_FPS:-10}"
 OAKD="Tools/simulation/gz/models/OakD-Lite/model.sdf"
 if [ -f "$OAKD" ] && grep -q "<topic>camera</topic>" "$OAKD"; then
   sed -i \
-    -e "s|<width>1920</width>|<width>640</width>|" \
-    -e "s|<height>1080</height>|<height>360</height>|" \
-    -e "s|<update_rate>30</update_rate>|<update_rate>10</update_rate>|g" \
+    -e "s|<width>1920</width>|<width>${CAM_W}</width>|" \
+    -e "s|<height>1080</height>|<height>${CAM_H}</height>|" \
+    -e "s|<update_rate>30</update_rate>|<update_rate>${CAM_FPS}</update_rate>|g" \
     -e "/<topic>camera<\/topic>/d" \
     "$OAKD"
 fi
@@ -87,7 +124,7 @@ fi
 # out and KILLED the gz it spawned, taking the whole swarm down. Starting gz up
 # front and waiting until its spawn service is live removes the race entirely.
 echo "starting gz server ($PX4_GZ_WORLD)…"
-gz sim -v1 -r -s "$WORLDS/$PX4_GZ_WORLD.sdf" >/tmp/gz.log 2>&1 &
+gz sim -v1 -r -s ${GZ_HR:-} "$WORLDS/$PX4_GZ_WORLD.sdf" >/tmp/gz.log 2>&1 &
 for _ in $(seq 1 60); do
   gz service -l 2>/dev/null | grep -q "/world/$PX4_GZ_WORLD/create" && break
   sleep 2
