@@ -19,7 +19,7 @@ def _err(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
-def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
+def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, model=None):
     name = f"drone_{i}"
     ops = FlightOps(drone, world, bridge, i, n)
 
@@ -142,6 +142,7 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
                        f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission"],
         setting_sources=[],
         env=env or {},
+        model=model,
         system_prompt=(
             f"You are {name}, an autonomous drone in a swarm of {n}, with your own onboard "
             "thinking. The COMMANDER sends you tasks; you do not hear the other drones. Carry "
