@@ -52,7 +52,7 @@ async def run_with_retry(coro_fn, attempts: int = 2):
     result = None
     for _ in range(max(1, attempts)):
         result = await coro_fn()
-        if not (result and result.infra_fail):
+        if result is None or not result.infra_fail:
             return result
     return result
 
@@ -87,27 +87,28 @@ async def main(args) -> None:
     cameras = GzCameras(n_max)
     bridge.start()
     deps = Deps(world=world, bridge=bridge, cameras=cameras)
+    try:
+        print(f"evals: {len(cells)} cells -> {jsonl}", flush=True)
+        with open(jsonl, "a") as fh:
+            for cell in cells:
+                if cell.key() in done:
+                    print(f"skip (done): {cell.key()}", flush=True)
+                    continue
+                spec = specs[cell.task_id]
+                res = await run_with_retry(
+                    lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps))
+                fh.write(json.dumps(res.to_row()) + "\n")
+                fh.flush()
+                print(f"{cell.key()}: passed={res.passed} infra_fail={res.infra_fail} "
+                      f"steps={res.steps} lat={res.latency_s:.1f}s", flush=True)
 
-    print(f"evals: {len(cells)} cells -> {jsonl}", flush=True)
-    with open(jsonl, "a") as fh:
-        for cell in cells:
-            if cell.key() in done:
-                print(f"skip (done): {cell.key()}", flush=True)
-                continue
-            spec = specs[cell.task_id]
-            res = await run_with_retry(
-                lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps))
-            fh.write(json.dumps(res.to_row()) + "\n")
-            fh.flush()
-            print(f"{cell.key()}: passed={res.passed} infra_fail={res.infra_fail} "
-                  f"steps={res.steps} lat={res.latency_s:.1f}s", flush=True)
-
-    rows = _load_rows(jsonl)
-    md = render_markdown(aggregate(rows))
-    with open(os.path.join(out_dir, "RESULTS.md"), "w") as f:
-        f.write(md)
-    print(md, flush=True)
-    bridge.shutdown()
+        rows = _load_rows(jsonl)
+        md = render_markdown(aggregate(rows))
+        with open(os.path.join(out_dir, "RESULTS.md"), "w") as f:
+            f.write(md)
+        print(md, flush=True)
+    finally:
+        bridge.shutdown()
 
 
 def _cli() -> None:
