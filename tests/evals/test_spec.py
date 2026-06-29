@@ -48,3 +48,17 @@ def test_missing_field_rejected(tmp_path):
 def test_bundled_task_file_loads():
     t = load_task("evals/tasks/reach_marker_single.yaml")
     assert t.target_layer == "single_drone"
+
+
+def test_null_setup_rejected(tmp_path):
+    text = VALID.replace(
+        "setup:\n  world: baylands\n  n_drones: 1\n  spawn: home\n  seed_objects:\n    - {kind: marker, id: tgt_a, east: 120, north: -40}",
+        "setup:")
+    with pytest.raises(SpecError):
+        load_task(_write(tmp_path, text))
+
+
+def test_null_budget_rejected(tmp_path):
+    text = VALID.replace("budget: {wall_clock_s: 120, max_steps: 20}", "budget:")
+    with pytest.raises(SpecError):
+        load_task(_write(tmp_path, text))

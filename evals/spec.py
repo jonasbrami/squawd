@@ -62,6 +62,8 @@ def load_task(path: str) -> TaskSpec:
         raise SpecError(f"{path}: top level must be a mapping")
 
     s = _require(raw, "setup", path)
+    if not isinstance(s, dict):
+        raise SpecError(f"{path}: 'setup' must be a mapping")
     seeds = [SeedObject(id=_require(o, "id", "seed_object"),
                         e=float(_require(o, "east", "seed_object")),
                         n=float(_require(o, "north", "seed_object")))
@@ -72,6 +74,8 @@ def load_task(path: str) -> TaskSpec:
                       seed_objects=seeds)
 
     b = _require(raw, "budget", path)
+    if not isinstance(b, dict):
+        raise SpecError(f"{path}: 'budget' must be a mapping")
     budget = BudgetSpec(wall_clock_s=float(_require(b, "wall_clock_s", "budget")),
                         max_steps=int(_require(b, "max_steps", "budget")))
 
