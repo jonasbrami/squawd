@@ -41,7 +41,7 @@ def aggregate(rows: list[dict]) -> list[CellAgg]:
         scored = [r for r in grp if not r.get("infra_fail")]
         k = len(scored)
         successes = sum(1 for r in scored if r.get("passed"))
-        lats = [r["latency_s"] for r in scored]
+        lats = [r["latency_s"] for r in scored if r.get("latency_s") is not None]
         steps = [r["steps"] for r in scored]
         fails: dict[str, int] = defaultdict(int)
         for r in scored:

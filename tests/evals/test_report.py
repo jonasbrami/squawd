@@ -27,3 +27,15 @@ def test_render_markdown_has_header_and_rate():
     md = render_markdown(aggregate(ROWS))
     assert "success_rate" in md
     assert "t1" in md
+
+
+def test_latency_none_excluded_from_percentiles():
+    rows = [
+        {"task_id": "t1", "assignment": "drones=opus", "repeat": 0, "passed": True,
+         "latency_s": 4.0, "steps": 5, "infra_fail": False, "failure_reason": ""},
+        {"task_id": "t1", "assignment": "drones=opus", "repeat": 1, "passed": False,
+         "latency_s": None, "steps": 0, "infra_fail": False, "failure_reason": "wall-clock deadline"},
+    ]
+    agg = aggregate(rows)[0]
+    assert agg.k == 2                  # both scored (neither is infra_fail)
+    assert agg.lat_p50 == 4.0          # the None row is excluded from latency stats

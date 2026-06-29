@@ -31,3 +31,18 @@ def test_cellresult_row_roundtrip():
     cr = CellResult("t1", "drones=haiku", 0, True, [], 12.3, 4, False, "")
     row = cr.to_row()
     assert row["task_id"] == "t1" and row["passed"] is True and row["steps"] == 4
+
+
+def test_cellresult_row_latency_none():
+    cr = CellResult("t1", "drones=haiku", 0, False, [], None, 0, False, "wall-clock deadline")
+    assert cr.to_row()["latency_s"] is None
+
+
+def test_require_single_drone_rejects_multi():
+    import pytest
+    from evals.runner import require_single_drone
+    from types import SimpleNamespace
+    spec = SimpleNamespace(id="t", setup=SimpleNamespace(n_drones=4))
+    with pytest.raises(ValueError):
+        require_single_drone(spec)
+    require_single_drone(SimpleNamespace(id="t", setup=SimpleNamespace(n_drones=1)))  # no raise

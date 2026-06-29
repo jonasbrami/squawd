@@ -53,7 +53,7 @@ class CellResult:
     repeat: int
     passed: bool
     checks: list = field(default_factory=list)
-    latency_s: float = 0.0
+    latency_s: float | None = None
     steps: int = 0
     infra_fail: bool = False
     failure_reason: str = ""
@@ -64,7 +64,7 @@ class CellResult:
             "assignment": self.assignment_label,
             "repeat": self.repeat,
             "passed": self.passed,
-            "latency_s": round(self.latency_s, 2),
+            "latency_s": round(self.latency_s, 2) if self.latency_s is not None else None,
             "steps": self.steps,
             "infra_fail": self.infra_fail,
             "failure_reason": self.failure_reason,
@@ -104,9 +104,19 @@ async def _drive(client, prompt: str, deadline_s: float, max_steps: int) -> tupl
     return trace, False, reason
 
 
+def require_single_drone(spec) -> None:
+    """This runner only flies drone 0. Reject multi-drone specs loudly rather than
+    silently producing plausible-but-wrong results."""
+    if spec.setup.n_drones != 1:
+        raise ValueError(
+            f"single_drone runner requires n_drones==1, got {spec.setup.n_drones} "
+            f"(task {spec.id})")
+
+
 async def run_cell(spec, assignment: dict, repeat: int, deps: Deps) -> CellResult:
     from agents.swarm.drone import DroneAgent  # deferred: pulls in rclpy/mavsdk at runtime only
 
+    require_single_drone(spec)
     label = assignment_label(assignment)
     base = CellResult(spec.id, label, repeat, passed=False)
     n = spec.setup.n_drones  # 1 for single_drone tasks
@@ -152,6 +162,6 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps) -> CellResul
     base.passed = g.passed
     base.checks = g.checks
     base.steps = trace.steps
-    base.latency_s = trace.first_action_t or 0.0
+    base.latency_s = trace.first_action_t
     base.failure_reason = reason
     return base
