@@ -28,7 +28,7 @@ import time
 
 from evals.matrix import expand, done_keys
 from evals.report import aggregate, render_markdown
-from evals.runner import Deps, run_cell
+from evals.runner import Deps, DroneHarness, run_cell
 from evals.spec import load_task
 
 
@@ -87,6 +87,7 @@ async def main(args) -> None:
     cameras = GzCameras(n_max)
     bridge.start()
     deps = Deps(world=world, bridge=bridge, cameras=cameras)
+    harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
     try:
         print(f"evals: {len(cells)} cells -> {jsonl}", flush=True)
         with open(jsonl, "a") as fh:
@@ -96,11 +97,12 @@ async def main(args) -> None:
                     continue
                 spec = specs[cell.task_id]
                 res = await run_with_retry(
-                    lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps))
+                    lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps, harness))
                 fh.write(json.dumps(res.to_row()) + "\n")
                 fh.flush()
+                lat = f"{res.latency_s:.1f}s" if res.latency_s is not None else "n/a"
                 print(f"{cell.key()}: passed={res.passed} infra_fail={res.infra_fail} "
-                      f"steps={res.steps} lat={res.latency_s:.1f}s", flush=True)
+                      f"steps={res.steps} lat={lat}", flush=True)
 
         rows = _load_rows(jsonl)
         md = render_markdown(aggregate(rows))

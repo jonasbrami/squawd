@@ -46,3 +46,51 @@ def test_require_single_drone_rejects_multi():
     with pytest.raises(ValueError):
         require_single_drone(spec)
     require_single_drone(SimpleNamespace(id="t", setup=SimpleNamespace(n_drones=1)))  # no raise
+
+
+def test_droneharness_caches_system_once_and_yields_fresh_clients():
+    """The leak fix: the connected System is built exactly once and reused; each
+    cell still gets a distinct client (fresh session), so no context bleed."""
+    import asyncio
+    from evals.runner import Deps, DroneHarness
+
+    connects = {"n": 0}
+
+    class FakeAgent:
+        def __init__(self):
+            self._system = object()
+
+        async def connect(self):
+            connects["n"] += 1
+
+    agents_made = []
+
+    def agent_factory():
+        a = FakeAgent()
+        agents_made.append(a)
+        return a
+
+    clients = []
+
+    def client_builder(model):
+        c = ("client", model)
+        clients.append(c)
+        return c
+
+    h = DroneHarness(Deps(world=None, bridge=None, cameras=None),
+                     agent_factory=agent_factory, client_builder=client_builder)
+
+    async def go():
+        s1 = await h.system()
+        s2 = await h.system()
+        assert s1 is s2                       # System built + connected once, reused
+        c1 = h.client_for("claude-opus-4-8")
+        c2 = h.client_for("claude-opus-4-8")
+        assert c1 is not c2                    # fresh client per cell (same model)
+        return s1
+
+    s = asyncio.run(go())
+    assert connects["n"] == 1                  # connect() called exactly once
+    assert len(agents_made) == 1               # only one DroneAgent ever built
+    assert len(clients) == 2                   # one client per client_for call
+    assert s is agents_made[0]._system

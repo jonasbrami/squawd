@@ -81,6 +81,58 @@ class Deps:
     cameras: object
 
 
+class DroneHarness:
+    """Owns the persistent MAVSDK link + telemetry subscription for drone 0, built
+    ONCE and reused across every cell — this is the fix for the per-cell subscription
+    /System leak (building a DroneAgent per cell re-subscribed the non-idempotent
+    RosBridge and spun a new System each time, growing linearly over a sweep).
+
+    It hands out a FRESH Claude client per cell (bound to the shared System with the
+    cell's model), because the SDK model is fixed at client construction AND each
+    cell/repeat must run an independent agent session — a reused client would bleed
+    one cell's conversation into the next and poison the accuracy numbers. So: cache
+    the model-independent flight link, rebuild only the cheap per-cell client.
+
+    The `agent_factory`/`client_builder` hooks exist so the caching lifecycle is
+    unit-testable without ROS; production paths default to the real deferred imports."""
+
+    def __init__(self, deps: Deps, agent_factory=None, client_builder=None) -> None:
+        self._deps = deps
+        self._agent_factory = agent_factory
+        self._client_builder = client_builder
+        self._agent = None  # cached DroneAgent; we use only its connected _system
+
+    def _make_agent(self):
+        if self._agent_factory is not None:
+            return self._agent_factory()
+        from agents.swarm.drone import DroneAgent  # deferred: rclpy/mavsdk at runtime only
+        return DroneAgent(0, self._deps.world, self._deps.bridge, 1,
+                          self._deps.cameras, model=None)
+
+    async def _ensure(self):
+        if self._agent is None:
+            agent = self._make_agent()
+            await agent.connect()  # connects the MAVSDK link + arms PX4 geofence, once
+            self._agent = agent
+        return self._agent
+
+    async def system(self):
+        """The shared, connected MAVSDK System for drone 0 (built + connected once)."""
+        return (await self._ensure())._system
+
+    def client_for(self, model):
+        """A fresh ClaudeSDKClient bound to the shared System, with `model`. Caller
+        drives it under `async with` so each cell gets an independent session."""
+        if self._client_builder is not None:
+            return self._client_builder(model)
+        from claude_agent_sdk import ClaudeSDKClient
+        from agents.flight import make_drone_options
+        opts = make_drone_options(0, self._agent._system, self._deps.world,
+                                  self._deps.bridge, 1, self._deps.cameras,
+                                  report=lambda _m: None, env=None, model=model)
+        return ClaudeSDKClient(options=opts)
+
+
 async def _drive(client, prompt: str, deadline_s: float, max_steps: int) -> tuple[Trace, bool, str]:
     """Inject the prompt, drain the response, enforce deadline + step budget.
     Returns (trace, crashed, reason). crashed stays False here; the oracle's `alive`
@@ -113,24 +165,21 @@ def require_single_drone(spec) -> None:
             f"(task {spec.id})")
 
 
-async def run_cell(spec, assignment: dict, repeat: int, deps: Deps) -> CellResult:
-    from agents.swarm.drone import DroneAgent  # deferred: pulls in rclpy/mavsdk at runtime only
-
+async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
+                   harness: "DroneHarness") -> CellResult:
     require_single_drone(spec)
     label = assignment_label(assignment)
     base = CellResult(spec.id, label, repeat, passed=False)
     n = spec.setup.n_drones  # 1 for single_drone tasks
 
-    drone = DroneAgent(0, deps.world, deps.bridge, n, deps.cameras,
-                       model=model_for(assignment, "drones"))
     try:
-        await drone.connect()
+        system = await harness.system()  # built + connected once, reused across cells
     except Exception as e:
         base.infra_fail = True
         base.failure_reason = f"connect failed: {e}"
         return base
 
-    rr = await soft_reset([drone._system], deps.world, deps.bridge, n)
+    rr = await soft_reset([system], deps.world, deps.bridge, n)
     if not rr.ok:
         base.infra_fail = True
         base.failure_reason = f"reset unclean: {rr.reason}"
@@ -139,19 +188,18 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps) -> CellResul
     sampler = Sampler(deps.world, deps.bridge, n, spec.objects_map(),
                       geofence_m=300.0)
     samp_task = asyncio.create_task(sampler.run())
+    client = harness.client_for(model_for(assignment, "drones"))
     try:
-        async with drone.client:
+        async with client:  # fresh session per cell — no context bleed between cells
             trace, crashed, reason = await _drive(
-                drone.client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
+                client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
     except Exception as e:
-        sampler.stop()
-        await samp_task
         base.infra_fail = True
         base.failure_reason = f"agent run errored: {e}"
         return base
     finally:
         sampler.stop()
-    await samp_task
+        await samp_task
 
     track = sampler.track()
     # Crash is inferred by the oracle's `alive` check (geofence breach); the deadline/
