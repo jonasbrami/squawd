@@ -48,3 +48,35 @@ def test_all_checks_must_pass():
     spec = [{"check": "reached", "target": "tgt_a", "tol_m": 15},
             {"check": "within_step_budget", "max_steps": 1}]
     assert not grade(_track(True), spec, {"steps": 5, "crashed": False}).passed
+
+
+def _route_track(reach_c=True):
+    # Drone visits a(10,0) at t=1, b(10,10) at t=2, then c(0,10) at t=3 (if reach_c).
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(10.0, 0.0, 12.0, 0.0)}),
+        Snapshot(2.0, {0: DronePose(10.0, 10.0, 12.0, 0.0)}),
+        Snapshot(3.0, {0: DronePose(0.0 if reach_c else 40.0, 10.0, 12.0, 0.0)}),
+    ]
+    objs = {"a": (10.0, 0.0), "b": (10.0, 10.0), "c": (0.0, 10.0)}
+    return WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+
+
+def test_visited_all_pass_and_fail():
+    ok = {"steps": 5, "crashed": False}
+    spec = [{"check": "visited_all", "targets": ["a", "b", "c"], "tol_m": 3}]
+    assert grade(_route_track(True), spec, ok).passed
+    assert not grade(_route_track(False), spec, ok).passed  # c missed
+
+
+def test_ordering_pass_when_in_sequence():
+    ok = {"steps": 5, "crashed": False}
+    spec = [{"check": "ordering", "sequence": ["a", "b", "c"], "tol_m": 3}]
+    assert grade(_route_track(True), spec, ok).passed
+
+
+def test_ordering_fails_when_out_of_sequence():
+    ok = {"steps": 5, "crashed": False}
+    # require c BEFORE a — the track reaches a first, so ordering must fail
+    spec = [{"check": "ordering", "sequence": ["c", "a", "b"], "tol_m": 3}]
+    assert not grade(_route_track(True), spec, ok).passed

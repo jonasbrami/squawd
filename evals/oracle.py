@@ -56,11 +56,40 @@ def _within_step_budget(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     return CheckResult("within_step_budget", steps <= mx, float(steps), f"{steps} steps (max {mx})")
 
 
+def _first_reach_time(track: WorldTrack, xy: tuple, tol: float) -> float | None:
+    for s in track.snapshots:
+        for pose in s.poses.values():
+            if math.hypot(pose.e - xy[0], pose.n - xy[1]) <= tol:
+                return s.t
+    return None
+
+
+def _visited_all(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    tol = float(p["tol_m"])
+    targets = list(p["targets"])
+    missed = [t for t in targets if track.min_dist_to(track.objects[t]) > tol]
+    n = len(targets)
+    return CheckResult("visited_all", not missed, float(n - len(missed)),
+                       f"visited {n - len(missed)}/{n} within {tol:g}m; missed {missed}")
+
+
+def _ordering(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    tol = float(p["tol_m"])
+    seq = list(p["sequence"])
+    times = [_first_reach_time(track, track.objects[t], tol) for t in seq]
+    reached_all = all(x is not None for x in times)
+    in_order = reached_all and all(times[i] < times[i + 1] for i in range(len(times) - 1))
+    return CheckResult("ordering", in_order, float(sum(x is not None for x in times)),
+                       f"first-reach times {times} for {seq} (need all set & increasing)")
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
     "alive": _alive,
     "within_step_budget": _within_step_budget,
+    "visited_all": _visited_all,
+    "ordering": _ordering,
 }
 
 
