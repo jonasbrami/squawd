@@ -55,6 +55,26 @@ container (see `scripts/run_swarm_demo.sh`) only for tasks that need `look`/`sca
 Outputs `evals/out/<timestamp>/results.jsonl` + `RESULTS.md`. Re-running the same
 command resumes (cells already in `results.jsonl` are skipped).
 
+## Obstacle scenarios — HELD (city world unusable)
+
+The obstacle ladder (`evals/tasks/obstacle/*`, `capstone/c2_*`) is **not shipped** yet.
+It needs the `city` world (flat ground + buildings), but as of 2026-07-01 the `city` PX4
+gz world fails a live validation gate:
+
+- gz ground truth puts the drone at spawn `(0, 0, z≈-0.01)`, but PX4's
+  `vehicle_local_position` reports a stable **`(x=-40, y=120, z=-12)`** offset — the EKF
+  local frame is grossly displaced from the world frame, so `World.drone_state` (and thus
+  the oracle) would grade against bogus coordinates.
+- Preflight never passes (`Preflight Fail: vertical velocity unstable` → `Yaw estimate
+  error`), so the drone **cannot arm** — every obstacle cell would be an `infra_fail`.
+
+This is a `city`-world sim/EKF problem (same class as the `baylands` altitude offset),
+not a harness bug. The `clearance` oracle check and `WorldTrack.buildings` plumbing are
+built and unit-tested, ready for obstacle tasks once a usable flat-with-buildings world
+exists (fix `city`'s EKF/world-origin config, or add buildings to the `default`/`lawn`
+world). Until then, run only the flat-world ladders (plan-depth / spatial / ambiguity /
+`c1`).
+
 ## Scope
 
 Single-drone layer only. Commander + full-swarm layers and the prompt/tooling
