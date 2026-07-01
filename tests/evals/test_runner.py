@@ -7,6 +7,8 @@ class FakeTool:  # stands in for ToolUseBlock duck-typing in the test
 
 def test_model_for_maps_tier():
     assert model_for({"drones": "haiku"}, "drones") == "claude-haiku-4-5-20251001"
+    assert model_for({"drones": "sonnet"}, "drones") == "claude-sonnet-5"
+    assert model_for({"drones": "opus"}, "drones") == "claude-opus-4-8"
     assert model_for({}, "drones") is None
 
 
