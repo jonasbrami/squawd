@@ -6,6 +6,7 @@ spec's wall-clock + step budget. Captures latency + tool-call trace, then grades
 sampled WorldTrack. Infra failures (no fix, RTL/connection errors) are flagged, not
 scored as task failures."""
 import asyncio
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -165,6 +166,34 @@ def require_single_drone(spec) -> None:
             f"(task {spec.id})")
 
 
+async def _settle(world, bridge, n: int, deadline: float,
+                  still_speed: float = 0.8, poll: float = 1.0) -> None:
+    """Wait for in-flight, fire-and-forget moves to finish after the agent's turn.
+
+    The flight tools (`goto`/`fly`) issue a movement and return BEFORE the drone
+    arrives, so grading the instant the agent stops talking scores the drone mid-flight.
+    Poll every `poll` s until every drone's horizontal speed is below `still_speed` m/s
+    (arrived/holding) or `deadline` (monotonic clock) passes. The Sampler keeps running,
+    so the final WorldTrack reflects where the drone actually ends up — not where it was
+    when the agent finished. A drone with no fix counts as still-moving (don't settle on
+    a blind sample)."""
+    prev = None
+    while time.monotonic() < deadline:
+        cur = {i: world.world_xy(bridge, i) for i in range(n)}
+        if prev is not None:
+            moving = False
+            for i in range(n):
+                a, b = prev.get(i), cur.get(i)
+                if a is None or b is None:
+                    moving = True
+                elif math.hypot(b[0] - a[0], b[1] - a[1]) / poll > still_speed:
+                    moving = True
+            if not moving:
+                return
+        prev = cur
+        await asyncio.sleep(poll)
+
+
 async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
                    harness: "DroneHarness") -> CellResult:
     require_single_drone(spec)
@@ -188,11 +217,16 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     sampler = Sampler(deps.world, deps.bridge, n, spec.objects_map(),
                       geofence_m=300.0)
     samp_task = asyncio.create_task(sampler.run())
+    t_start = time.monotonic()
     client = harness.client_for(model_for(assignment, "drones"))
     try:
         async with client:  # fresh session per cell — no context bleed between cells
             trace, crashed, reason = await _drive(
                 client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
+        # Let the last fire-and-forget move finish, bounded by the cell's wall-clock
+        # budget, so `reached` grades where the drone actually ends up (not mid-flight).
+        await _settle(deps.world, deps.bridge, n,
+                      deadline=t_start + spec.budget.wall_clock_s)
     except Exception as e:
         base.infra_fail = True
         base.failure_reason = f"agent run errored: {e}"

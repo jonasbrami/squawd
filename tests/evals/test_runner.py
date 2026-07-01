@@ -50,6 +50,59 @@ def test_require_single_drone_rejects_multi():
     require_single_drone(SimpleNamespace(id="t", setup=SimpleNamespace(n_drones=1)))  # no raise
 
 
+def test_settle_returns_when_drone_stops_moving():
+    """Once the drone holds position (speed < threshold), settle returns before the
+    deadline instead of burning the whole budget."""
+    import asyncio
+    import time
+    from evals.runner import _settle
+
+    class MovingThenStillWorld:
+        # East advances 5 m/poll for 3 samples, then holds at 15.
+        def __init__(self):
+            self._seq = [0.0, 5.0, 10.0, 15.0, 15.0, 15.0, 15.0]
+            self._i = 0
+
+        def world_xy(self, bridge, i):
+            e = self._seq[min(self._i, len(self._seq) - 1)]
+            self._i += 1
+            return (e, 0.0, 12.0)
+
+    async def go():
+        t0 = time.monotonic()
+        # Generous deadline; settle should return well before it once still.
+        await _settle(MovingThenStillWorld(), bridge=None, n=1,
+                      deadline=t0 + 5.0, still_speed=0.8, poll=0.01)
+        return time.monotonic() - t0
+
+    elapsed = asyncio.run(go())
+    assert elapsed < 4.0  # returned on stillness, not on the 5 s deadline
+
+
+def test_settle_stops_at_deadline_when_never_still():
+    """A drone that never stops moving makes settle run until the deadline (bounded)."""
+    import asyncio
+    import time
+    from evals.runner import _settle
+
+    class AlwaysMovingWorld:
+        def __init__(self):
+            self._e = 0.0
+
+        def world_xy(self, bridge, i):
+            self._e += 10.0  # 10 m per poll -> always "moving"
+            return (self._e, 0.0, 12.0)
+
+    async def go():
+        t0 = time.monotonic()
+        await _settle(AlwaysMovingWorld(), bridge=None, n=1,
+                      deadline=t0 + 0.1, still_speed=0.8, poll=0.01)
+        return time.monotonic() - t0
+
+    elapsed = asyncio.run(go())
+    assert elapsed >= 0.1  # ran until the deadline
+
+
 def test_droneharness_caches_system_once_and_yields_fresh_clients():
     """The leak fix: the connected System is built exactly once and reused; each
     cell still gets a distinct client (fresh session), so no context bleed."""
