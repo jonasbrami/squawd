@@ -26,6 +26,7 @@ class Sampler:
         self._objects = dict(objects)
         self._geofence_m = geofence_m
         self._interval = interval
+        self._buildings = list(getattr(world, "buildings", []) or [])
         self._snaps: list[Snapshot] = []
         self._running = False
 
@@ -41,5 +42,6 @@ class Sampler:
         self._running = False
 
     def track(self) -> WorldTrack:
-        return WorldTrack(snapshots=list(self._snaps), objects=self._objects,
-                          n_drones=self._n, geofence_m=self._geofence_m)
+        return WorldTrack(snapshots=list(self._snaps), objects=dict(self._objects),
+                          n_drones=self._n, geofence_m=self._geofence_m,
+                          buildings=list(self._buildings))

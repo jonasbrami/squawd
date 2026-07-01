@@ -15,3 +15,27 @@ def test_snapshot_skips_invalid_fix():
     assert snap.t == 3.0
     assert set(snap.poses) == {0}
     assert snap.poses[0].e == 10.0 and snap.poses[0].alt == 12.0
+
+
+def test_sampler_captures_buildings_from_world():
+    from evals.sampler import Sampler
+
+    class WorldWithBuildings:
+        buildings = [{"name": "b0", "x": 1.0, "y": 2.0, "w": 3.0, "d": 4.0}]
+
+        def drone_state(self, bridge, i):
+            return None
+
+    s = Sampler(WorldWithBuildings(), bridge=None, n_drones=1, objects={}, geofence_m=300.0)
+    assert s.track().buildings == [{"name": "b0", "x": 1.0, "y": 2.0, "w": 3.0, "d": 4.0}]
+
+
+def test_sampler_buildings_empty_when_world_has_none():
+    from evals.sampler import Sampler
+
+    class BareWorld:
+        def drone_state(self, bridge, i):
+            return None
+
+    s = Sampler(BareWorld(), bridge=None, n_drones=1, objects={}, geofence_m=300.0)
+    assert s.track().buildings == []

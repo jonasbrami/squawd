@@ -27,3 +27,16 @@ def test_max_dist_from_origin():
 def test_positions_flattens_all():
     assert (10.0, 0.0) in _track().positions()
     assert len(_track().positions()) == 3
+
+
+def test_worldtrack_buildings_defaults_empty():
+    from evals.worldstate import WorldTrack
+    t = WorldTrack(snapshots=[], objects={}, n_drones=1, geofence_m=300.0)
+    assert t.buildings == []
+
+
+def test_worldtrack_buildings_carried():
+    from evals.worldstate import WorldTrack
+    b = [{"name": "bldg_9", "x": 43.8, "y": 14.4, "w": 6.5, "d": 6.2}]
+    t = WorldTrack(snapshots=[], objects={}, n_drones=1, geofence_m=300.0, buildings=b)
+    assert t.buildings[0]["name"] == "bldg_9"

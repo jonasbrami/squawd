@@ -4,7 +4,7 @@ A run's sampler (evals.sampler) appends a Snapshot per poll; the oracle
 (evals.oracle) reads the finished track. Pure dataclasses + math so it imports
 and unit-tests without rclpy/mavsdk (same discipline as agents.core.store)."""
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,7 @@ class WorldTrack:
     objects: dict[str, tuple[float, float]]
     n_drones: int
     geofence_m: float
+    buildings: list[dict] = field(default_factory=list)
 
     def min_dist_to(self, xy: tuple[float, float]) -> float:
         best = math.inf
