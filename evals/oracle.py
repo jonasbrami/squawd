@@ -123,6 +123,27 @@ def _dwell(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"held {held:.1f}s within {tol:g}m of {p['target']} (need {need:g}s)")
 
 
+def _min_building_clearance(track: WorldTrack) -> float:
+    if not track.buildings:
+        return math.inf
+    best = math.inf
+    for s in track.snapshots:
+        for pose in s.poses.values():
+            for b in track.buildings:
+                dx = max(abs(pose.e - b["x"]) - b["w"] / 2.0, 0.0)
+                dy = max(abs(pose.n - b["y"]) - b["d"] / 2.0, 0.0)
+                best = min(best, math.hypot(dx, dy))
+    return best
+
+
+def _clearance(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    margin = float(p["margin_m"])
+    d = _min_building_clearance(track)
+    shown = "inf" if d == math.inf else f"{d:.1f}m"
+    return CheckResult("clearance", d >= margin, 0.0 if d == math.inf else d,
+                       f"min clearance {shown} (margin {margin:g})")
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
@@ -132,6 +153,7 @@ CHECKS = {
     "ordering": _ordering,
     "altitude": _altitude,
     "dwell": _dwell,
+    "clearance": _clearance,
 }
 
 

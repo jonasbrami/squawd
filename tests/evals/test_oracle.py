@@ -112,3 +112,35 @@ def test_dwell_holds_long_enough():
     ok = {"steps": 5, "crashed": False}
     assert grade(t, [{"check": "dwell", "target": "tgt", "tol_m": 3, "hold_s": 2.5}], ok).passed
     assert not grade(t, [{"check": "dwell", "target": "tgt", "tol_m": 3, "hold_s": 5}], ok).passed
+
+
+def test_clearance_passes_when_far_and_no_buildings():
+    from evals.worldstate import DronePose, Snapshot, WorldTrack
+    from evals.oracle import grade
+    ok = {"steps": 5, "crashed": False}
+    snaps = [Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)})]
+    # No buildings -> inf clearance -> passes.
+    assert grade(WorldTrack(snaps, {}, 1, 300.0), [{"check": "clearance", "margin_m": 5}], ok).passed
+
+
+def test_clearance_fails_on_near_miss():
+    from evals.worldstate import DronePose, Snapshot, WorldTrack
+    from evals.oracle import grade
+    ok = {"steps": 5, "crashed": False}
+    # Building footprint centered (10,0), half-extents 3 x 3 -> edge at e=7.
+    # Drone passes at e=8 -> clearance 1m < margin 5 -> fail.
+    b = [{"name": "b0", "x": 10.0, "y": 0.0, "w": 6.0, "d": 6.0}]
+    snaps = [Snapshot(0.0, {0: DronePose(8.0, 0.0, 12.0, 0.0)})]
+    t = WorldTrack(snaps, {}, 1, 300.0, buildings=b)
+    assert not grade(t, [{"check": "clearance", "margin_m": 5}], ok).passed
+
+
+def test_clearance_passes_when_routed_around():
+    from evals.worldstate import DronePose, Snapshot, WorldTrack
+    from evals.oracle import grade
+    ok = {"steps": 5, "crashed": False}
+    b = [{"name": "b0", "x": 10.0, "y": 0.0, "w": 6.0, "d": 6.0}]
+    # Drone passes at n=20 -> far from the box -> clearance ~17m >= 5 -> pass.
+    snaps = [Snapshot(0.0, {0: DronePose(10.0, 20.0, 12.0, 0.0)})]
+    t = WorldTrack(snaps, {}, 1, 300.0, buildings=b)
+    assert grade(t, [{"check": "clearance", "margin_m": 5}], ok).passed
