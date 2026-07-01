@@ -127,10 +127,10 @@ def test_clearance_fails_on_near_miss():
     from evals.worldstate import DronePose, Snapshot, WorldTrack
     from evals.oracle import grade
     ok = {"steps": 5, "crashed": False}
-    # Building footprint centered (10,0), half-extents 3 x 3 -> edge at e=7.
-    # Drone passes at e=8 -> clearance 1m < margin 5 -> fail.
+    # Building footprint centered (10,0), half-extents 3 x 3 -> east edge at e=13.
+    # Drone passes at e=13.5 -> clearance ~0.5m < margin 5 -> fail (true near-miss, outside the box).
     b = [{"name": "b0", "x": 10.0, "y": 0.0, "w": 6.0, "d": 6.0}]
-    snaps = [Snapshot(0.0, {0: DronePose(8.0, 0.0, 12.0, 0.0)})]
+    snaps = [Snapshot(0.0, {0: DronePose(13.5, 0.0, 12.0, 0.0)})]
     t = WorldTrack(snaps, {}, 1, 300.0, buildings=b)
     assert not grade(t, [{"check": "clearance", "margin_m": 5}], ok).passed
 
