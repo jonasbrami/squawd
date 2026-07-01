@@ -8,21 +8,49 @@ trades latency vs correctness. Distinct from `bench/` (sim/infra throughput).
 - **Tasks:** declarative YAML in `tasks/`, tagged on 4 difficulty axes (plan depth,
   coordination, ambiguity, spatial). Targets are spec-declared coordinates.
 - **Models:** `{opus, sonnet, haiku}` via per-role assignments (`drones=opus`).
+  Tier→id: `opus`=claude-opus-4-8, `sonnet`=claude-sonnet-5, `haiku`=claude-haiku-4-5.
 - **Repeats:** K per cell → success-rate + latency distribution.
 - **Reset:** RTL soft-reset between cells; health check escalates to a fresh sim.
+- **Flight link:** one MAVSDK `System` + telemetry sub is built once and reused across
+  all cells (`runner.DroneHarness`); each cell gets a *fresh* Claude client so repeats
+  don't share conversation context.
+- **Settle:** `goto`/`fly` are fire-and-forget, so after the agent's turn the runner
+  keeps sampling until the drone holds position (or the wall-clock budget expires) —
+  `reached` grades where the drone actually ends up, not where it was mid-flight.
 
-## Run
+## Use a FLAT world
+
+Run evals on a flat world (`default` or `lawn`), **not `baylands`**. baylands has terrain
+elevation that offsets PX4's local-altitude frame by ~570 m; `take_off`'s altitude gate
+then trips immediately and the drone never climbs, so navigation tasks fail spuriously.
+Confirmed 2026-07-01: `reach_marker_single` PASSES on `default` (drone reached 0.5 m from
+the marker), FAILS on baylands for that reason.
+
+## Run (verified 2026-07-01, single-drone smoke)
 
 ```bash
-# 1) launch a single-drone sim (in the swarm container)
-SWARM_N=1 sim/launch/swarm_sim.sh        # or the project's documented launch
+# 1) bring up a single-drone FLAT-world sim in the swarm container (host):
+docker run -d --name evals-sim \
+  -e RENDER_BACKEND=cpu -e PX4_MODEL=gz_x500 \
+  -v "$PWD:/workspace" \
+  -v /tmp/evals-claude:/root/.claude -v /tmp/evals-claude.json:/root/.claude.json \
+  -v /tmp/swarm-gz-fuel:/root/.gz/fuel \
+  -e SWARM_N=1 -e PX4_GZ_WORLD=default -e GZ_WORLD=default \
+  squawd:dev bash -lc 'sim/launch/swarm_sim.sh'
+# (first mount /tmp/evals-claude with a copy of ~/.claude/.credentials.json, + '{}' in the .json)
+# wait until: ros2 topic list | grep -c vehicle_local_position  == 1
 
-# 2) run the sweep (same container/venv)
-python -m evals.run_evals \
+# 2) run the sweep INSIDE the container (ROS must be sourced so rclpy/px4_msgs resolve,
+#    and keep $PYTHONPATH — do NOT overwrite it):
+docker exec evals-sim bash -lc 'source /opt/ros/jazzy/setup.bash; source /opt/px4_ws/install/setup.bash;
+  cd /workspace && PYTHONPATH=/workspace:$PYTHONPATH SWARM_N=1 GZ_WORLD=default \
+  uv run --no-project python -m evals.run_evals \
     --tasks evals/tasks/reach_marker_single.yaml \
-    --assignments "drones=opus;drones=haiku" \
-    --k 5
+    --assignments "drones=opus;drones=haiku" --k 5'
 ```
+
+cpu render backend is fine for navigation tasks (no camera needed); use an Intel-GPU
+container (see `scripts/run_swarm_demo.sh`) only for tasks that need `look`/`scan`.
 
 Outputs `evals/out/<timestamp>/results.jsonl` + `RESULTS.md`. Re-running the same
 command resumes (cells already in `results.jsonl` are skipped).
