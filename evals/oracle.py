@@ -83,6 +83,46 @@ def _ordering(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"first-reach times {times} for {seq} (need all set & increasing)")
 
 
+def _closest_pose_to(track: WorldTrack, xy: tuple):
+    best, bd = None, math.inf
+    for s in track.snapshots:
+        for pose in s.poses.values():
+            d = math.hypot(pose.e - xy[0], pose.n - xy[1])
+            if d < bd:
+                bd, best = d, pose
+    return best
+
+
+def _max_dwell(track: WorldTrack, xy: tuple, tol: float) -> float:
+    best, run_start = 0.0, None
+    for s in track.snapshots:
+        inside = any(math.hypot(pose.e - xy[0], pose.n - xy[1]) <= tol
+                     for pose in s.poses.values())
+        if inside:
+            if run_start is None:
+                run_start = s.t
+            best = max(best, s.t - run_start)
+        else:
+            run_start = None
+    return best
+
+
+def _altitude(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    lo, hi = float(p["min_m"]), float(p["max_m"])
+    pose = _closest_pose_to(track, track.objects[p["target"]])
+    alt = pose.alt if pose is not None else None
+    ok = alt is not None and lo <= alt <= hi
+    return CheckResult("altitude", ok, float(alt or 0.0),
+                       f"alt {alt}m at {p['target']} (band [{lo:g},{hi:g}])")
+
+
+def _dwell(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    tol, need = float(p["tol_m"]), float(p["hold_s"])
+    held = _max_dwell(track, track.objects[p["target"]], tol)
+    return CheckResult("dwell", held >= need, held,
+                       f"held {held:.1f}s within {tol:g}m of {p['target']} (need {need:g}s)")
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
@@ -90,6 +130,8 @@ CHECKS = {
     "within_step_budget": _within_step_budget,
     "visited_all": _visited_all,
     "ordering": _ordering,
+    "altitude": _altitude,
+    "dwell": _dwell,
 }
 
 
