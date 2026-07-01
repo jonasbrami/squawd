@@ -82,6 +82,38 @@ def test_ordering_fails_when_out_of_sequence():
     assert not grade(_route_track(True), spec, ok).passed
 
 
+def test_ordering_pass_when_final_waypoint_is_home():
+    """A return-to-home route ends at spawn. The drone is trivially within tol of the
+    home waypoint at t=0 too, but 'visited in order' means each waypoint is reached in a
+    temporal CHAIN — d after c — so the t=0 presence at home must not break monotonicity."""
+    ok = {"steps": 5, "crashed": False}
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),   # at home == d
+        Snapshot(1.0, {0: DronePose(10.0, 0.0, 12.0, 0.0)}),  # a
+        Snapshot(2.0, {0: DronePose(10.0, 10.0, 12.0, 0.0)}), # b
+        Snapshot(3.0, {0: DronePose(0.0, 10.0, 12.0, 0.0)}),  # c
+        Snapshot(4.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),   # back to d (home)
+    ]
+    objs = {"a": (10.0, 0.0), "b": (10.0, 10.0), "c": (0.0, 10.0), "d": (0.0, 0.0)}
+    track = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    spec = [{"check": "ordering", "sequence": ["a", "b", "c", "d"], "tol_m": 3}]
+    assert grade(track, spec, ok).passed
+
+
+def test_ordering_fails_when_intermediate_waypoint_skipped():
+    """Greedy chaining must still reject a route that skips an intermediate waypoint —
+    the genuine fire-and-forget failure mode (only the last point is ever reached)."""
+    ok = {"steps": 5, "crashed": False}
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(0.0, 10.0, 12.0, 0.0)}),  # jumps straight to c
+    ]
+    objs = {"a": (10.0, 0.0), "b": (10.0, 10.0), "c": (0.0, 10.0)}
+    track = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    spec = [{"check": "ordering", "sequence": ["a", "b", "c"], "tol_m": 3}]
+    assert not grade(track, spec, ok).passed
+
+
 def test_altitude_band_at_target():
     from evals.worldstate import DronePose, Snapshot, WorldTrack
     from evals.oracle import grade

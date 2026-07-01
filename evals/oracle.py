@@ -56,8 +56,15 @@ def _within_step_budget(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     return CheckResult("within_step_budget", steps <= mx, float(steps), f"{steps} steps (max {mx})")
 
 
-def _first_reach_time(track: WorldTrack, xy: tuple, tol: float) -> float | None:
+def _first_reach_time(track: WorldTrack, xy: tuple, tol: float,
+                      after: float | None = None) -> float | None:
+    """First time any drone comes within `tol` of `xy`. If `after` is given, only
+    consider samples strictly after that time — this lets `ordering` chain reaches so a
+    waypoint that coincides with an earlier position (e.g. return-to-home) is matched at
+    its later, in-sequence visit rather than at t=0."""
     for s in track.snapshots:
+        if after is not None and s.t <= after:
+            continue
         for pose in s.poses.values():
             if math.hypot(pose.e - xy[0], pose.n - xy[1]) <= tol:
                 return s.t
@@ -76,11 +83,21 @@ def _visited_all(track: WorldTrack, p: dict, m: dict) -> CheckResult:
 def _ordering(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     tol = float(p["tol_m"])
     seq = list(p["sequence"])
-    times = [_first_reach_time(track, track.objects[t], tol) for t in seq]
-    reached_all = all(x is not None for x in times)
-    in_order = reached_all and all(times[i] < times[i + 1] for i in range(len(times) - 1))
+    # Greedy chain: reach seq[0], then seq[1] strictly after that, etc. This is the
+    # correct meaning of "visit in this order" and, unlike independent per-waypoint
+    # first-reach, it doesn't false-fail when a waypoint coincides with an earlier
+    # position (e.g. a return-to-home final leg sitting on the t=0 spawn point).
+    times: list[float | None] = []
+    prev: float | None = None
+    for t in seq:
+        rt = _first_reach_time(track, track.objects[t], tol, after=prev)
+        times.append(rt)
+        if rt is None:
+            break
+        prev = rt
+    in_order = len(times) == len(seq) and all(x is not None for x in times)
     return CheckResult("ordering", in_order, float(sum(x is not None for x in times)),
-                       f"first-reach times {times} for {seq} (need all set & increasing)")
+                       f"chained-reach times {times} for {seq} (each after the previous)")
 
 
 def _closest_pose_to(track: WorldTrack, xy: tuple):
