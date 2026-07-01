@@ -70,7 +70,6 @@ def render_markdown(aggs: list[CellAgg]) -> str:
 def render_ladders(rows: list[dict]) -> str:
     """Per-suite pivot: success-rate by rung (difficulty[suite]) x assignment — the knee view.
     Skips infra_fail rows and rows without a suite."""
-    from collections import defaultdict
     suites: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     assigns: set[str] = set()
     for r in rows:

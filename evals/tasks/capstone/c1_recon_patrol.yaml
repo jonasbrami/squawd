@@ -16,5 +16,5 @@ oracle:
   - {check: alive}
   - {check: ordering, sequence: [a, b, c], tol_m: 12}
   - {check: altitude, target: c, min_m: 14, max_m: 22}
-  - {check: dwell, target: c, tol_m: 12, hold_s: 8}
+  - {check: dwell, target: c, tol_m: 12, hold_s: 10}
   - {check: within_step_budget, max_steps: 20}
