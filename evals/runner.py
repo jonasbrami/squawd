@@ -58,6 +58,8 @@ class CellResult:
     steps: int = 0
     infra_fail: bool = False
     failure_reason: str = ""
+    difficulty: dict = field(default_factory=dict)
+    suite: str | None = None
 
     def to_row(self) -> dict:
         return {
@@ -69,6 +71,8 @@ class CellResult:
             "steps": self.steps,
             "infra_fail": self.infra_fail,
             "failure_reason": self.failure_reason,
+            "difficulty": self.difficulty,
+            "suite": self.suite,
             "checks": [{"name": c.name, "passed": c.passed, "detail": c.detail}
                        for c in self.checks],
         }
@@ -199,6 +203,8 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     require_single_drone(spec)
     label = assignment_label(assignment)
     base = CellResult(spec.id, label, repeat, passed=False)
+    base.difficulty = dict(spec.difficulty)
+    base.suite = spec.suite
     n = spec.setup.n_drones  # 1 for single_drone tasks
 
     try:

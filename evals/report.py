@@ -65,3 +65,35 @@ def render_markdown(aggs: list[CellAgg]) -> str:
         lines.append(f"| {a.task_id} | {a.assignment} | {a.k} | {a.success_rate:.0%} | "
                      f"{a.lat_p50:.1f}s | {a.lat_p95:.1f}s | {a.mean_steps:.1f} | {fb} |")
     return "\n".join(lines) + "\n"
+
+
+def render_ladders(rows: list[dict]) -> str:
+    """Per-suite pivot: success-rate by rung (difficulty[suite]) x assignment — the knee view.
+    Skips infra_fail rows and rows without a suite."""
+    from collections import defaultdict
+    suites: dict[str, dict] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    assigns: set[str] = set()
+    for r in rows:
+        if r.get("infra_fail"):
+            continue
+        suite = r.get("suite")
+        if not suite:
+            continue
+        rung = (r.get("difficulty") or {}).get(suite, 0)
+        a = r["assignment"]
+        assigns.add(a)
+        suites[suite][rung][a].append(bool(r.get("passed")))
+
+    cols = sorted(assigns)
+    lines = ["# Ladders (success-rate by rung x tier)"]
+    for suite in sorted(suites):
+        lines += ["", f"## {suite} ladder", "",
+                  "| rung | " + " | ".join(cols) + " |",
+                  "|------|" + "|".join(["------"] * len(cols)) + "|"]
+        for rung in sorted(suites[suite]):
+            cells = []
+            for a in cols:
+                res = suites[suite][rung].get(a, [])
+                cells.append(f"{100.0 * sum(res) / len(res):.0f}%" if res else "-")
+            lines.append(f"| {rung} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"

@@ -109,6 +109,10 @@ async def main(args) -> None:
         with open(os.path.join(out_dir, "RESULTS.md"), "w") as f:
             f.write(md)
         print(md, flush=True)
+
+        from evals.report import render_ladders
+        with open(os.path.join(out_dir, "LADDERS.md"), "w") as f:
+            f.write(render_ladders(rows))
     finally:
         bridge.shutdown()
 

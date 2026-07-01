@@ -62,3 +62,11 @@ def test_null_budget_rejected(tmp_path):
     text = VALID.replace("budget: {wall_clock_s: 120, max_steps: 20}", "budget:")
     with pytest.raises(SpecError):
         load_task(_write(tmp_path, text))
+
+
+def test_suite_field_loads_and_defaults(tmp_path):
+    from evals.spec import load_task
+    with_suite = VALID.replace("target_layer: single_drone",
+                               "target_layer: single_drone\nsuite: spatial")
+    assert load_task(_write(tmp_path, with_suite)).suite == "spatial"
+    assert load_task(_write(tmp_path, VALID)).suite is None

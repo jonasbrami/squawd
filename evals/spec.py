@@ -44,6 +44,7 @@ class TaskSpec:
     prompt: str
     budget: BudgetSpec
     oracle: list[dict]
+    suite: str | None = None
 
     def objects_map(self) -> dict[str, tuple[float, float]]:
         return {o.id: (o.e, o.n) for o in self.setup.seed_objects}
@@ -96,4 +97,5 @@ def load_task(path: str) -> TaskSpec:
         prompt=_require(raw, "prompt", path),
         budget=budget,
         oracle=oracle,
+        suite=raw.get("suite"),
     )

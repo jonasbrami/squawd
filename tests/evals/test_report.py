@@ -39,3 +39,20 @@ def test_latency_none_excluded_from_percentiles():
     agg = aggregate(rows)[0]
     assert agg.k == 2                  # both scored (neither is infra_fail)
     assert agg.lat_p50 == 4.0          # the None row is excluded from latency stats
+
+
+def test_render_ladders_pivots_by_rung_and_tier():
+    from evals.report import render_ladders
+    rows = [
+        {"task_id": "s1", "assignment": "drones=haiku", "passed": True, "infra_fail": False,
+         "suite": "spatial", "difficulty": {"spatial": 1}, "latency_s": 3, "steps": 4, "repeat": 0},
+        {"task_id": "s3", "assignment": "drones=haiku", "passed": False, "infra_fail": False,
+         "suite": "spatial", "difficulty": {"spatial": 3}, "latency_s": 3, "steps": 4, "repeat": 0},
+        {"task_id": "x", "assignment": "drones=haiku", "passed": True, "infra_fail": False,
+         "suite": None, "difficulty": {}, "latency_s": 3, "steps": 4, "repeat": 0},
+    ]
+    md = render_ladders(rows)
+    assert "spatial" in md
+    assert "drones=haiku" in md
+    # rung 1 = 100%, rung 3 = 0%
+    assert "100%" in md and "0%" in md

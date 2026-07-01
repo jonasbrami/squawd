@@ -40,6 +40,14 @@ def test_cellresult_row_latency_none():
     assert cr.to_row()["latency_s"] is None
 
 
+def test_cellresult_row_carries_suite_and_difficulty():
+    from evals.runner import CellResult
+    cr = CellResult("t1", "drones=opus", 0, True, [], 3.0, 4, False, "",
+                    difficulty={"spatial": 2}, suite="spatial")
+    row = cr.to_row()
+    assert row["suite"] == "spatial" and row["difficulty"] == {"spatial": 2}
+
+
 def test_require_single_drone_rejects_multi():
     import pytest
     from evals.runner import require_single_drone
