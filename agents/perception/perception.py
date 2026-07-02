@@ -70,7 +70,12 @@ def scan_text(world, bridge, i: int, n_drones: int, k: int = 4) -> str:
     for edge, b, dx, dy in ranked[:k]:
         word, inview, _ = rel_bearing(dx, dy, hd)
         tag = " [IN VIEW]" if inview else ""
-        parts.append(f"{b['name']} {edge:.0f}m {word}{tag} (h={b['h']:.0f}m)")
+        # World-frame centre + footprint, not just an edge distance: a clearance
+        # route around a rectangle is unplannable without knowing where its walls
+        # are (a drone flew a sensible detour straight into a corner it couldn't see).
+        parts.append(f"{b['name']} {edge:.0f}m {word}{tag} "
+                     f"(centre E{b['x']:.0f} N{b['y']:.0f}, {b['w']:.0f}x{b['d']:.0f}m, "
+                     f"h={b['h']:.0f}m)")
     for j in range(n_drones):
         if j == i:
             continue
