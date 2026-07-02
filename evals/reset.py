@@ -37,8 +37,12 @@ def check_home(world, bridge, n: int, tol_m: float, alt_tol_m: float = 2.5) -> R
     return ResetResult(True, "all drones home")
 
 
-async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=60.0,
+async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
                      poll_interval_s=1.0) -> ResetResult:
+    # timeout_s covers the WORST case now that check_home also gates altitude:
+    # a deadline-cut cell can leave the drone ~150m out at 20m up — RTL transit
+    # (~30s) + descent (~20-40s at land speed) blew the old 60s window and tripped
+    # the infra fuse on healthy sims.
     results = await asyncio.gather(
         *[s.action.return_to_launch() for s in systems],
         return_exceptions=True)

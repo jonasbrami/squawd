@@ -35,4 +35,7 @@ def shuffled(cells: list[Cell], seed: int) -> list[Cell]:
 
 
 def done_keys(rows: list[dict]) -> set[str]:
-    return {f"{r['task_id']}|{r['assignment']}|{r['repeat']}" for r in rows}
+    """Cells already SCORED. infra_fail rows are harness noise, not outcomes —
+    resume re-runs them (their stale rows are harmless: aggregation drops them)."""
+    return {f"{r['task_id']}|{r['assignment']}|{r['repeat']}" for r in rows
+            if not r.get("infra_fail")}

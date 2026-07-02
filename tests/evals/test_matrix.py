@@ -32,3 +32,17 @@ def test_shuffled_is_deterministic_and_order_independent_of_done_keys():
     assert a == b                       # same seed, same order
     assert a != c                       # different seed, different order
     assert sorted(x.key() for x in a) == sorted(x.key() for x in cells)  # same set
+
+
+def test_done_keys_excludes_infra_failed_rows():
+    """An infra_fail row is harness noise, not a scored outcome — resume must
+    re-run that cell, not skip it as done."""
+    from evals.matrix import done_keys
+
+    rows = [
+        {"task_id": "t1", "assignment": "drones=opus", "repeat": 0, "infra_fail": False},
+        {"task_id": "t2", "assignment": "drones=opus", "repeat": 0, "infra_fail": True},
+    ]
+    keys = done_keys(rows)
+    assert "t1|drones=opus|0" in keys
+    assert "t2|drones=opus|0" not in keys
