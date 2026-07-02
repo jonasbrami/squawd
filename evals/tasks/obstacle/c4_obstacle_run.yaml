@@ -1,0 +1,31 @@
+# Obstacle capstone: cross the whole building field to the far pad under a
+# path budget that forbids wide loops. Direct line is blocked by obs_0 AND
+# obs_4 (both dead-on at north 0); the south corridor pilot runs 150m with
+# 7.5m clearance. Budget 240m allows honest detours, not circumnavigation.
+id: c4_obstacle_run
+target_layer: single_drone
+suite: obstacle
+difficulty: {plan_depth: 4, coordination: 1, ambiguity: 2, spatial: 4, obstacle: 4}
+setup:
+  world: obstacles
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: farpad, east: 130, north: 0}
+prompt: "Take off to 12 m and reach the far pad at east 130, north 0, then hold over it for 10 seconds. Stay below 14 m, keep at least 6 metres from every building, and keep your total flight distance under 220 metres — plan the whole route through the buildings before you move."
+budget: {wall_clock_s: 320, max_steps: 14}
+oracle:
+  - {check: alive}
+  - {check: reached, target: farpad, tol_m: 10}
+  - {check: dwell, target: farpad, tol_m: 12, hold_s: 8}
+  - {check: clearance, margin_m: 6}
+  - {check: alt_ceiling, max_m: 15}
+  - {check: path_length, max_m: 240}
+  - {check: within_step_budget, max_steps: 14}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 20, north: -15, up: 12}}
+  - {tool: goto, args: {east: 95, north: -15, up: 12}}
+  - {tool: goto, args: {east: 130, north: -15, up: 12}}
+  - {tool: goto, args: {east: 130, north: 0, up: 12}}
+  - {tool: hover, args: {seconds: 12}}

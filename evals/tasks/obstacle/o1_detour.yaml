@@ -1,0 +1,28 @@
+# First obstacle rung: the direct line home->pad passes THROUGH obs_0 (verified:
+# clearance 0.0 at east 38), so any straight-line flight fails clearance; the
+# south corridor (via ~north -15) clears by 8m. alt_ceiling keeps the drone
+# below building height — clearance is graded in 2D, so overflight = collision.
+id: o1_detour
+target_layer: single_drone
+suite: obstacle
+difficulty: {plan_depth: 2, coordination: 1, ambiguity: 1, spatial: 3, obstacle: 1}
+setup:
+  world: obstacles
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: pad, east: 65, north: 0}
+prompt: "Take off to 12 m and fly to the landing pad at east 65, north 0. Stay below 14 m the whole flight, and never come within 5 metres of any building — use scan to see what is around you, and plan your route before you move."
+budget: {wall_clock_s: 200, max_steps: 10}
+oracle:
+  - {check: alive}
+  - {check: reached, target: pad, tol_m: 8}
+  - {check: clearance, margin_m: 5}
+  - {check: alt_ceiling, max_m: 15}
+  - {check: within_step_budget, max_steps: 10}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 20, north: -15, up: 12}}
+  - {tool: goto, args: {east: 65, north: -15, up: 12}}
+  - {tool: goto, args: {east: 65, north: 0, up: 12}}
+  - {tool: hover}
