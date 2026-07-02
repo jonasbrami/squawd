@@ -118,6 +118,12 @@ async def main(args) -> None:
         from evals.report import render_ladders
         with open(os.path.join(out_dir, "LADDERS.md"), "w") as f:
             f.write(render_ladders(rows))
+
+        trows = _load_rows(tjsonl)
+        if trows:
+            from evals.report import aggregate_transcripts, render_tools
+            with open(os.path.join(out_dir, "TOOLS.md"), "w") as f:
+                f.write(render_tools(aggregate_transcripts(trows)))
     finally:
         bridge.shutdown()
 

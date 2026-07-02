@@ -38,7 +38,7 @@ def test_latency_none_excluded_from_percentiles():
     ]
     agg = aggregate(rows)[0]
     assert agg.k == 2                  # both scored (neither is infra_fail)
-    assert agg.lat_p50 == 4.0          # the None row is excluded from latency stats
+    assert agg.ttfa_p50 == 4.0         # the None row is excluded from latency stats
 
 
 def test_render_ladders_pivots_by_rung_and_tier():
