@@ -135,3 +135,21 @@ def test_hover_seconds_blocks_then_reports(monkeypatch):
     assert ops.drone.action.held and slept == [12.0] and "held 12s" in out
     out2 = aio.run(ops.hover())
     assert "holding" in out2 and len(slept) == 1   # no extra sleep without seconds
+
+
+def test_goto_refuses_target_inside_building_below_its_top():
+    """A goto to a building's centre below its roof is a commanded collision —
+    haiku wedged against a tower facade for 90s this way. The tool must refuse
+    with a legible error so the model re-plans (real autopilot behavior)."""
+    class BW(FakeWorld):
+        buildings = [{"name": "obs_4", "x": 110.0, "y": 0.0, "w": 15.0, "d": 15.0, "h": 18.0}]
+
+    ops = FlightOps(FakeDrone(), BW([(0.0, 0.0, 10.0)]), bridge=None, i=0, n=1)
+    with pytest.raises(ValueError, match="obs_4"):
+        asyncio.run(ops.goto(east=110, north=0, up=12))
+    # above the roof (+ margin) is legal
+    out = asyncio.run(ops.goto(east=110, north=0, up=25, wait=False))
+    assert "moving" in out
+    # outside the footprint at low altitude is legal
+    out2 = asyncio.run(ops.goto(east=90, north=-25, up=12, wait=False))
+    assert "moving" in out2

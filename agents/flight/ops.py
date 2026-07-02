@@ -154,6 +154,16 @@ class FlightOps:
             raise ValueError("need a target or east/north")
         t_e, t_n = xy
         t_u = float(up) if up is not None else (me[2] if me else 10.0)
+        # Refuse a commanded collision: a target inside a building's footprint
+        # below its roof wedges the drone against the wall (observed: 90s of
+        # grinding on a tower facade). A legible error lets the model re-plan.
+        for b in getattr(self.world, "buildings", None) or []:
+            if (abs(t_e - b["x"]) <= b["w"] / 2 and abs(t_n - b["y"]) <= b["d"] / 2
+                    and t_u < b["h"] + 3.0):
+                raise ValueError(
+                    f"target E{t_e:.0f} N{t_n:.0f} at {t_u:.0f}m is INSIDE {b['name']} "
+                    f"(centre E{b['x']:.0f} N{b['y']:.0f}, {b['w']:.0f}x{b['d']:.0f}m, "
+                    f"{b['h']:.0f}m tall) — pick a standoff point or fly above it")
         tgt = await self._world_to_geo(t_e, t_n, t_u)
         hh = str(heading or "travel").strip().lower()
         if hh in COMPASS:
