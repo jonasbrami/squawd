@@ -14,9 +14,23 @@ trades latency vs correctness. Distinct from `bench/` (sim/infra throughput).
 - **Flight link:** one MAVSDK `System` + telemetry sub is built once and reused across
   all cells (`runner.DroneHarness`); each cell gets a *fresh* Claude client so repeats
   don't share conversation context.
-- **Settle:** `goto`/`fly` are fire-and-forget, so after the agent's turn the runner
-  keeps sampling until the drone holds position (or the wall-clock budget expires) —
-  `reached` grades where the drone actually ends up, not where it was mid-flight.
+- **Blocking tools (2026-07-02):** `goto`/`fly` return on ARRIVAL (`wait=false` opts
+  out) and `hover(seconds=N)` blocks — fire-and-forget setpoint overrides zeroed
+  plan_depth for every tier and inverted c1 (a tooling trap, not a capability gap).
+  The post-turn settle is now a 45 s safety net with its own budget (sharing the turn
+  deadline gave slower-thinking tiers less flight time before grading).
+- **Transcripts:** every cell writes a `transcripts.jsonl` line (tool calls with
+  args/results/durations, agent text, tokens/cost) keyed like `results.jsonl` —
+  tool choice per tier is observed, not inferred. `TOOLS.md` reports per-tier tool
+  mix, goto-burst score, inter-call gap (patience), tokens + cost.
+- **Statistics:** every success rate carries a Wilson 95% interval (at K=3, 0/3 vs
+  3/3 is Fisher p=0.10 — bare percentages are noise); steps are conditioned on
+  success; `gcs` is the mean fraction of oracle checks passed (graded signal near
+  the knee). Cell order is shuffled with a logged `--seed` (resume-safe).
+- **Reference pilot (`--pilot`):** task YAMLs declare `pilot:` — the ideal tool
+  sequence — and `--pilot` flies it with NO LLM through the same runner/oracle
+  path. A task the pilot can't pass is a harness bug; quarantine it before
+  spending LLM cells. Pilot K=3 also measures the sim-noise floor.
 
 ## Use a FLAT world
 
