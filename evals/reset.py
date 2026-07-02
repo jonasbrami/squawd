@@ -47,23 +47,36 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
     # A cell can legitimately END with the drone LANDED away from home (agents land
     # after tasks). RTL on a disarmed grounded vehicle is a no-op, so ferry it up
     # first: arm + takeoff, bounded wait to get airborne, then the RTL below works.
+    # arm/takeoff hit PX4's transient COMMAND_DENIED right after mode changes (the
+    # same reason ops._arm_and_start retries) — retry a few times, and carry the
+    # last error into the failure reason instead of swallowing it.
+    ferry_err = ""
     for i, s in enumerate(systems):
         xy = world.world_xy(bridge, i)
         if xy is None or len(xy) < 3:
             continue
         hx, hy = home_xy(world, i)
         if math.hypot(xy[0] - hx, xy[1] - hy) > tol_m and xy[2] < 2.5:
-            try:
-                await s.action.set_takeoff_altitude(10.0)
-                await s.action.arm()
-                await s.action.takeoff()
-                for _ in range(20):
+            for attempt in range(4):
+                try:
+                    await s.action.set_takeoff_altitude(10.0)
+                    await s.action.arm()
+                    await s.action.takeoff()
+                except Exception as e:
+                    ferry_err = f"drone_{i} ferry attempt {attempt}: {e}"
+                    await asyncio.sleep(2.0)
+                    continue
+                airborne = False
+                for _ in range(int(20 / max(poll_interval_s, 0.05))):
                     await asyncio.sleep(poll_interval_s)
                     xy2 = world.world_xy(bridge, i)
                     if xy2 is not None and len(xy2) > 2 and xy2[2] > 3.0:
+                        airborne = True
                         break
-            except Exception:
-                pass  # RTL still gets its chance; check_home is the arbiter
+                if airborne:
+                    ferry_err = ""
+                    break
+                ferry_err = f"drone_{i} ferry attempt {attempt}: takeoff never left ground"
 
     results = await asyncio.gather(
         *[s.action.return_to_launch() for s in systems],
@@ -78,4 +91,7 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
         if r.ok:
             return r
         await asyncio.sleep(poll_interval_s)
-    return check_home(world, bridge, n, tol_m)
+    r = check_home(world, bridge, n, tol_m)
+    if not r.ok and ferry_err:
+        return ResetResult(False, f"{r.reason} ({ferry_err})")
+    return r
