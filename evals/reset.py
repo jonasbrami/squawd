@@ -43,6 +43,28 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
     # a deadline-cut cell can leave the drone ~150m out at 20m up — RTL transit
     # (~30s) + descent (~20-40s at land speed) blew the old 60s window and tripped
     # the infra fuse on healthy sims.
+
+    # A cell can legitimately END with the drone LANDED away from home (agents land
+    # after tasks). RTL on a disarmed grounded vehicle is a no-op, so ferry it up
+    # first: arm + takeoff, bounded wait to get airborne, then the RTL below works.
+    for i, s in enumerate(systems):
+        xy = world.world_xy(bridge, i)
+        if xy is None or len(xy) < 3:
+            continue
+        hx, hy = home_xy(world, i)
+        if math.hypot(xy[0] - hx, xy[1] - hy) > tol_m and xy[2] < 2.5:
+            try:
+                await s.action.set_takeoff_altitude(10.0)
+                await s.action.arm()
+                await s.action.takeoff()
+                for _ in range(20):
+                    await asyncio.sleep(poll_interval_s)
+                    xy2 = world.world_xy(bridge, i)
+                    if xy2 is not None and len(xy2) > 2 and xy2[2] > 3.0:
+                        break
+            except Exception:
+                pass  # RTL still gets its chance; check_home is the arbiter
+
     results = await asyncio.gather(
         *[s.action.return_to_launch() for s in systems],
         return_exceptions=True)

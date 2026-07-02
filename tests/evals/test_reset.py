@@ -93,3 +93,55 @@ def test_check_home_passes_when_landed_at_home():
             return (0.5, -0.5, 0.3)
 
     assert check_home(W(), None, 1, tol_m=5.0).ok
+
+
+def test_soft_reset_ferries_home_a_drone_landed_away():
+    """A cell can legitimately END with the drone landed away from home (agents
+    land after tasks). RTL on a disarmed grounded vehicle is a no-op — soft_reset
+    must arm+takeoff first, then RTL."""
+    import asyncio
+    from evals.reset import soft_reset
+
+    class FakeAction:
+        def __init__(self, world):
+            self.world = world
+            self.calls = []
+
+        async def set_takeoff_altitude(self, a):
+            self.calls.append("set_takeoff_altitude")
+
+        async def arm(self):
+            self.calls.append("arm")
+
+        async def takeoff(self):
+            self.calls.append("takeoff")
+            self.world.state = "airborne_away"
+
+        async def return_to_launch(self):
+            self.calls.append("rtl")
+            # RTL only works airborne: grounded RTL is a silent no-op.
+            if self.world.state == "airborne_away":
+                self.world.state = "home"
+
+    class FakeSystem:
+        def __init__(self, world):
+            self.action = FakeAction(world)
+
+    class FakeWorld:
+        spawn_x = 0.0
+        spawn_spacing = 2.0
+
+        def __init__(self):
+            self.state = "landed_away"
+
+        def world_xy(self, bridge, i):
+            return {"landed_away": (-100.0, 0.0, 0.2),
+                    "airborne_away": (-100.0, 0.0, 10.0),
+                    "home": (0.0, 0.0, 0.2)}[self.state]
+
+    w = FakeWorld()
+    s = FakeSystem(w)
+    r = asyncio.run(soft_reset([s], w, None, 1, timeout_s=5.0, poll_interval_s=0.01))
+    assert r.ok, r.reason
+    assert "takeoff" in s.action.calls and "rtl" in s.action.calls
+    assert s.action.calls.index("takeoff") < s.action.calls.index("rtl")
