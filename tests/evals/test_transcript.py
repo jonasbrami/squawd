@@ -75,3 +75,22 @@ def test_cellresult_transcript_row_keyed_like_results_row():
     row = cr.to_transcript_row()
     assert (row["task_id"], row["assignment"], row["repeat"]) == ("t1", "drones=haiku", 2)
     assert row["events"] == [{"type": "text", "t": 1.0, "text": "x"}]
+
+
+def test_client_failure_is_detected_from_trace():
+    """A cell where the SDK client never ran the model (auth failure, synthetic
+    error message) must be flagged infra, not scored as a task FAIL."""
+    from evals.runner import client_failed
+
+    tr = Trace()
+    tr.observe(AssistantMessage(content=[TextBlock(
+        text="Failed to authenticate. API Error: 401 Invalid authentication credentials")],
+        model="<synthetic>"), now=3.0)
+    assert client_failed(tr)
+
+    ok = Trace()
+    ok.observe(_assistant([ToolUseBlock(id="t1", name="mcp__d0__goto", input={})]), now=3.0)
+    assert not client_failed(ok)
+
+    empty = Trace()          # stream produced nothing at all
+    assert client_failed(empty)

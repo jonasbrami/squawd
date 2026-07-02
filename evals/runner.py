@@ -226,6 +226,14 @@ async def _drive(client, prompt: str, deadline_s: float, max_steps: int) -> tupl
     return trace, False, reason
 
 
+def client_failed(trace: Trace) -> bool:
+    """True when the SDK client never actually ran the model — stale credentials
+    surface as a '<synthetic>' assistant message ('Failed to authenticate...'),
+    and a dead client yields an empty stream. Such cells are INFRA failures;
+    scoring them as task FAILs poisoned a 24-cell run (0 steps everywhere)."""
+    return trace.model is None or trace.model == "<synthetic>"
+
+
 def require_single_drone(spec) -> None:
     """This runner only flies drone 0. Reject multi-drone specs loudly rather than
     silently producing plausible-but-wrong results."""
@@ -316,6 +324,13 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     finally:
         sampler.stop()
         await samp_task
+
+    if client_failed(trace):
+        first = next((e["text"] for e in trace.events if e.get("type") == "text"), "")
+        base.infra_fail = True
+        base.failure_reason = f"client never ran the model: {first[:120]}"
+        base.transcript = trace.transcript(t0_epoch)
+        return base
 
     track = sampler.track()
     # Crash is inferred by the oracle's `alive` check (geofence breach); the deadline/
