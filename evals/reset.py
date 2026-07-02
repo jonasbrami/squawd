@@ -45,18 +45,29 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
     # the infra fuse on healthy sims.
 
     # A cell can legitimately END with the drone LANDED away from home (agents land
-    # after tasks). RTL on a disarmed grounded vehicle is a no-op, so ferry it up
-    # first: arm + takeoff, bounded wait to get airborne, then the RTL below works.
-    # arm/takeoff hit PX4's transient COMMAND_DENIED right after mode changes (the
-    # same reason ops._arm_and_start retries) — retry a few times, and carry the
-    # last error into the failure reason instead of swallowing it.
+    # after tasks). RTL on a disarmed vehicle is a no-op — PX4 enters RETURN_TO_LAUNCH
+    # mode and just sits there (observed live). Ferry it up first: arm + takeoff,
+    # bounded wait to get airborne, then the RTL below works. The trigger is the
+    # DISARMED state, not an altitude guess — a parked drone's EKF altitude drifts
+    # (~2m after 40min, past any grounded threshold). arm/takeoff hit PX4's transient
+    # COMMAND_DENIED right after mode changes (the same reason ops._arm_and_start
+    # retries) — retry a few times, and carry the last error into the failure reason.
     ferry_err = ""
     for i, s in enumerate(systems):
         xy = world.world_xy(bridge, i)
         if xy is None or len(xy) < 3:
             continue
         hx, hy = home_xy(world, i)
-        if math.hypot(xy[0] - hx, xy[1] - hy) > tol_m and xy[2] < 2.5:
+        if math.hypot(xy[0] - hx, xy[1] - hy) <= tol_m:
+            continue
+        armed = None
+        try:
+            async for a in s.telemetry.armed():
+                armed = a
+                break
+        except Exception:
+            pass
+        if armed is False or (armed is None and xy[2] < 2.5):
             for attempt in range(4):
                 try:
                     await s.action.set_takeoff_altitude(10.0)

@@ -145,3 +145,63 @@ def test_soft_reset_ferries_home_a_drone_landed_away():
     assert r.ok, r.reason
     assert "takeoff" in s.action.calls and "rtl" in s.action.calls
     assert s.action.calls.index("takeoff") < s.action.calls.index("rtl")
+
+
+def test_soft_reset_ferry_triggers_on_disarmed_even_with_drifted_altitude():
+    """A parked drone's EKF altitude drifts (observed ~2m after 40min) — the ferry
+    must key on the DISARMED state, not a grounded-altitude threshold."""
+    import asyncio
+    from evals.reset import soft_reset
+
+    class FakeTelemetry:
+        def __init__(self, world):
+            self.world = world
+
+        async def armed(self):
+            yield self.world.state != "home"  # armed only once flying/ferrying... simplified below
+
+    class FakeAction:
+        def __init__(self, world):
+            self.world = world
+            self.calls = []
+
+        async def set_takeoff_altitude(self, a): pass
+
+        async def arm(self): self.calls.append("arm")
+
+        async def takeoff(self):
+            self.calls.append("takeoff")
+            self.world.state = "airborne_away"
+
+        async def return_to_launch(self):
+            self.calls.append("rtl")
+            if self.world.state == "airborne_away":
+                self.world.state = "home"
+
+    class FakeWorld:
+        spawn_x = 0.0
+        spawn_spacing = 2.0
+
+        def __init__(self):
+            self.state = "landed_away_drifted"
+
+        def world_xy(self, bridge, i):
+            return {"landed_away_drifted": (-100.0, 0.0, 2.9),   # above any alt threshold
+                    "airborne_away": (-100.0, 0.0, 10.0),
+                    "home": (0.0, 0.0, 0.2)}[self.state]
+
+    class FakeSystem:
+        def __init__(self, world):
+            self.action = FakeAction(world)
+            self.telemetry = self.Tel(world)
+
+        class Tel:
+            def __init__(self, world): self.world = world
+            async def armed(self):
+                yield self.world.state == "airborne_away"  # disarmed while parked
+
+    w = FakeWorld()
+    s = FakeSystem(w)
+    r = asyncio.run(soft_reset([s], w, None, 1, timeout_s=5.0, poll_interval_s=0.01))
+    assert r.ok, r.reason
+    assert "takeoff" in s.action.calls
