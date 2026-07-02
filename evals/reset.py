@@ -37,11 +37,16 @@ def check_home(world, bridge, n: int, tol_m: float, alt_tol_m: float = 2.5) -> R
     return ResetResult(True, "all drones home")
 
 
+FERRY_ALT_M = 40.0   # above every building in current worlds — the ferry's
+                     # straight-line hop home must not itself hit obstacles
+
+
 async def _ferry_home(s, world, bridge, i: int, hx: float, hy: float,
                       poll_interval_s: float) -> str:
     """Fly a disarmed, landed-away drone back to WORLD home: arm+takeoff (retried),
-    goto_location at home, land. Returns '' on success, else the last error note.
-    Never raises — check_home stays the arbiter."""
+    goto_location at home, land. Flies at FERRY_ALT_M (a 10m ferry collided with
+    the obstacles world's buildings on its way home). Returns '' on success, else
+    the last error note. Never raises — check_home stays the arbiter."""
     from agents.core.geo import GeoPoint, offset_point
 
     # arm + takeoff, retried through the transient post-land COMMAND_DENIED
@@ -49,7 +54,7 @@ async def _ferry_home(s, world, bridge, i: int, hx: float, hy: float,
     err = ""
     for attempt in range(4):
         try:
-            await s.action.set_takeoff_altitude(10.0)
+            await s.action.set_takeoff_altitude(FERRY_ALT_M)
             await s.action.arm()
             await s.action.takeoff()
         except Exception as e:
@@ -74,7 +79,7 @@ async def _ferry_home(s, world, bridge, i: int, hx: float, hy: float,
         async for pos in s.telemetry.position():
             origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
             break
-        tgt = offset_point(origin, hy - me[1], hx - me[0], 10.0 - me[2])
+        tgt = offset_point(origin, hy - me[1], hx - me[0], FERRY_ALT_M - me[2])
         await s.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
                                      tgt.absolute_altitude_m, 0.0)
     except Exception as e:
