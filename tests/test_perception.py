@@ -59,3 +59,23 @@ def test_scan_reports_building_footprint_geometry():
     assert "obs_0" in out
     assert "E45" in out and "N0" in out          # world-frame centre
     assert "14x14" in out                        # footprint extents
+
+
+def test_scan_covers_all_six_obstacle_world_buildings():
+    """k=4 truncation made a drone plan around 4 known buildings and fly into the
+    5th — scan must cover every building in the obstacles world."""
+    from agents.perception.perception import scan_text
+
+    class W:
+        buildings = [{"name": f"obs_{j}", "x": 40.0 + 15 * j, "y": 0.0,
+                      "w": 10.0, "d": 10.0, "h": 20.0} for j in range(6)]
+
+        def drone_state(self, bridge, i):
+            return (0.0, 0.0, 12.0, 0.0)
+
+        def world_xy(self, bridge, j):
+            return None
+
+    out = scan_text(W(), None, 0, 1)
+    for j in range(6):
+        assert f"obs_{j}" in out

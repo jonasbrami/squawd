@@ -52,9 +52,14 @@ def yaw_deg_to(east_from: float, north_from: float, east_to: float, north_to: fl
     return math.degrees(math.atan2(east_to - east_from, north_to - north_from))
 
 
-def scan_text(world, bridge, i: int, n_drones: int, k: int = 4) -> str:
+def scan_text(world, bridge, i: int, n_drones: int, k: int = 8) -> str:
     """Nearest k buildings + other drones, with distance and bearing RELATIVE to
-    where the drone faces, flagging what's in the camera's view."""
+    where the drone faces, flagging what's in the camera's view.
+
+    k=8 covers every building in current worlds: with k=4 a drone planned a
+    perfect route around the four buildings it was told about and flew into the
+    fifth (obs_4 was #5-nearest from spawn). If a world ever exceeds k, the
+    truncation must be announced in the text, never silent."""
     st = world.drone_state(bridge, i)
     if st is None:
         return f"drone_{i}: position not yet available"
