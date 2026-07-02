@@ -8,8 +8,10 @@ setup:
   spawn: home
   seed_objects: []
 prompt: "Take off to 15 m and search the north-east area (roughly the 200 m x 200 m region north-east of home), covering as much of it as you can."
-budget: {wall_clock_s: 240, max_steps: 25}
+# Retuned 2026-07-02: 60%/r20/25-steps was near the knee only for haiku (67%);
+# 75%/r15/18-steps makes the rung demand a planned sweep, not a rough zigzag.
+budget: {wall_clock_s: 240, max_steps: 18}
 oracle:
   - {check: alive}
-  - {check: coverage, area: ne_quadrant, min_pct: 60, radius_m: 20, cell_m: 20}
-  - {check: within_step_budget, max_steps: 25}
+  - {check: coverage, area: ne_quadrant, min_pct: 75, radius_m: 15, cell_m: 20}
+  - {check: within_step_budget, max_steps: 18}

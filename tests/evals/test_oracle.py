@@ -240,3 +240,16 @@ def test_alt_ceiling_binds_whole_flight():
     t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
     assert not grade(t, [{"check": "alt_ceiling", "max_m": 15}], _ok_meta()).passed
     assert grade(t, [{"check": "alt_ceiling", "max_m": 20}], _ok_meta()).passed
+
+
+def test_final_pos_grades_where_the_flight_ends():
+    # Ends at (0,0) == home -> passes for home, fails for away point.
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(50.0, 0.0, 12.0, 0.0)}),
+        Snapshot(2.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+    ]
+    objs = {"home_pt": (0.0, 0.0), "away": (50.0, 0.0)}
+    t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    assert grade(t, [{"check": "final_pos", "target": "home_pt", "tol_m": 15}], _ok_meta()).passed
+    assert not grade(t, [{"check": "final_pos", "target": "away", "tol_m": 15}], _ok_meta()).passed

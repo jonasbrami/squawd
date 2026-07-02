@@ -199,6 +199,20 @@ def _alt_ceiling(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"max alt {worst:.1f}m (ceiling {mx:g}m)")
 
 
+def _final_pos(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """The flight must END within tol of the target (last sample, post-settle).
+    Grades 'then return to X' without pinning the visit order the way a chained
+    `ordering` would — `reached` can't do it when X coincides with spawn."""
+    xy = track.objects[p["target"]]
+    tol = float(p["tol_m"])
+    last = track.snapshots[-1] if track.snapshots else None
+    d = min((math.hypot(pose.e - xy[0], pose.n - xy[1])
+             for pose in last.poses.values()), default=math.inf) if last else math.inf
+    shown = "inf" if d == math.inf else f"{d:.1f}m"
+    return CheckResult("final_pos", d <= tol, 0.0 if d == math.inf else d,
+                       f"ended {shown} from {p['target']} (tol {tol:g})")
+
+
 def _clearance(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     margin = float(p["margin_m"])
     d = _min_building_clearance(track)
@@ -221,6 +235,7 @@ CHECKS = {
     "avoid_area": _avoid_area,
     "path_length": _path_length,
     "alt_ceiling": _alt_ceiling,
+    "final_pos": _final_pos,
 }
 
 
