@@ -176,3 +176,67 @@ def test_clearance_passes_when_routed_around():
     snaps = [Snapshot(0.0, {0: DronePose(10.0, 20.0, 12.0, 0.0)})]
     t = WorldTrack(snaps, {}, 1, 300.0, buildings=b)
     assert grade(t, [{"check": "clearance", "margin_m": 5}], ok).passed
+
+
+# ---- discrimination-ladder checks: not_reached / avoid_area / path_length / alt_ceiling ----
+
+def _ok_meta():
+    return {"steps": 5, "crashed": False}
+
+
+def test_not_reached_passes_when_kept_clear_and_fails_on_approach():
+    # Track visits (10,0); decoy at (100,100) stays clear, decoy at (12,0) is approached.
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(10.0, 0.0, 12.0, 0.0)}),
+    ]
+    objs = {"far_decoy": (100.0, 100.0), "near_decoy": (12.0, 0.0)}
+    t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    assert grade(t, [{"check": "not_reached", "target": "far_decoy", "tol_m": 25}], _ok_meta()).passed
+    assert not grade(t, [{"check": "not_reached", "target": "near_decoy", "tol_m": 25}], _ok_meta()).passed
+
+
+def test_avoid_area_fails_on_incursion_and_passes_outside():
+    # ne_quadrant is (0,0)..(200,200); one sample inside it must fail the check.
+    inside = [Snapshot(0.0, {0: DronePose(-5.0, -5.0, 12.0, 0.0)}),
+              Snapshot(1.0, {0: DronePose(50.0, 50.0, 12.0, 0.0)})]
+    outside = [Snapshot(0.0, {0: DronePose(-5.0, -5.0, 12.0, 0.0)}),
+               Snapshot(1.0, {0: DronePose(-50.0, -50.0, 12.0, 0.0)})]
+    t_in = WorldTrack(inside, {}, n_drones=1, geofence_m=300.0)
+    t_out = WorldTrack(outside, {}, n_drones=1, geofence_m=300.0)
+    spec = [{"check": "avoid_area", "area": "ne_quadrant"}]
+    assert not grade(t_in, spec, _ok_meta()).passed
+    assert grade(t_out, spec, _ok_meta()).passed
+
+
+def test_avoid_area_grace_skips_spawn_samples():
+    # Spawn is inside the area; grace_s excuses the early samples only.
+    snaps = [Snapshot(0.0, {0: DronePose(50.0, 50.0, 0.0, 0.0)}),
+             Snapshot(5.0, {0: DronePose(-50.0, -50.0, 12.0, 0.0)})]
+    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    spec = [{"check": "avoid_area", "area": "ne_quadrant", "grace_s": 2.0}]
+    assert grade(t, spec, _ok_meta()).passed
+
+
+def test_path_length_sums_2d_legs():
+    # 30m east then 40m north = 70m flown; max 60 fails, max 80 passes.
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(30.0, 0.0, 12.0, 0.0)}),
+        Snapshot(2.0, {0: DronePose(30.0, 40.0, 12.0, 0.0)}),
+    ]
+    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    assert grade(t, [{"check": "path_length", "max_m": 80}], _ok_meta()).passed
+    assert not grade(t, [{"check": "path_length", "max_m": 60}], _ok_meta()).passed
+
+
+def test_alt_ceiling_binds_whole_flight():
+    # Climbs to 18m mid-flight even though it ends at 10m -> ceiling 15 fails.
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 10.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(10.0, 0.0, 18.0, 0.0)}),
+        Snapshot(2.0, {0: DronePose(20.0, 0.0, 10.0, 0.0)}),
+    ]
+    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    assert not grade(t, [{"check": "alt_ceiling", "max_m": 15}], _ok_meta()).passed
+    assert grade(t, [{"check": "alt_ceiling", "max_m": 20}], _ok_meta()).passed

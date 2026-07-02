@@ -153,6 +153,52 @@ def _min_building_clearance(track: WorldTrack) -> float:
     return best
 
 
+def _not_reached(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Inverse of reached: the track must NEVER come within tol of the target. For
+    distractor rejection — pick tol/geometry so transit legs of the correct route
+    can't clip it (verify at spec-authoring time)."""
+    d = track.min_dist_to(track.objects[p["target"]])
+    tol = float(p["tol_m"])
+    return CheckResult("not_reached", d > tol, d,
+                       f"min dist {d:.1f}m to {p['target']} (must stay > {tol:g}m)")
+
+
+def _avoid_area(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """No sampled position inside the named area. Optional grace_s excuses early
+    samples when the area abuts the spawn point."""
+    grace = float(p.get("grace_s", 0.0))
+    hits = sum(1 for s in track.snapshots if s.t >= grace
+               for pose in s.poses.values()
+               if point_in_area(p["area"], pose.e, pose.n))
+    return CheckResult("avoid_area", hits == 0, float(hits),
+                       f"{hits} samples inside {p['area']} (must be 0)")
+
+
+def _path_length(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Total 2D distance flown (per drone, summed over sampled legs). Sampling
+    slightly under-counts true path on curves — leave ~3-5% slack between the
+    prompt's budget and max_m, calibrated on a reference run."""
+    total, prev = 0.0, {}
+    for s in track.snapshots:
+        for did, pose in s.poses.items():
+            if did in prev:
+                total += math.hypot(pose.e - prev[did][0], pose.n - prev[did][1])
+            prev[did] = (pose.e, pose.n)
+    mx = float(p["max_m"])
+    return CheckResult("path_length", total <= mx, total,
+                       f"flew {total:.0f}m (max {mx:g}m)")
+
+
+def _alt_ceiling(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Track-wide altitude ceiling (`altitude` only checks the closest pose to one
+    target; this binds for the WHOLE flight)."""
+    mx = float(p["max_m"])
+    worst = max((pose.alt for s in track.snapshots
+                 for pose in s.poses.values()), default=0.0)
+    return CheckResult("alt_ceiling", worst <= mx, worst,
+                       f"max alt {worst:.1f}m (ceiling {mx:g}m)")
+
+
 def _clearance(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     margin = float(p["margin_m"])
     d = _min_building_clearance(track)
@@ -171,6 +217,10 @@ CHECKS = {
     "altitude": _altitude,
     "dwell": _dwell,
     "clearance": _clearance,
+    "not_reached": _not_reached,
+    "avoid_area": _avoid_area,
+    "path_length": _path_length,
+    "alt_ceiling": _alt_ceiling,
 }
 
 

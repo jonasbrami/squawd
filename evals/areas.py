@@ -5,8 +5,12 @@ centers — the denominator for position-overflight coverage. Keep regions here 
 task specs stay terse and reusable. Add regions as scenarios need them."""
 
 # ne_quadrant: a 200 m x 200 m box NE of home (home is world origin (0,0)).
+# ne_block: the am5 no-fly zone — the direct a->b leg cuts through it.
+# west_block: the c2 low-survey coverage block.
 AREAS: dict[str, list[tuple[float, float]]] = {
     "ne_quadrant": [(0.0, 0.0), (200.0, 0.0), (200.0, 200.0), (0.0, 200.0)],
+    "ne_block": [(20.0, 20.0), (180.0, 20.0), (180.0, 180.0), (20.0, 180.0)],
+    "west_block": [(-150.0, -50.0), (-50.0, -50.0), (-50.0, 50.0), (-150.0, 50.0)],
 }
 
 
