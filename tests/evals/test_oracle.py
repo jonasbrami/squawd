@@ -253,3 +253,20 @@ def test_final_pos_grades_where_the_flight_ends():
     t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
     assert grade(t, [{"check": "final_pos", "target": "home_pt", "tol_m": 15}], _ok_meta()).passed
     assert not grade(t, [{"check": "final_pos", "target": "away", "tol_m": 15}], _ok_meta()).passed
+
+
+def test_min_visited_counts_targets_within_tol():
+    """Knapsack-style tasks: visit AT LEAST N of the listed targets (visited_all
+    demands all, which can't grade 'as many as the budget allows')."""
+    snaps = [
+        Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
+        Snapshot(1.0, {0: DronePose(50.0, 0.0, 12.0, 0.0)}),
+        Snapshot(2.0, {0: DronePose(50.0, 50.0, 12.0, 0.0)}),
+    ]
+    objs = {"a": (50.0, 0.0), "b": (50.0, 50.0), "c": (200.0, 200.0), "d": (-200.0, 0.0)}
+    t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    ok = {"steps": 5, "crashed": False}
+    spec2 = [{"check": "min_visited", "targets": ["a", "b", "c", "d"], "tol_m": 10, "min_count": 2}]
+    spec3 = [{"check": "min_visited", "targets": ["a", "b", "c", "d"], "tol_m": 10, "min_count": 3}]
+    assert grade(t, spec2, ok).passed
+    assert not grade(t, spec3, ok).passed

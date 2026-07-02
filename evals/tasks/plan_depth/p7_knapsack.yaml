@@ -1,0 +1,39 @@
+# Battery-knapsack: visit as many of 8 checkpoints as the 500m budget allows.
+# Geometry machine-verified: optimum is 4 (the SW cluster d->b->c->f, 457m);
+# greedy-nearest-neighbour is lured NE and manages only 3; visiting in listed
+# order manages 2. min_visited >= 4 therefore demands near-optimal subset
+# selection AND routing — the sharpest opus/sonnet discriminator in the suite.
+id: p7_knapsack
+target_layer: single_drone
+suite: plan_depth
+difficulty: {plan_depth: 5, coordination: 1, ambiguity: 2, spatial: 4}
+setup:
+  world: default
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: a, east: 5, north: 115}
+    - {id: b, east: -73, north: -79}
+    - {id: c, east: -32, north: -140}
+    - {id: d, east: -129, north: 14}
+    - {id: e, east: 72, north: 3}
+    - {id: f, east: 0, north: -37}
+    - {id: g, east: 179, north: 169}
+    - {id: h, east: 131, north: 145}
+    - {id: home_pt, east: 0, north: 0}
+prompt: "Take off to 15 m. Checkpoints: a (east 5, north 115), b (east -73, north -79), c (east -32, north -140), d (east -129, north 14), e (east 72, north 3), f (east 0, north -37), g (east 179, north 169), h (east 131, north 145). Your battery allows about 500 metres of total flight. Visit as many checkpoints as possible, then return to home (east 0, north 0). You cannot reach them all — choose carefully before you fly."
+budget: {wall_clock_s: 420, max_steps: 14}
+oracle:
+  - {check: alive}
+  - {check: min_visited, targets: [a, b, c, d, e, f, g, h], tol_m: 12, min_count: 4}
+  - {check: path_length, max_m: 520}
+  - {check: final_pos, target: home_pt, tol_m: 15}
+  - {check: within_step_budget, max_steps: 14}
+pilot:
+  - {tool: take_off, args: {altitude: 15}}
+  - {tool: goto, args: {east: -129, north: 14, up: 15}}
+  - {tool: goto, args: {east: -73, north: -79, up: 15}}
+  - {tool: goto, args: {east: -32, north: -140, up: 15}}
+  - {tool: goto, args: {east: 0, north: -37, up: 15}}
+  - {tool: goto, args: {east: 0, north: 0, up: 15}}
+  - {tool: hover}

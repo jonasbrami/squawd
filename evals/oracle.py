@@ -199,6 +199,17 @@ def _alt_ceiling(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"max alt {worst:.1f}m (ceiling {mx:g}m)")
 
 
+def _min_visited(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """At least min_count of the listed targets visited within tol. For budgeted
+    'visit as many as you can' tasks where visited_all (all-or-nothing) can't
+    grade the tradeoff."""
+    tol = float(p["tol_m"])
+    need = int(p["min_count"])
+    got = sum(1 for t in p["targets"] if track.min_dist_to(track.objects[t]) <= tol)
+    return CheckResult("min_visited", got >= need, float(got),
+                       f"visited {got}/{len(p['targets'])} within {tol:g}m (need >= {need})")
+
+
 def _final_pos(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     """The flight must END within tol of the target (last sample, post-settle).
     Grades 'then return to X' without pinning the visit order the way a chained
@@ -236,6 +247,7 @@ CHECKS = {
     "path_length": _path_length,
     "alt_ceiling": _alt_ceiling,
     "final_pos": _final_pos,
+    "min_visited": _min_visited,
 }
 
 
