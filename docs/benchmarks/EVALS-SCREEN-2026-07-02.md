@@ -50,10 +50,24 @@ Baseline (fire-and-forget tooling, corrected oracle): `evals/out/rerun_ordering/
    (sonnet needed 2 restarts; results unaffected since resume skips scored
    cells and infra rows re-run).
 
-## Next
+## Haiku knee at K=8 (escalation, same day)
 
-- Escalate haiku's borderline cells to K=8 (s6, am5, p1): localizes the knee
-  within the 20–80% band. ~1 h of sim time.
+| cell | pass | Wilson 95% |
+|------|------|------------|
+| s6_bearing | 7/8 | [53%–98%] |
+| am5_noflyzone | 5/8 | [31%–86%] |
+| p1_route2 | 6/8 | [41%–93%] |
+
+Zero infra failures across the 18 escalation cells (halt + ferry + isolation
+hold under sustained load). Against the 0.8 deployment threshold (Wilson LOWER
+bound ≥ 80%), none of the three certify: haiku's knee sits at
+**negative-constraint routing** (am5, ~5/8 — fails by burning its step budget
+doglegging) with bearing computation and even 2-leg routes not yet certifiable.
+Read: haiku is fine for single-goal flights and cheap fleet work; give
+constraint-bounded or geometry-computing taskings to sonnet/opus until prompts
+or tools close the gap.
+
+## Next
 - Add harder rungs above the current ceiling (opus/sonnet saturated at 24/24):
   tighter step budgets, multi-constraint capstones (c2 variants), and the
   planned paraphrase splits (prompt-wording effect is still unmeasured).
