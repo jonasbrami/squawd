@@ -67,6 +67,46 @@ Read: haiku is fine for single-goal flights and cheap fleet work; give
 constraint-bounded or geometry-computing taskings to sonnet/opus until prompts
 or tools close the gap.
 
+## Round 2 (same day): ceiling rungs + the PLAN nudge
+
+**Ceiling rungs** (p6 tight-budget route, p7 battery-knapsack, c3 five-constraint
+survey; pilot gate 3/3 before any LLM cells; K=2):
+
+| task | opus | sonnet | haiku |
+|------|------|--------|-------|
+| p6_tight_route | 2/2 | 2/2 | 2/2 (3-4 steps — used run_mission!) |
+| p7_knapsack | 2/2 | 2/2 (~100s thinking) | 2/2 |
+| c3_constrained_survey | 1/2 | 0/2 | 1/2 |
+
+- **c3 is the first above-opus rung**: everyone mostly fails it, on the step
+  budget (17 vs 16) and once the ceiling (16.4m). The five-way constraint
+  conjunction binds; steps budget may deserve +1 if we want it AT opus level
+  rather than above.
+- **p7's knapsack fell to every tier** — the machine-verified greedy trap
+  (greedy=3 < optimum=4) did not fool any current Claude; small route
+  optimization is now table stakes. Prediction falsified, which is fine: that
+  is what probes are for.
+- haiku solved p6 in 3-4 steps by authoring the whole patrol as ONE
+  run_mission — tool-choice diversity the transcripts now make visible.
+
+**PLAN prompt nudge** (system prompt gains: write the waypoint plan first and
+check every leg against every constraint): haiku's knee cells re-run at K=8:
+
+| cell | pre-nudge | post-nudge |
+|------|-----------|------------|
+| am5_noflyzone | 5/8 | **8/8** [68–100%] |
+| s6_bearing | 7/8 | **8/8** [68–100%] |
+| p1_route2 | 6/8 | 7/8 [53–98%] |
+
+One prompt paragraph recovered haiku's constraint-routing gap (18/24 → 23/24
+on the knee cells). This is the "improve tooling/prompting to raise capacity"
+loop working end-to-end: find knee → localize with K=8 → prompt fix → verify.
+
+**New harness lessons** (all committed): PX4 re-sets HOME AT ARMING, so a
+reset ferry must fly to world home itself — RTL after re-arming returns to the
+re-arm spot (observed 99.9m-from-home loops); stale copied credentials surface
+as `<synthetic>` 401 cells — now flagged infra by `client_failed`, never scored.
+
 ## Next
 - Add harder rungs above the current ceiling (opus/sonnet saturated at 24/24):
   tighter step budgets, multi-constraint capstones (c2 variants), and the
