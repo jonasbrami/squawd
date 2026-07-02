@@ -295,6 +295,14 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         async with client:  # fresh session per cell — no context bleed between cells
             trace, crashed, reason = await _drive(
                 client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
+        # HALT before settling: if the deadline cancelled a blocking goto mid-flight,
+        # the PX4 setpoint keeps flying with nothing to stop it — drones ended cells
+        # 150-770m out, RTL couldn't recover in the reset window, and the infra fuse
+        # tripped on healthy sims. Same hazard run_mission guards with ops._halt.
+        try:
+            await asyncio.wait_for(system.action.hold(), timeout=5)
+        except Exception:
+            pass
         # Settle gets its OWN allowance, not the tail of the turn budget: sharing one
         # deadline gave slower-thinking tiers less real-time flight before grading —
         # a structural bias against exactly the tiers being compared. With blocking
