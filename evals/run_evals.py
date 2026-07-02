@@ -77,6 +77,7 @@ async def main(args) -> None:
         os.path.dirname(__file__), "out", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(out_dir, exist_ok=True)
     jsonl = os.path.join(out_dir, "results.jsonl")
+    tjsonl = os.path.join(out_dir, "transcripts.jsonl")
 
     done = done_keys(_load_rows(jsonl))
     cells = expand(list(specs), assignments, args.k)
@@ -90,7 +91,9 @@ async def main(args) -> None:
     harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
     try:
         print(f"evals: {len(cells)} cells -> {jsonl}", flush=True)
-        with open(jsonl, "a") as fh:
+        # results.jsonl is the resume index; transcripts.jsonl is written in the same
+        # iteration keyed by the same triple, so readers join on it (last wins).
+        with open(jsonl, "a") as fh, open(tjsonl, "a") as tfh:
             for cell in cells:
                 if cell.key() in done:
                     print(f"skip (done): {cell.key()}", flush=True)
@@ -100,6 +103,8 @@ async def main(args) -> None:
                     lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps, harness))
                 fh.write(json.dumps(res.to_row()) + "\n")
                 fh.flush()
+                tfh.write(json.dumps(res.to_transcript_row()) + "\n")
+                tfh.flush()
                 lat = f"{res.latency_s:.1f}s" if res.latency_s is not None else "n/a"
                 print(f"{cell.key()}: passed={res.passed} infra_fail={res.infra_fail} "
                       f"steps={res.steps} lat={lat}", flush=True)

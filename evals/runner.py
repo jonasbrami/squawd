@@ -10,7 +10,8 @@ import math
 import time
 from dataclasses import dataclass, field
 
-from claude_agent_sdk import AssistantMessage, ToolUseBlock
+from claude_agent_sdk import (AssistantMessage, ResultMessage, TextBlock,
+                              ToolResultBlock, ToolUseBlock, UserMessage)
 
 from evals.oracle import grade
 from evals.reset import soft_reset
@@ -32,19 +33,73 @@ def assignment_label(assignment: dict) -> str:
     return ",".join(f"{k}={v}" for k, v in sorted(assignment.items())) or "default"
 
 
+def _summarize_result(content, cap: int = 500) -> str:
+    """Flatten a ToolResultBlock's content to a short string; never store image b64
+    (a single `look` frame is ~100KB of base64 — it would balloon the transcript)."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content[:cap]
+    parts = []
+    for b in content:
+        if isinstance(b, dict) and b.get("type") == "image":
+            parts.append(f"<image {len(b.get('data') or '')} b64 chars>")
+        else:
+            parts.append(str(b.get("text", b) if isinstance(b, dict) else b)[:cap])
+    return " | ".join(parts)[:cap]
+
+
 class Trace:
+    """Counts steps AND records the full per-cell transcript: every tool call with
+    args/result/duration, agent text between calls, and end-of-run usage/cost. All
+    of it comes off the SDK stream `_drive` already iterates — tool choice per tier
+    is thereby observed, not inferred from step counts."""
+
     def __init__(self) -> None:
         self.steps = 0
         self.first_action_t: float | None = None
+        self.events: list[dict] = []        # tool calls + agent text, in order
+        self._open: dict[str, dict] = {}    # tool_use_id -> event awaiting its result
+        self.model: str | None = None
+        self.usage: dict | None = None      # from ResultMessage; None if deadline cut
+        self.cost_usd: float | None = None
+        self.num_turns: int | None = None
+        self.api_ms: int | None = None
 
     def observe(self, msg, now: float) -> None:
-        if not isinstance(msg, AssistantMessage):
-            return
-        for blk in msg.content:
-            if isinstance(blk, ToolUseBlock):
-                self.steps += 1
-                if self.first_action_t is None:
-                    self.first_action_t = now
+        if isinstance(msg, AssistantMessage):
+            self.model = self.model or msg.model
+            for blk in msg.content:
+                if isinstance(blk, ToolUseBlock):
+                    self.steps += 1
+                    if self.first_action_t is None:
+                        self.first_action_t = now
+                    ev = {"type": "tool_call", "t": round(now, 2), "name": blk.name,
+                          "args": blk.input, "result": None, "is_error": None,
+                          "dur_s": None}
+                    self.events.append(ev)
+                    self._open[blk.id] = ev
+                elif isinstance(blk, TextBlock) and blk.text.strip():
+                    self.events.append({"type": "text", "t": round(now, 2),
+                                        "text": blk.text})
+        elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
+            for blk in msg.content:
+                if isinstance(blk, ToolResultBlock) and blk.tool_use_id in self._open:
+                    ev = self._open.pop(blk.tool_use_id)
+                    ev["result"] = _summarize_result(blk.content)
+                    ev["is_error"] = bool(blk.is_error)
+                    ev["dur_s"] = round(now - ev["t"], 2)
+        elif isinstance(msg, ResultMessage):
+            self.usage = msg.usage
+            self.cost_usd = msg.total_cost_usd
+            self.num_turns = msg.num_turns
+            self.api_ms = msg.duration_api_ms
+
+    def transcript(self, t0_epoch: float) -> dict:
+        return {"model": self.model, "t0_epoch": round(t0_epoch, 2),
+                "usage": self.usage, "cost_usd": self.cost_usd,
+                "num_turns": self.num_turns, "api_ms": self.api_ms,
+                "events": self.events}
 
 
 @dataclass
@@ -60,6 +115,13 @@ class CellResult:
     failure_reason: str = ""
     difficulty: dict = field(default_factory=dict)
     suite: str | None = None
+    transcript: dict = field(default_factory=dict)
+
+    def to_transcript_row(self) -> dict:
+        """One transcripts.jsonl line, keyed by the same triple as to_row so a cell
+        present in results.jsonl always has exactly one aligned transcript line."""
+        return {"task_id": self.task_id, "assignment": self.assignment_label,
+                "repeat": self.repeat, **self.transcript}
 
     def to_row(self) -> dict:
         return {
@@ -224,6 +286,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
                       geofence_m=300.0)
     samp_task = asyncio.create_task(sampler.run())
     t_start = time.monotonic()
+    t0_epoch = time.time()
     client = harness.client_for(model_for(assignment, "drones"))
     try:
         async with client:  # fresh session per cell — no context bleed between cells
@@ -252,4 +315,5 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     base.steps = trace.steps
     base.latency_s = trace.first_action_t
     base.failure_reason = reason
+    base.transcript = trace.transcript(t0_epoch)
     return base

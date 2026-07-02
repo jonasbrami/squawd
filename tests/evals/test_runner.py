@@ -1,8 +1,6 @@
+from claude_agent_sdk import AssistantMessage, ToolUseBlock
+
 from evals.runner import Trace, model_for, CellResult
-
-
-class FakeTool:  # stands in for ToolUseBlock duck-typing in the test
-    pass
 
 
 def test_model_for_maps_tier():
@@ -12,19 +10,16 @@ def test_model_for_maps_tier():
     assert model_for({}, "drones") is None
 
 
-def test_trace_counts_tooluse_and_stamps_first(monkeypatch):
-    import evals.runner as r
-    # Treat FakeTool as the ToolUseBlock type for this test.
-    monkeypatch.setattr(r, "ToolUseBlock", FakeTool)
+def test_trace_counts_tooluse_and_stamps_first():
+    def blk(i):
+        return ToolUseBlock(id=f"t{i}", name="mcp__d0__goto", input={})
 
-    class Msg:
-        def __init__(self, content):
-            self.content = content
-    monkeypatch.setattr(r, "AssistantMessage", Msg)
+    def msg(*blocks):
+        return AssistantMessage(content=list(blocks), model="m")
 
     tr = Trace()
-    tr.observe(Msg([FakeTool()]), now=5.0)
-    tr.observe(Msg([FakeTool(), FakeTool()]), now=6.0)
+    tr.observe(msg(blk(1)), now=5.0)
+    tr.observe(msg(blk(2), blk(3)), now=6.0)
     assert tr.steps == 3
     assert tr.first_action_t == 5.0
 
