@@ -37,6 +37,62 @@ def check_home(world, bridge, n: int, tol_m: float, alt_tol_m: float = 2.5) -> R
     return ResetResult(True, "all drones home")
 
 
+async def _ferry_home(s, world, bridge, i: int, hx: float, hy: float,
+                      poll_interval_s: float) -> str:
+    """Fly a disarmed, landed-away drone back to WORLD home: arm+takeoff (retried),
+    goto_location at home, land. Returns '' on success, else the last error note.
+    Never raises — check_home stays the arbiter."""
+    from agents.core.geo import GeoPoint, offset_point
+
+    # arm + takeoff, retried through the transient post-land COMMAND_DENIED
+    airborne = False
+    err = ""
+    for attempt in range(4):
+        try:
+            await s.action.set_takeoff_altitude(10.0)
+            await s.action.arm()
+            await s.action.takeoff()
+        except Exception as e:
+            err = f"drone_{i} ferry arm/takeoff attempt {attempt}: {e}"
+            await asyncio.sleep(2.0)
+            continue
+        for _ in range(int(20 / max(poll_interval_s, 0.05))):
+            await asyncio.sleep(poll_interval_s)
+            xy = world.world_xy(bridge, i)
+            if xy is not None and len(xy) > 2 and xy[2] > 3.0:
+                airborne = True
+                break
+        if airborne:
+            break
+        err = f"drone_{i} ferry attempt {attempt}: takeoff never left ground"
+    if not airborne:
+        return err
+
+    # goto WORLD home (NOT RTL — arming just moved PX4's home to the ferry spot)
+    try:
+        me = world.world_xy(bridge, i)
+        async for pos in s.telemetry.position():
+            origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
+            break
+        tgt = offset_point(origin, hy - me[1], hx - me[0], 10.0 - me[2])
+        await s.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
+                                     tgt.absolute_altitude_m, 0.0)
+    except Exception as e:
+        return f"drone_{i} ferry goto failed: {e}"
+    for _ in range(int(90 / max(poll_interval_s, 0.05))):
+        await asyncio.sleep(poll_interval_s)
+        xy = world.world_xy(bridge, i)
+        if xy is not None and math.hypot(xy[0] - hx, xy[1] - hy) <= 3.0:
+            break
+    else:
+        return f"drone_{i} ferry never reached home"
+    try:
+        await s.action.land()
+    except Exception as e:
+        return f"drone_{i} ferry land failed: {e}"
+    return ""
+
+
 async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
                      poll_interval_s=1.0) -> ResetResult:
     # timeout_s covers the WORST case now that check_home also gates altitude:
@@ -46,12 +102,13 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
 
     # A cell can legitimately END with the drone LANDED away from home (agents land
     # after tasks). RTL on a disarmed vehicle is a no-op — PX4 enters RETURN_TO_LAUNCH
-    # mode and just sits there (observed live). Ferry it up first: arm + takeoff,
-    # bounded wait to get airborne, then the RTL below works. The trigger is the
-    # DISARMED state, not an altitude guess — a parked drone's EKF altitude drifts
-    # (~2m after 40min, past any grounded threshold). arm/takeoff hit PX4's transient
-    # COMMAND_DENIED right after mode changes (the same reason ops._arm_and_start
-    # retries) — retry a few times, and carry the last error into the failure reason.
+    # mode and just sits there (observed live). And RTL after RE-ARMING away from
+    # home is a TRAP: PX4 records its home position AT ARMING, so the ferried drone
+    # "returns" to the exact spot it was re-armed at (observed live: 99.9m from home
+    # after every ferry). So the ferry must fly to WORLD home itself: arm + takeoff
+    # (retried through PX4's transient COMMAND_DENIED), goto world home, land there —
+    # each phase bounded. The trigger is the DISARMED state, not an altitude guess
+    # (a parked drone's EKF altitude drifts ~2m, past any grounded threshold).
     ferry_err = ""
     for i, s in enumerate(systems):
         xy = world.world_xy(bridge, i)
@@ -68,26 +125,7 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
         except Exception:
             pass
         if armed is False or (armed is None and xy[2] < 2.5):
-            for attempt in range(4):
-                try:
-                    await s.action.set_takeoff_altitude(10.0)
-                    await s.action.arm()
-                    await s.action.takeoff()
-                except Exception as e:
-                    ferry_err = f"drone_{i} ferry attempt {attempt}: {e}"
-                    await asyncio.sleep(2.0)
-                    continue
-                airborne = False
-                for _ in range(int(20 / max(poll_interval_s, 0.05))):
-                    await asyncio.sleep(poll_interval_s)
-                    xy2 = world.world_xy(bridge, i)
-                    if xy2 is not None and len(xy2) > 2 and xy2[2] > 3.0:
-                        airborne = True
-                        break
-                if airborne:
-                    ferry_err = ""
-                    break
-                ferry_err = f"drone_{i} ferry attempt {attempt}: takeoff never left ground"
+            ferry_err = await _ferry_home(s, world, bridge, i, hx, hy, poll_interval_s)
 
     results = await asyncio.gather(
         *[s.action.return_to_launch() for s in systems],
