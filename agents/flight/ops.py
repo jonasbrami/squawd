@@ -191,8 +191,15 @@ class FlightOps:
         return (f"{self.name} orbiting {target or 'point'} r={radius:.0f}m {direction} "
                 f"at {alt_v:.0f}m, camera on center")
 
-    async def hover(self) -> str:
+    async def hover(self, seconds=0.0) -> str:
+        """Hold position; with `seconds`, keep holding that long before returning —
+        the only way to satisfy 'hold over X for N seconds' now that moves block
+        (the post-turn settle no longer burns budget accruing dwell by accident)."""
         await self.drone.action.hold()
+        s = min(max(float(seconds or 0.0), 0.0), 120.0)
+        if s > 0:
+            await asyncio.sleep(s)
+            return f"{self.name} held {s:g}s"
         return f"{self.name} holding"
 
     async def set_speed(self, speed=5.0) -> str:

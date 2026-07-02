@@ -18,3 +18,7 @@ oracle:
   - {check: alive}
   - {check: reached, target: mid, tol_m: 12}
   - {check: within_step_budget, max_steps: 8}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 100, north: -20, up: 12}}
+  - {tool: hover}

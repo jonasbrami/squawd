@@ -85,7 +85,16 @@ async def main(args) -> None:
     from agents.world import World
 
     specs = {os.path.splitext(os.path.basename(p))[0]: load_task(p) for p in args.tasks}
-    assignments = parse_assignments(args.assignments)
+    if args.pilot:
+        # Trap gate: fly each task's declared ideal script with NO LLM through the
+        # same run_cell/oracle path. Tasks without a pilot are quarantined loudly.
+        missing = [t for t, s in specs.items() if not s.pilot]
+        for t in missing:
+            print(f"pilot: SKIP {t} (no pilot script declared)", flush=True)
+        specs = {t: s for t, s in specs.items() if s.pilot}
+        assignments = [{"drones": "pilot"}]
+    else:
+        assignments = parse_assignments(args.assignments)
 
     out_dir = args.out or os.path.join(
         os.path.dirname(__file__), "out", time.strftime("%Y%m%d-%H%M%S"))
@@ -103,6 +112,9 @@ async def main(args) -> None:
     bridge.start()
     deps = Deps(world=world, bridge=bridge, cameras=cameras)
     harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
+    if args.pilot:
+        from evals.pilot import pilot_client_builder
+        harness._client_builder = pilot_client_builder(harness, deps)
     try:
         print(f"evals: {len(cells)} cells (order seed {args.seed}) -> {jsonl}", flush=True)
         fuse = InfraFuse(limit=2)
@@ -114,6 +126,8 @@ async def main(args) -> None:
                     print(f"skip (done): {cell.key()}", flush=True)
                     continue
                 spec = specs[cell.task_id]
+                if args.pilot:
+                    harness.pilot_script = spec.pilot  # per-cell script for the builder
                 res = await run_with_retry(
                     lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps, harness))
                 fh.write(json.dumps(res.to_row()) + "\n")
@@ -157,6 +171,9 @@ def _cli() -> None:
     ap.add_argument("--out", default=None, help="output dir (default evals/out/<ts>)")
     ap.add_argument("--seed", type=int, default=0,
                     help="cell-order shuffle seed (logged; resume-safe)")
+    ap.add_argument("--pilot", action="store_true",
+                    help="fly each task's declared ideal script with NO LLM (trap "
+                         "gate): a task the pilot can't pass is a harness bug")
     args = ap.parse_args()
     asyncio.run(main(args))
 

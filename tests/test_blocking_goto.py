@@ -105,3 +105,33 @@ def test_goto_tool_schema_and_prompt_state_blocking_semantics():
     opts = make_drone_options(0, None, None, None, 1, None, lambda m: None)
     assert "ARRIVE" in opts.system_prompt          # prompt states goto returns on arrival
     assert "wait=false" in opts.system_prompt.lower()
+
+
+def test_hover_seconds_blocks_then_reports(monkeypatch):
+    import asyncio as aio
+
+    class HoldAction(FakeAction):
+        def __init__(self):
+            super().__init__()
+            self.held = False
+
+        async def hold(self):
+            self.held = True
+
+    class D(FakeDrone):
+        def __init__(self):
+            super().__init__()
+            self.action = HoldAction()
+
+    ops = FlightOps(D(), FakeWorld([(0.0, 0.0, 10.0)]), bridge=None, i=0, n=1)
+
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+    monkeypatch.setattr(ops_mod.asyncio, "sleep", fake_sleep)
+
+    out = aio.run(ops.hover(seconds=12))
+    assert ops.drone.action.held and slept == [12.0] and "held 12s" in out
+    out2 = aio.run(ops.hover())
+    assert "holding" in out2 and len(slept) == 1   # no extra sleep without seconds

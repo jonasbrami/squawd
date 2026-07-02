@@ -71,10 +71,12 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, mo
         except Exception as e:
             return _err(f"{name} orbit failed: {e}")
 
-    @tool("hover", "Hold current position (loiter in place).", {})
+    @tool("hover", "Hold current position (loiter in place). Pass seconds=N to keep "
+          "holding for N seconds before returning — use this for 'hold/dwell for N "
+          "seconds' tasks.", {"seconds": {"type": "number"}})
     async def hover(args):
         try:
-            return _ok(await ops.hover())
+            return _ok(await ops.hover(args.get("seconds", 0)))
         except Exception as e:
             return _err(f"{name} hover failed: {e}")
 
@@ -158,7 +160,8 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, mo
             "or 'drone_1') — it returns once you ARRIVE, so for an ordered route just call it "
             "once per leg, in order; `orbit` (circle a target keeping your camera on it — ONE "
             "call, no need to compute waypoints); `fly` (relative north/east/up, also returns on "
-            "arrival); `face` (turn in place to aim your camera); `hover` (hold); `set_speed`; "
+            "arrival); `face` (turn in place to aim your camera); `hover` (hold; seconds=N "
+            "holds N seconds — use it for dwell tasks); `set_speed`; "
             "`take_off`; `land`. Pass wait=false to goto/fly if you need to scan/look/report "
             "while moving. Prefer `goto`/`orbit` with named targets and the world coords from "
             "`scan` over hand-computing paths.\n"

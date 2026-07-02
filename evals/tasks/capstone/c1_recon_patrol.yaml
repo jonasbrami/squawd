@@ -18,3 +18,9 @@ oracle:
   - {check: altitude, target: c, min_m: 14, max_m: 22}
   - {check: dwell, target: c, tol_m: 12, hold_s: 10}
   - {check: within_step_budget, max_steps: 20}
+pilot:
+  - {tool: take_off, args: {altitude: 18}}
+  - {tool: goto, args: {east: 50, north: 0, up: 18}}
+  - {tool: goto, args: {east: 50, north: 50, up: 18}}
+  - {tool: goto, args: {east: 0, north: 50, up: 18}}
+  - {tool: hover, args: {seconds: 14}}

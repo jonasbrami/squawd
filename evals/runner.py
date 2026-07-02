@@ -21,6 +21,7 @@ TIERS = {
     "opus": "claude-opus-4-8",
     "sonnet": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
+    "pilot": None,   # scripted reference pilot (no LLM) — see evals/pilot.py
 }
 
 SETTLE_S = 45.0   # post-turn settle allowance, independent of the turn budget

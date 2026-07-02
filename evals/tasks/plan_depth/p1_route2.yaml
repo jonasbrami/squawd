@@ -15,3 +15,8 @@ oracle:
   - {check: alive}
   - {check: ordering, sequence: [a, b], tol_m: 12}
   - {check: within_step_budget, max_steps: 12}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 60, north: 0, up: 12}}
+  - {tool: goto, args: {east: 60, north: 60, up: 12}}
+  - {tool: hover}

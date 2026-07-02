@@ -45,6 +45,7 @@ class TaskSpec:
     budget: BudgetSpec
     oracle: list[dict]
     suite: str | None = None
+    pilot: list[dict] | None = None   # ideal tool sequence for the no-LLM trap gate
 
     def objects_map(self) -> dict[str, tuple[float, float]]:
         return {o.id: (o.e, o.n) for o in self.setup.seed_objects}
@@ -89,6 +90,13 @@ def load_task(path: str) -> TaskSpec:
             raise SpecError(f"{path}: unknown oracle check '{name}' "
                             f"(have {sorted(CHECKS)})")
 
+    pilot = raw.get("pilot")
+    if pilot is not None:
+        if not isinstance(pilot, list) or not pilot:
+            raise SpecError(f"{path}: 'pilot' must be a non-empty list")
+        for step in pilot:
+            _require(step, "tool", "pilot step")
+
     return TaskSpec(
         id=_require(raw, "id", path),
         target_layer=_require(raw, "target_layer", path),
@@ -98,4 +106,5 @@ def load_task(path: str) -> TaskSpec:
         budget=budget,
         oracle=oracle,
         suite=raw.get("suite"),
+        pilot=pilot,
     )
