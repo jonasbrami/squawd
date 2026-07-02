@@ -28,3 +28,15 @@ def test_run_with_retry_retries_infra_then_returns_last():
 
     res = asyncio.run(run_with_retry(fn, attempts=2))
     assert res.infra_fail and calls["n"] == 2
+
+
+def test_infra_fuse_trips_on_consecutive_failures_only():
+    from evals.run_evals import InfraFuse
+
+    fuse = InfraFuse(limit=2)
+    assert not fuse.update(True)        # 1 consecutive
+    assert fuse.update(True)            # 2 consecutive -> tripped
+    fuse = InfraFuse(limit=2)
+    fuse.update(True)
+    assert not fuse.update(False)       # success resets the count
+    assert not fuse.update(True)

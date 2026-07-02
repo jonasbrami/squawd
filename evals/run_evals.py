@@ -26,7 +26,7 @@ import json
 import os
 import time
 
-from evals.matrix import expand, done_keys
+from evals.matrix import expand, done_keys, shuffled
 from evals.report import aggregate, render_markdown
 from evals.runner import Deps, DroneHarness, run_cell
 from evals.spec import load_task
@@ -44,6 +44,20 @@ def parse_assignments(spec_str: str) -> list[dict]:
             d[role.strip()] = tier.strip()
         out.append(d)
     return out
+
+
+class InfraFuse:
+    """Trips after `limit` CONSECUTIVE infra failures (post-retry). A persistently
+    sick sim would otherwise convert the rest of a sweep into infra_fail rows —
+    abort loudly instead; resume skips the completed cells."""
+
+    def __init__(self, limit: int = 2) -> None:
+        self.limit = limit
+        self._consecutive = 0
+
+    def update(self, infra_fail: bool) -> bool:
+        self._consecutive = self._consecutive + 1 if infra_fail else 0
+        return self._consecutive >= self.limit
 
 
 async def run_with_retry(coro_fn, attempts: int = 2):
@@ -80,7 +94,7 @@ async def main(args) -> None:
     tjsonl = os.path.join(out_dir, "transcripts.jsonl")
 
     done = done_keys(_load_rows(jsonl))
-    cells = expand(list(specs), assignments, args.k)
+    cells = shuffled(expand(list(specs), assignments, args.k), seed=args.seed)
 
     bridge = RosBridge(node_name="evals_runner")
     world = World()
@@ -90,7 +104,8 @@ async def main(args) -> None:
     deps = Deps(world=world, bridge=bridge, cameras=cameras)
     harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
     try:
-        print(f"evals: {len(cells)} cells -> {jsonl}", flush=True)
+        print(f"evals: {len(cells)} cells (order seed {args.seed}) -> {jsonl}", flush=True)
+        fuse = InfraFuse(limit=2)
         # results.jsonl is the resume index; transcripts.jsonl is written in the same
         # iteration keyed by the same triple, so readers join on it (last wins).
         with open(jsonl, "a") as fh, open(tjsonl, "a") as tfh:
@@ -108,6 +123,11 @@ async def main(args) -> None:
                 lat = f"{res.latency_s:.1f}s" if res.latency_s is not None else "n/a"
                 print(f"{cell.key()}: passed={res.passed} infra_fail={res.infra_fail} "
                       f"steps={res.steps} lat={lat}", flush=True)
+                if fuse.update(res.infra_fail):
+                    print("ABORT: 2 consecutive infra failures — the sim is likely "
+                          "sick. Fix it and re-run the same command (resume skips "
+                          "completed cells).", flush=True)
+                    break
 
         rows = _load_rows(jsonl)
         md = render_markdown(aggregate(rows))
@@ -135,6 +155,8 @@ def _cli() -> None:
                     help="';'-separated role=tier groups, e.g. 'drones=opus;drones=haiku'")
     ap.add_argument("--k", type=int, default=5, help="repeats per cell")
     ap.add_argument("--out", default=None, help="output dir (default evals/out/<ts>)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="cell-order shuffle seed (logged; resume-safe)")
     args = ap.parse_args()
     asyncio.run(main(args))
 

@@ -23,6 +23,8 @@ TIERS = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
+SETTLE_S = 45.0   # post-turn settle allowance, independent of the turn budget
+
 
 def model_for(assignment: dict, role: str) -> str | None:
     tier = assignment.get(role)
@@ -292,10 +294,12 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         async with client:  # fresh session per cell — no context bleed between cells
             trace, crashed, reason = await _drive(
                 client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
-        # Let the last fire-and-forget move finish, bounded by the cell's wall-clock
-        # budget, so `reached` grades where the drone actually ends up (not mid-flight).
+        # Settle gets its OWN allowance, not the tail of the turn budget: sharing one
+        # deadline gave slower-thinking tiers less real-time flight before grading —
+        # a structural bias against exactly the tiers being compared. With blocking
+        # goto/fly this is normally near-instant (a safety net for wait=false moves).
         await _settle(deps.world, deps.bridge, n,
-                      deadline=t_start + spec.budget.wall_clock_s)
+                      deadline=time.monotonic() + SETTLE_S)
     except Exception as e:
         base.infra_fail = True
         base.failure_reason = f"agent run errored: {e}"

@@ -66,3 +66,30 @@ def test_soft_reset_reports_rtl_failure():
     res = asyncio.run(soft_reset([BadSystem()], w, None, 1, timeout_s=0.05, poll_interval_s=0.01))
     assert res.ok is False
     assert "RTL command failed" in res.reason
+
+
+def test_check_home_fails_when_still_airborne():
+    """XY at home but 12m up = the leaky-reset state the 2D-only gate waved through:
+    the next cell's take_off then starts from altitude, not the ground."""
+    from evals.reset import check_home
+
+    class W:
+        spawn_x = 0.0
+        spawn_spacing = 2.0
+        def world_xy(self, bridge, i):
+            return (0.0, 0.0, 12.0)
+
+    r = check_home(W(), None, 1, tol_m=5.0)
+    assert not r.ok and "airborne" in r.reason
+
+
+def test_check_home_passes_when_landed_at_home():
+    from evals.reset import check_home
+
+    class W:
+        spawn_x = 0.0
+        spawn_spacing = 2.0
+        def world_xy(self, bridge, i):
+            return (0.5, -0.5, 0.3)
+
+    assert check_home(W(), None, 1, tol_m=5.0).ok

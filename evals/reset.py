@@ -21,7 +21,7 @@ def home_xy(world, i: int) -> tuple[float, float]:
     return (world.spawn_x, world.spawn_spacing * i)
 
 
-def check_home(world, bridge, n: int, tol_m: float) -> ResetResult:
+def check_home(world, bridge, n: int, tol_m: float, alt_tol_m: float = 2.5) -> ResetResult:
     for i in range(n):
         xy = world.world_xy(bridge, i)
         if xy is None:
@@ -30,6 +30,10 @@ def check_home(world, bridge, n: int, tol_m: float) -> ResetResult:
         d = math.hypot(xy[0] - hx, xy[1] - hy)
         if d > tol_m:
             return ResetResult(False, f"drone_{i} {d:.1f}m from home (tol {tol_m:g})")
+        # 2D-only checking was leaky: a drone hovering 12m over home passed the gate
+        # and the next cell's take_off started from altitude instead of the ground.
+        if len(xy) > 2 and xy[2] > alt_tol_m:
+            return ResetResult(False, f"drone_{i} still airborne at {xy[2]:.1f}m")
     return ResetResult(True, "all drones home")
 
 
