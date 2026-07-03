@@ -92,6 +92,8 @@ async def main(args) -> None:
         for t in missing:
             print(f"pilot: SKIP {t} (no pilot script declared)", flush=True)
         specs = {t: s for t, s in specs.items() if s.pilot}
+        if not specs:
+            raise SystemExit("pilot: every requested task lacks a pilot script — nothing to run")
         assignments = [{"drones": "pilot"}]
     else:
         assignments = parse_assignments(args.assignments)
