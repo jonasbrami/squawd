@@ -210,6 +210,11 @@ flowchart TD
     `look` (live camera frame **fed to Claude's vision** — see below)
   - **report** — `report(message)` (the `DroneAgent.report` method, exposed as a tool)
     → publishes the result to `/swarm/report/drone_<i>` (mirrored to `/swarm/chat`)
+  - **author** — `run_mission(code, timeout)` (the escape hatch when the primitives
+    aren't expressive enough): Claude writes its own async MAVSDK body for a
+    multi-leg or smooth trajectory, with `drone`, `mission_item`, `world_to_geo`,
+    `arm_and_start`, `log` pre-bound; uninterruptible until the mission ends or
+    `timeout` fires
 - System prompt: carry out the task with your tools, then report back; be terse.
 
 #### Claude is the vision model too (multimodal, not just text)
@@ -296,27 +301,39 @@ if the goal isn't met — so the chain terminates instead of ping-ponging.
 
 ---
 
-## Rendering: with GPU vs without
+## Rendering backends — pick your hardware
 
-Camera rendering is the expensive part. The launcher has two paths:
+Camera rendering is the expensive part, so the launcher lets you choose **which
+GPU (or no GPU) renders the cameras** via `RENDER_BACKEND`. All three work today:
 
-| | **GPU (default, `GPU=1`)** | **No GPU (`GPU=0`)** |
-|---|---|---|
-| Renderer | Intel iGPU (Iris Xe, `i915`) via **EGL headless** | Software GL (**llvmpipe**) |
-| Camera POV tiles | ✅ yes, real-time | ❌ disabled (too slow) |
-| Real-time factor (3 cams) | **~1.0** | ~0.004 with cameras → flight only |
-| Drone model | `gz_x500_depth` (has camera) | `gz_x500` (no camera) |
-| Devices passed in | only `/dev/dri/renderD128` + `card1` | none |
+| | **`intel`** (default) | **`nvidia`** | **`cpu`** |
+|---|---|---|---|
+| Renderer | Intel iGPU (Iris Xe, `i915`) via **EGL headless** | NVIDIA dGPU via **EGL headless** (`--gpus all`) | Software GL (**llvmpipe**) |
+| Camera POV tiles | ✅ real-time | ✅ real-time, most headroom | ❌ disabled (sim can't even ready) |
+| Drone model | `gz_x500_depth` (camera) | `gz_x500_depth` (camera) | `gz_x500` (no camera) |
+| Needs | `/dev/dri` (out of the box) | `nvidia-container-toolkit` + driver | nothing |
+| Use it when | the everyday default | pushing near the capacity ceiling | flight + chat only, no cameras |
+
+How to select (see [How to run](#hardware--resolution-knobs) for full examples):
+
+```bash
+RENDER_BACKEND=intel  ./scripts/run_swarm_demo.sh 3   # default; GPU=1 is an alias
+RENDER_BACKEND=nvidia ./scripts/run_swarm_demo.sh 3   # dGPU (auto-adds --gpus all)
+RENDER_BACKEND=cpu    ./scripts/run_swarm_demo.sh 3   # software GL; GPU=0 is an alias
+```
 
 Notes:
-- Only **`renderD128`** is exposed to the container on purpose: if Mesa can see an
-  NVIDIA node with no Mesa driver, `ogre2` segfaults. Intel iGPU → EGL is the
-  reliable headless path here.
+- **Both GPUs cap at the same drone count** on a given box — the high-end limiter
+  is single-thread Gazebo physics, not the renderer. The dGPU's win is *graceful
+  degradation* near the limit, not a higher count. Measured numbers + how to
+  re-benchmark your own hardware: **[`docs/benchmarks/RESULTS.md`](docs/benchmarks/RESULTS.md)**.
+- **NVIDIA** needs the glvnd EGL vendor ICD, which `--gpus all` does *not* create;
+  `swarm_sim.sh` writes it in-container (idempotent). Background:
+  [`docs/nvidia-render-investigation.md`](docs/nvidia-render-investigation.md).
+- **`cpu`/llvmpipe is flight-only** — software camera render is too slow for the
+  sim to reach "ready," so cameras are disabled (`gz_x500`, no camera model).
 - Gazebo always runs **server-only** (`HEADLESS=1`) — no Qt GUI. The GUI aborts
   under offscreen Qt and would take down the gz-launching PX4 instance.
-- **NVIDIA dGPU** is a future toggle (install `nvidia-container-toolkit`, run with
-  `--gpus all`) for larger/faster feeds. Not required; the iGPU holds 3×640×360 at
-  real time.
 
 ---
 
@@ -337,7 +354,7 @@ docker build -f docker/Dockerfile.swarm -t squawd:dev .
 
 ### 2. Launch the swarm
 ```bash
-# 3 drones, baylands world, GPU cameras (default)
+# 3 drones, baylands world, Intel iGPU cameras (all defaults)
 ./scripts/run_swarm_demo.sh 3
 
 # more drones
@@ -345,12 +362,38 @@ docker build -f docker/Dockerfile.swarm -t squawd:dev .
 
 # procedural building world (adds building obstacle-scan)
 WORLD=city ./scripts/run_swarm_demo.sh 3
-
-# software rendering, no cameras (flight + chat only, much slower)
-GPU=0 ./scripts/run_swarm_demo.sh 3
 ```
 > First baylands launch downloads ~400MB of Gazebo Fuel terrain/water models
 > (cached in `/tmp/swarm-gz-fuel`, reused after that — needs internet once).
+
+#### Hardware & resolution knobs
+
+The launcher is driven by environment variables — set any combination:
+
+| Var | Values | Default | What it does |
+|-----|--------|---------|--------------|
+| `RENDER_BACKEND` | `intel` · `nvidia` · `cpu` | `intel` | Which GPU (or none) renders cameras — see [Rendering backends](#rendering-backends--pick-your-hardware) |
+| `CAM_W` | px | `640` | Per-drone camera width |
+| `CAM_H` | px | `360` | Per-drone camera height |
+| `CAM_FPS` | Hz | `10` | Per-drone camera frame rate |
+| `WORLD` | `baylands` · `city` | `baylands` | Gazebo world |
+| `GPU` | `1` · `0` | `1` | Legacy alias: `1`→`intel`, `0`→`cpu` (ignored if `RENDER_BACKEND` set) |
+| *(arg 1)* | int | `3` | Number of drones |
+
+```bash
+# 5 drones, 720p cameras on the NVIDIA dGPU
+RENDER_BACKEND=nvidia CAM_W=1280 CAM_H=720 ./scripts/run_swarm_demo.sh 5
+
+# 8 drones, 540p on the Intel iGPU
+RENDER_BACKEND=intel CAM_W=960 CAM_H=540 ./scripts/run_swarm_demo.sh 8
+
+# flight + chat only (no cameras), software render
+RENDER_BACKEND=cpu ./scripts/run_swarm_demo.sh 3
+```
+
+> **How many drones × what resolution can my box hold?** That's exactly what the
+> capacity benchmark answers — see **[`docs/benchmarks/RESULTS.md`](docs/benchmarks/RESULTS.md)**
+> for measured ceilings and a one-command harness to map your own hardware.
 
 Then open **http://localhost:8000** and command the swarm:
 > *"everyone take off and climb to 12m, then spread out and scout"*
@@ -413,6 +456,5 @@ docs/superpowers/           # design specs + plans
   and are self-contained objects, so a per-process entrypoint that constructs a single
   `DroneAgent(i)` (or the `CommanderAgent`) and awaits its `run()` would put a drone's
   agent on its own onboard computer with no protocol change.
-- NVIDIA dGPU path for larger camera feeds.
 - Higher-level behaviors (follow, search patterns) as composable tools.
 ```

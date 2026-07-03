@@ -319,3 +319,97 @@ RENDER_BACKEND=cpu    ./scripts/run_swarm_demo.sh 1   # llvmpipe
   non-deterministic. Always force the ICD filename for a clean per-backend run.
 - The `handleContextCreationFailure` segfault is a *Mesa-grabbing-the-NVIDIA-node*
   symptom, not an NVIDIA limitation; it does not occur on the NVIDIA EGL path.
+
+---
+
+## Integrated swarm path (2026-06-27)
+
+**VERDICT: FIXED.** `RENDER_BACKEND=nvidia ./scripts/run_swarm_demo.sh 1` now
+brings up the full swarm on the RTX 3070 Ti dGPU with a real camera frame and no
+segfault, for both `WORLD=default` and `WORLD=baylands` (the benchmark world).
+
+### Root cause (one sentence)
+
+The `--gpus all` (Option A toolkit) path injects `libEGL_nvidia.so.0` but the
+nvidia-container-toolkit does **not** create the glvnd vendor ICD
+`/usr/share/glvnd/egl_vendor.d/10_nvidia.json`, so the script's
+`__EGL_VENDOR_LIBRARY_FILENAMES=…/10_nvidia.json` pointed at a *non-existent file*
+→ glvnd loaded no NVIDIA ICD → ogre2 null-dereferenced in
+`Ogre2RenderEngine::CreateRenderSystem()` (the reported `Address not mapped to
+object [(nil)]` segfault).
+
+### How it was bisected
+
+Standalone `--gpus all` probe (`nv-probe`, `squawd:dev`) showed:
+- `/dev/dri` is **absent** in the `--gpus all` container (only `/dev/nvidia*`
+  char devs) — so hypothesis #1 (missing DRM render node) looked plausible, BUT…
+- the only EGL ICD present is `50_mesa.json`; there is **no** `10_nvidia.json`
+  anywhere (`find / -name '*nvidia*egl*.json'` empty), and the NVIDIA EGL libs
+  (`libEGL_nvidia.so.0`, `libnvidia-eglcore`, `libGLX_nvidia`) **are** injected.
+- Writing the trivial ICD json (pointing at `libEGL_nvidia.so.0`) and running
+  `gz sim -s -r --headless-rendering camera_sensor.sdf` → **no segfault**, create
+  service live, `nvidia-smi` shows the gz process at 156 MiB `G` on GPU 0 — all
+  **without** adding `/dev/dri` (NVIDIA's EGL enumerates via `/dev/nvidia0`, the
+  `EGL_EXT_device_drm` node is not required for headless ogre2).
+- Deleting the ICD again (env var still pointing at it) reproduced the exact
+  reported crash: `Ogre2RenderEngine::CreateRenderSystem() … Segmentation fault
+  (Address not mapped to object [(nil)])`, `gz exit=139`.
+
+So hypothesis #2 (glvnd has no NVIDIA ICD to enumerate) was the real cause;
+hypothesis #1 (DRI render node) and #3 (caps/lib mismatch) were **not** the
+blocker — `graphics` caps already inject the libs, and `/dev/dri` is unnecessary.
+
+### The fix (unified diff — `sim/launch/swarm_sim.sh`, `nvidia)` case)
+
+```diff
+   nvidia)
+     unset LIBGL_ALWAYS_SOFTWARE
+     # ogre2 must use NVIDIA's EGL, never Mesa: force the glvnd vendor ICD and
+     # make sure no Mesa driver override is set.
+     unset MESA_LOADER_DRIVER_OVERRIDE
+-    export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
++    NV_ICD="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
++    # The nvidia-container-toolkit (`--gpus all`, caps incl. graphics) injects
++    # libEGL_nvidia.so.0 but does NOT create the glvnd vendor ICD json. Without it
++    # __EGL_VENDOR_LIBRARY_FILENAMES points at a missing file -> glvnd loads no
++    # NVIDIA ICD -> ogre2 null-derefs in Ogre2RenderEngine::CreateRenderSystem
++    # (the reported segfault). Create it here, idempotently, when the NVIDIA EGL
++    # lib is actually present.
++    if [ ! -f "$NV_ICD" ] && ls /usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0 >/dev/null 2>&1; then
++      mkdir -p "$(dirname "$NV_ICD")"
++      printf '{\n  "file_format_version":"1.0.0",\n  "ICD":{"library_path":"libEGL_nvidia.so.0"}\n}\n' > "$NV_ICD"
++    fi
++    export __EGL_VENDOR_LIBRARY_FILENAMES="$NV_ICD"
+     export QT_QPA_PLATFORM=offscreen
+     # NVIDIA EGL needs the explicit headless-rendering surface or ogre2 segfaults
+     # in CreateRenderSystem (the Mesa/iris path tolerates its absence).
+     GZ_HR="--headless-rendering"
+     ;;
+```
+
+`scripts/run_swarm_demo.sh` was left unchanged — the `--gpus all` args (no
+`/dev/dri`, no bind-mount) are correct; the only missing piece was the ICD file,
+which is now created in-container by `swarm_sim.sh`. The `intel` and `cpu` paths
+are untouched.
+
+### Proof
+
+```
+RENDER_BACKEND=nvidia WORLD=default  ./scripts/run_swarm_demo.sh 1  -> "sim ready (1/1 drones)."
+RENDER_BACKEND=nvidia WORLD=baylands ./scripts/run_swarm_demo.sh 1  -> "sim ready (1/1 drones)."
+docker exec swarm-multi grep -i segfault /tmp/gz.log                -> NO SEGFAULT
+camera topic /world/<w>/.../IMX214/image                            -> non-black frame (0xDA bytes)
+nvidia-smi:
+  GPU 0 ... <pid> G  .../gz/worlds/default.sdf   285MiB   (empty world)
+  GPU 0 ... <pid> G  .../gz/worlds/baylands.sdf   891MiB  (benchmark world)
+```
+
+The `G` (graphics) type on GPU 0 confirms the camera pipeline renders on the dGPU.
+
+### Notes
+
+- `--gpus all` does not need `/dev/dri/renderD129`/`card2`; NVIDIA EGL enumerates
+  the device from `/dev/nvidia0`. (Option B exposed `/dev/dri/card2` only because
+  it had no toolkit; it is not required on the toolkit path.)
+- Only one-line piece of plumbing was wrong; everything else in the
+  already-committed `RENDER_BACKEND=nvidia` wiring was correct.

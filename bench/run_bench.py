@@ -23,6 +23,14 @@ WARMUP = "everyone take off, climb to 20 m, and orbit"
 WORLD = "baylands"
 OBS = "http://localhost:8000"
 
+# Demand ladder for --quick "best you can get": (drones, resolution), strictly
+# increasing in drones x pixels. quick_best seeds mid-ladder, climbs on PASS,
+# descends on FAIL, and reports the highest passing rung as the platform headline.
+QUICK_LADDER = [(1, "320x180"), (2, "320x180"), (2, "640x360"), (4, "640x360"),
+                (4, "960x540"), (6, "960x540"), (6, "1280x720"),
+                (8, "1280x720"), (8, "1920x1080")]
+QUICK_SEED_IDX = 2          # (2, 640x360)
+
 
 # ---- pure helpers (unit-tested) ----
 def slice_samples(samples: list[dict], t0: float, t1: float) -> list[dict]:
@@ -196,10 +204,160 @@ def run_sweep(backends, resolutions, n_cap, settle, measure, outdir, cam_fps=10)
     return rows
 
 
+def quick_best(backends, world, settle, measure, outdir, cam_fps, budget_s,
+               seed_idx=QUICK_SEED_IDX, run_cap=4):
+    """Time-boxed 'best you can get' per platform. For each backend, evaluate the
+    seed rung of QUICK_LADDER, then climb on PASS / descend on FAIL, bounded by a
+    per-backend slice of the total wall-clock budget and a per-backend run cap.
+    Reports the highest passing rung as that platform's headline. Writes REPORT.md."""
+    os.makedirs(outdir, exist_ok=True)
+    runs_csv = os.path.join(outdir, "runs.csv")
+    with open(runs_csv, "w") as f:
+        f.write("backend,resolution,n,fps_min,rtf,alive,limiting,verdict\n")
+    start = time.time()
+    deadline = start + budget_s
+    per_backend = budget_s / max(1, len(backends))
+    summary = {}
+    for bi, backend in enumerate(backends):
+        b_deadline = min(deadline, start + per_backend * (bi + 1))
+        tested = {}
+
+        def evaluate(idx, _b=backend, _t=tested):
+            if idx in _t:
+                return _t[idx]
+            n, res = QUICK_LADDER[idx]
+            r = run_with_retry(lambda: run_one(_b, res, n, settle, measure, outdir, cam_fps))
+            _t[idx] = r
+            with open(os.path.join(outdir, f"run-{_b}-{res}-{n}.json"), "w") as jf:
+                json.dump(r, jf, indent=2)
+            v = r["verdict"]
+            fsum = r.get("fps", {})
+            with open(runs_csv, "a") as cf:
+                cf.write(f"{_b},{res},{n},{fsum.get('min',0):.2f},"
+                         f"{r.get('rtf',0):.2f},{r.get('alive',0)},"
+                         f"{r.get('limiting','')},{'PASS' if v['pass'] else 'FAIL'}\n")
+            print(f"[quick] {_b} N={n} {res} -> {'PASS' if v['pass'] else 'FAIL'} "
+                  f"fps_min={fsum.get('min',0):.1f} rtf={r.get('rtf',0):.2f} "
+                  f"alive={r.get('alive',0)}/{n} "
+                  f"({'; '.join(v.get('reasons', []) or ['ok'])})", flush=True)
+            return r
+
+        def passes(idx):
+            return evaluate(idx)["verdict"]["pass"]
+
+        runs = 0
+        best_idx = None
+        i = min(seed_idx, len(QUICK_LADDER) - 1)
+        if time.time() < b_deadline and runs < run_cap:
+            seed_pass = passes(i)
+            runs += 1
+            if seed_pass:
+                best_idx = i
+                while i + 1 < len(QUICK_LADDER) and runs < run_cap and time.time() < b_deadline:
+                    i += 1
+                    runs += 1
+                    if passes(i):
+                        best_idx = i
+                    else:
+                        break
+            else:
+                while i - 1 >= 0 and runs < run_cap and time.time() < b_deadline:
+                    i -= 1
+                    runs += 1
+                    if passes(i):
+                        best_idx = i
+                        break
+        best = None
+        if best_idx is not None:
+            r = tested[best_idx]
+            n, res = QUICK_LADDER[best_idx]
+            best = {"n": n, "res": res, "fps_min": r.get("fps", {}).get("min"),
+                    "rtf": r.get("rtf"), "alive": r.get("alive"),
+                    "limiting": r.get("limiting")}
+        summary[backend] = {"best": best, "tested": {k: tested[k] for k in sorted(tested)}}
+        print(f"[quick] {backend} headline: "
+              f"{best['n']} drones @ {best['res']}" if best else
+              f"[quick] {backend} headline: none passed within budget", flush=True)
+        # incremental report after every backend so a later slow/broken backend
+        # (or the outer timeout) can never lose the platforms already measured.
+        write_quick_report(summary, outdir, world, budget_s, start, time.time(),
+                           settle, measure, cam_fps)
+    write_quick_report(summary, outdir, world, budget_s, start, time.time(),
+                       settle, measure, cam_fps)
+    return summary
+
+
+def write_quick_report(summary, outdir, world, budget_s, start, end,
+                       settle, measure, cam_fps):
+    """Render the 'best you can get per platform' results to REPORT.md."""
+    NAMES = {"cpu": "CPU (llvmpipe software GL)", "intel": "Intel iGPU (Iris Xe, EGL)",
+             "nvidia": "NVIDIA dGPU (RTX 3070 Ti, EGL)"}
+    L = []
+    L.append("# Swarm capacity — best per platform (quick test)\n")
+    L.append(f"_Generated {time.strftime('%Y-%m-%d %H:%M:%S')} · world `{world}` · "
+             f"full-stack live agents · wall-clock {end - start:.0f}s of {budget_s:.0f}s budget_\n")
+    L.append("**Pass gate:** min per-drone delivered camera FPS ≥ "
+             f"{0.9 * cam_fps:.1f} (0.9×{cam_fps} Hz) **AND** Gazebo RTF ≥ 0.90 **AND** "
+             "all N drones armed/alive at window end. Settle "
+             f"{settle:.0f}s + measure {measure:.0f}s per run.\n")
+    L.append("\n## Headline — best sustained config per platform\n")
+    L.append("| Platform | Best sustained | min FPS | RTF | limiting |")
+    L.append("|---|---|---|---|---|")
+    for b, s in summary.items():
+        best = s["best"]
+        if best:
+            L.append(f"| {NAMES.get(b, b)} | **{best['n']} drones @ {best['res']}** | "
+                     f"{best['fps_min']:.1f} | {best['rtf']:.2f} | {best['limiting']} |")
+        else:
+            L.append(f"| {NAMES.get(b, b)} | _none passed within budget_ | — | — | — |")
+    L.append("\n## All rungs tested (per platform)\n")
+    for b, s in summary.items():
+        L.append(f"### {NAMES.get(b, b)}\n")
+        L.append("| drones | resolution | min FPS | RTF | alive | limiting | verdict | reasons |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        tested = s["tested"]
+        if not tested:
+            L.append("| _no runs (budget exhausted before this platform)_ |||||||| ")
+        for idx in tested:
+            r = tested[idx]
+            n, res = QUICK_LADDER[idx]
+            v = r.get("verdict", {})
+            fsum = r.get("fps", {})
+            reasons = "; ".join(v.get("reasons", []) or (["ok"] if v.get("pass") else []))
+            L.append(f"| {n} | {res} | {fsum.get('min', 0):.1f} | {r.get('rtf', 0):.2f} | "
+                     f"{r.get('alive', 0)}/{n} | {r.get('limiting', '—')} | "
+                     f"{'PASS' if v.get('pass') else 'FAIL'} | {reasons} |")
+        L.append("")
+    L.append("## Notes\n")
+    L.append(f"- World `{world}`; bring-up dominates each run's wall-clock, so the "
+             "ladder is climbed adaptively (seed → climb on PASS / descend on FAIL) "
+             "rather than exhaustively, within the time budget.")
+    L.append("- A FAIL with `limiting=none` and low RTF means the sim is single-thread/"
+             "physics-bound (Gazebo), not starved of a poolable resource — see "
+             "`bench/README.md`. Raw per-run headroom is in `samples-*.jsonl`.")
+    L.append("- Full per-run detail: `run-*.json`; one-line-per-run: `runs.csv`.")
+    path = os.path.join(outdir, "REPORT.md")
+    with open(path, "w") as f:
+        f.write("\n".join(L) + "\n")
+    print(f"[quick] report written: {path}", flush=True)
+
+
 def main():
+    global WORLD, QUICK_LADDER  # reassignable module globals (env/_rtf + ladder)
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true",
                     help="fixed N=8, sweep resolutions per backend (harness validation)")
+    ap.add_argument("--quick", action="store_true",
+                    help="time-boxed 'best you can get' per platform via the demand ladder")
+    ap.add_argument("--budget", type=float, default=1700.0,
+                    help="--quick total wall-clock budget in seconds (default 1700 ~= 28min)")
+    ap.add_argument("--ladder", default=None,
+                    help="--quick demand ladder, e.g. '6x960x540,8x1280x720,...' (NxWxH, increasing demand)")
+    ap.add_argument("--run-cap", type=int, default=4,
+                    help="--quick max rungs climbed per platform (default 4)")
+    ap.add_argument("--seed-idx", type=int, default=QUICK_SEED_IDX,
+                    help="--quick ladder index to start each platform's climb from")
+    ap.add_argument("--world", default=WORLD, help="Gazebo world (default baylands)")
     ap.add_argument("--backends", default=",".join(DEFAULT_BACKENDS))
     ap.add_argument("--resolutions", default=",".join(DEFAULT_RES))
     ap.add_argument("--n-cap", type=int, default=32)
@@ -208,11 +366,19 @@ def main():
     ap.add_argument("--cam-fps", type=int, default=10)
     ap.add_argument("--out", default=os.path.join("docs", "benchmarks", time.strftime("%Y%m%dT%H%M%S")))
     args = ap.parse_args()
+    WORLD = args.world          # run_one's env + _rtf both read this module global
+    if args.ladder:             # override the demand ladder, e.g. "6x960x540,8x1280x720"
+        QUICK_LADDER = [(int(p.split("x")[0]), f"{p.split('x')[1]}x{p.split('x')[2]}")
+                        for p in args.ladder.split(",")]
     backends = args.backends.split(",")
     resolutions = args.resolutions.split(",")
     os.makedirs(os.path.join(ROOT, args.out), exist_ok=True)
     outdir = os.path.join(ROOT, args.out)
 
+    if args.quick:
+        quick_best(backends, args.world, args.settle, args.measure, outdir,
+                   args.cam_fps, args.budget, seed_idx=args.seed_idx, run_cap=args.run_cap)
+        return
     if args.smoke:
         # one fixed N across the resolution sweep, no knee search
         for backend in backends:
