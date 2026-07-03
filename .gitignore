@@ -8,3 +8,5 @@ flight_logs/
 .screen99.png
 .cam_preview.jpg
 PX4-Autopilot/
+*.egg-info/
+uv.lock
