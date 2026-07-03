@@ -134,10 +134,8 @@ Full-visibility results (K=2, distinct failure modes per tier):
 | o1_detour | 1/2 | 0/2 | 1/2 |
 | o2_slalom | 1/2 | 0/2 | 0/2 |
 | o3_inspect | 2/2 | 1/2 | 0/2 |
-| c4_obstacle_run | 2/2 | 2/2* | 1/2 |
+| c4_obstacle_run | 2/2 | 0/2 | 1/2 |
 | **total** | **6/8** | **1/8** | **2/7** |
-
-(*sonnet c4 0/2 — corrected: wandered 483-718m vs the 240m budget)
 
 - **opus 6/8, zero collisions**: both misses are step-budget overruns, not
   safety. Obstacle navigation with full geometry is basically solved for opus.
