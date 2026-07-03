@@ -38,7 +38,7 @@ MOVERS = [
     {"name": "mov_1", "kind": "target", "z": 1.2,
      "shape": {"w": 1.8, "d": 1.0, "h": 1.2},
      "traj": {"type": "circle", "center": [70.0, -100.0], "radius_m": 35.0,
-              "speed_mps": 4.0}},
+              "speed_mps": 3.5}},
     {"name": "mov_2", "kind": "obstacle", "z": 8.0,
      "shape": {"w": 4.0, "d": 4.0, "h": 4.0},
      "traj": {"type": "line", "p0": [110.0, -10.0], "p1": [110.0, 30.0],

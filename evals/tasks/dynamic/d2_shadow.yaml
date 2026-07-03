@@ -1,9 +1,11 @@
-# L2 shadow the loop: 4 m/s rover on a 35 m circle, stay within 12 m for 45
-# CONTIGUOUS seconds. Calibrated against the SCRIPTED naive chaser at 12 m/s
-# legs (~2.5 s overhead each): its steady-state gap ~= 4*(gap/12 + 2.5) = 15 m
-# — outside tolerance, dwell never accumulates (gate-verified) — while a one-
-# leg-ahead extrapolation parks inside. No static point dwells: the rover
-# crosses any fixed 12 m disc on its path in ~6 s.
+# L2 shadow the loop: 3.5 m/s rover on a 35 m circle, stay within 15 m for 45
+# CONTIGUOUS seconds. Calibration against MEASURED goto physics (~4 s fixed
+# overhead per blocking leg + flight time): the naive tail-chase's steady-state
+# gap is ~4v/(1-v/12) ~= 20 m — locked outside tolerance — while a one-cycle-
+# ahead leapfrog peaks at ~14 m between hops and accumulates the dwell. At
+# 4 m/s NO goto-cadence strategy can hold (the reference orbited 15 m behind
+# forever), which is racer-rung difficulty, not L2. No static point dwells:
+# the rover crosses any fixed 15 m disc on its path in ~9 s.
 id: d2_shadow
 target_layer: single_drone
 suite: dynamic
@@ -15,17 +17,17 @@ setup:
   seed_objects: []
 prompt: "A survey rover (contact mov_1) is driving a repeating route around
   the plaza southeast of you. Find it with scan, work out where it is heading,
-  and shadow it: stay within 12 m of it for at least 45 continuous seconds.
+  and shadow it: stay within 15 m of it for at least 45 continuous seconds.
   Aiming where it will be beats chasing where it was."
 budget: {wall_clock_s: 240, max_steps: 30}
 oracle:
   - {check: alive}
-  - {check: dwell_moving, mover: mov_1, tol_m: 12, hold_s: 45}
+  - {check: dwell_moving, mover: mov_1, tol_m: 15, hold_s: 45}
   - {check: within_step_budget, max_steps: 30}
 pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: set_speed, args: {speed: 12}}
-  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 25, lead_s: 5, alt: 12}}
+  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 25, lead_s: 8, alt: 12}}
 null_pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: set_speed, args: {speed: 12}}

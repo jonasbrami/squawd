@@ -44,20 +44,26 @@ async def naive_chaser(ops, args):
 
 
 async def lead_chaser(ops, args):
-    """Chase with a lead: goto(current + velocity x lead_s), velocity finite-
-    differenced from consecutive rounds using gz sim time. The reference that
-    beats naive_chaser on loop-shadowing tasks."""
+    """Chase with a lead: goto(current + velocity x lead), velocity finite-
+    differenced from consecutive rounds using gz sim time. The lead ADAPTS to
+    the measured round cadence — a blocking goto costs ~4s of fixed overhead
+    (arrival detection, yaw, accel) on top of flight time, so a hardcoded lead
+    tuned for fast legs perpetually trails the mover (observed live: a 5s lead
+    at 7.5s cycles orbited 15m behind a 4 m/s rover forever)."""
     alt = float(args.get("alt", 12.0))
-    lead_s = float(args.get("lead_s", 12.0))
+    lead_s = float(args.get("lead_s", 8.0))
     prev, prev_t = None, None
     for _ in range(int(args.get("rounds", 8))):
         e, n = _mover_xy(ops, args["mover"])
         t = ops.gzposes.sim_time()
         ve = vn = 0.0
+        lead = lead_s
         if prev is not None and t > prev_t:
-            ve, vn = (e - prev[0]) / (t - prev_t), (n - prev[1]) / (t - prev_t)
+            dt = t - prev_t
+            ve, vn = (e - prev[0]) / dt, (n - prev[1]) / dt
+            lead = max(lead_s, dt * 1.15)
         prev, prev_t = (e, n), t
-        te, tn = e + ve * lead_s, n + vn * lead_s
+        te, tn = e + ve * lead, n + vn * lead
         res = await ops.goto(east=te, north=tn, up=alt)
         yield ("goto", {"east": te, "north": tn, "up": alt}, res)
 
