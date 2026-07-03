@@ -8,5 +8,13 @@ flight_logs/
 .screen99.png
 .cam_preview.jpg
 PX4-Autopilot/
+
+# Packaging / build artifacts (uv.lock is committed — do not ignore)
 *.egg-info/
-uv.lock
+*.egg
+build/
+dist/
+
+# Local agent / tooling state
+.claude/
+.superpowers/
