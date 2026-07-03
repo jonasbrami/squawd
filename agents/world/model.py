@@ -40,6 +40,13 @@ class World:
         return self._cfg.get("buildings", [])
 
     @property
+    def movers(self) -> list[dict]:
+        """Scripted-mover specs (dynamic worlds only): name/kind/shape/z/traj.
+        Live positions come from core.GzPoses, not from here — this is the
+        authoring-time ground truth (trajectory params) the oracle cross-checks."""
+        return self._cfg.get("movers", [])
+
+    @property
     def spawn_x(self) -> float:
         return self._cfg.get("spawn_x", 0.0)
 

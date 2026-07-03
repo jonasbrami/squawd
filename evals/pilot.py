@@ -56,7 +56,8 @@ def pilot_client_builder(harness, deps):
     async def ops_provider():
         from agents.flight.ops import FlightOps
         system = await harness.system()
-        return FlightOps(system, deps.world, deps.bridge, 0, 1)
+        return FlightOps(system, deps.world, deps.bridge, 0, 1,
+                         gzposes=deps.gzposes)
 
     def build(model):
         return ScriptedClient(ops_provider, getattr(harness, "pilot_script", []))

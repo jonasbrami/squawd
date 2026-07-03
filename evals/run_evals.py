@@ -109,8 +109,13 @@ async def main(args) -> None:
     world = World()
     n_max = max(s.setup.n_drones for s in specs.values())
     cameras = GzCameras(n_max)
+    gzposes = None
+    if world.movers:
+        from agents.core.gzposes import GzPoses
+        gz_world = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
+        gzposes = GzPoses(gz_world, [m["name"] for m in world.movers])
     bridge.start()
-    deps = Deps(world=world, bridge=bridge, cameras=cameras)
+    deps = Deps(world=world, bridge=bridge, cameras=cameras, gzposes=gzposes)
     harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
     if args.pilot:
         from evals.pilot import pilot_client_builder

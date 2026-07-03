@@ -19,9 +19,10 @@ def _err(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
-def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, model=None):
+def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, model=None,
+                       gzposes=None):
     name = f"drone_{i}"
-    ops = FlightOps(drone, world, bridge, i, n)
+    ops = FlightOps(drone, world, bridge, i, n, gzposes=gzposes)
 
     @tool("take_off", "Arm and take off (default 10m). Returns once airborne at altitude.",
           {"altitude": {"type": "number"}})

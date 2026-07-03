@@ -149,6 +149,7 @@ class Deps:
     world: object
     bridge: object
     cameras: object
+    gzposes: object = None   # live mover positions + phase anchor (dynamic worlds)
 
 
 class DroneHarness:
@@ -199,7 +200,8 @@ class DroneHarness:
         from agents.flight import make_drone_options
         opts = make_drone_options(0, self._agent._system, self._deps.world,
                                   self._deps.bridge, 1, self._deps.cameras,
-                                  report=lambda _m: None, env=None, model=model)
+                                  report=lambda _m: None, env=None, model=model,
+                                  gzposes=self._deps.gzposes)
         return ClaudeSDKClient(options=opts)
 
 
@@ -292,9 +294,13 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         base.infra_fail = True
         base.failure_reason = f"reset unclean: {rr.reason}"
         return base
+    if deps.gzposes is not None:
+        # every repeat starts at trajectory phase 0 — unanchored repeats sample
+        # random mover phases and confound pass rates across K
+        deps.gzposes.anchor()
 
     sampler = Sampler(deps.world, deps.bridge, n, spec.objects_map(),
-                      geofence_m=300.0)
+                      geofence_m=300.0, gzposes=deps.gzposes)
     samp_task = asyncio.create_task(sampler.run())
     t_start = time.monotonic()
     t0_epoch = time.time()

@@ -60,12 +60,13 @@ def _result_text(logs, body):
 
 
 class FlightOps:
-    def __init__(self, drone, world, bridge, i: int, n: int) -> None:
+    def __init__(self, drone, world, bridge, i: int, n: int, gzposes=None) -> None:
         self.drone = drone
         self.world = world
         self.bridge = bridge
         self.i = i
         self.n = n
+        self.gzposes = gzposes       # live mover positions (dynamic worlds), or None
         self.name = f"drone_{i}"
         self._speed = 5.0            # last commanded cruise speed (PX4 default)
 
@@ -243,7 +244,9 @@ class FlightOps:
         return f"{self.name} landed"
 
     def scan(self) -> str:
-        return perception.scan_text(self.world, self.bridge, self.i, self.n)
+        movers = self.gzposes.poses() if self.gzposes is not None else None
+        return perception.scan_text(self.world, self.bridge, self.i, self.n,
+                                    mover_poses=movers)
 
     async def _halt(self) -> None:
         """Stop the vehicle after a cancelled/timed-out mission: cancelling the
