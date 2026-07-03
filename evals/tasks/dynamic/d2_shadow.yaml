@@ -1,8 +1,9 @@
-# L2 shadow the loop: 2.5 m/s rover on a 35 m circle, stay within 12 m for 45
-# CONTIGUOUS seconds. Calibrated so the naive tail-chase (goto its current
-# position, repeat) oscillates at the tolerance edge and never holds the dwell
-# — extrapolating one leg ahead does. k = v*T_cycle/R ~ 1.2. No static point
-# dwells: the rover crosses any fixed 12 m disc on its path in ~10 s.
+# L2 shadow the loop: 4 m/s rover on a 35 m circle, stay within 12 m for 45
+# CONTIGUOUS seconds. Calibrated against the SCRIPTED naive chaser at 12 m/s
+# legs (~2.5 s overhead each): its steady-state gap ~= 4*(gap/12 + 2.5) = 15 m
+# — outside tolerance, dwell never accumulates (gate-verified) — while a one-
+# leg-ahead extrapolation parks inside. No static point dwells: the rover
+# crosses any fixed 12 m disc on its path in ~6 s.
 id: d2_shadow
 target_layer: single_drone
 suite: dynamic

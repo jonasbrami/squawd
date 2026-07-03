@@ -94,7 +94,11 @@ async def lead_intercept(ops, args):
                             (-b + math.sqrt(disc)) / (2 * a)))
             t_hit = next((r for r in roots if r > 0), None)
     t_hit = t_hit if t_hit is not None else c ** 0.5 / max(speed, 1e-6)
-    te, tn = e2 + ve * t_hit, n2 + vn * t_hit
+    # Aim a little PAST the meeting point along the mover's course: the drone
+    # doesn't fly at cruise instantly (accel lag cost a clean solve a 14.6m
+    # miss live), and arriving early to let the target come to you is robust.
+    margin = float(args.get("lead_margin_s", 2.5))
+    te, tn = e2 + ve * (t_hit + margin), n2 + vn * (t_hit + margin)
     res = await ops.goto(east=te, north=tn, up=alt)
     yield ("goto", {"east": te, "north": tn, "up": alt}, res)
 

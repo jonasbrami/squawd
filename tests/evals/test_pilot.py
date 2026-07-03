@@ -179,7 +179,8 @@ def test_lead_intercept_solves_head_on_meeting():
     from evals.pilot import lead_intercept
 
     # mover at x=100 flying WEST at 2 m/s (100 -> 90 over the 5s observation);
-    # drone at origin, speed 8 -> meet at x = 90 - 2t = 8t  => t = 9, x = 72
+    # drone at origin, speed 8 -> meet at x = 90 - 2t = 8t => t = 9, x = 72,
+    # minus the 2.5s accel-lag margin along the course -> aim x = 67
     gz = FakeGz([(100, 0), (90, 0)])
     ops = BehaviorOps(gz)
     asyncio.run(
@@ -187,7 +188,7 @@ def test_lead_intercept_solves_head_on_meeting():
                                     "obs_s": 0.01, "alt": 12})))
     assert ops.calls[0] == ("set_speed", 8)
     tool, east, north = ops.calls[1]
-    assert tool == "goto" and abs(east - 72.0) < 1.0 and abs(north) < 1e-6
+    assert tool == "goto" and abs(east - 67.0) < 1.0 and abs(north) < 1e-6
 
 
 def test_await_gap_hovers_until_receding_past_threshold():
