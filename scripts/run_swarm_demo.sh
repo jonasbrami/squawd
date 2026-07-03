@@ -17,6 +17,17 @@ N="${1:-3}"
 WORLD="${WORLD:-baylands}"
 IMG="squawd:dev"
 GPU="${GPU:-1}"
+# RENDER_BACKEND: cpu | intel | nvidia. Default mirrors old behaviour: GPU=1 -> intel.
+if [ -z "${RENDER_BACKEND:-}" ]; then
+  if [ "$GPU" = 1 ]; then
+    RENDER_BACKEND=intel
+  else
+    RENDER_BACKEND=cpu
+  fi
+fi
+CAM_W="${CAM_W:-640}"
+CAM_H="${CAM_H:-360}"
+CAM_FPS="${CAM_FPS:-10}"
 RENDER_GID="$(getent group render | cut -d: -f3 || echo 992)"
 VIDEO_GID="$(getent group video | cut -d: -f3 || echo 44)"
 
@@ -34,13 +45,24 @@ cp "$HOME/.claude/.credentials.json" "$CRED/" 2>/dev/null || {
 printf '{}' > "$CRED.json"
 
 GPU_ARGS=()
-if [ "$GPU" = "1" ]; then
-  GPU_ARGS=(--device /dev/dri/renderD128 --device /dev/dri/card1
-            --group-add "$RENDER_GID" --group-add "$VIDEO_GID"
-            -e GPU_RENDER=1 -e PX4_MODEL=gz_x500_depth)
-else
-  GPU_ARGS=(-e PX4_MODEL=gz_x500)
-fi
+case "$RENDER_BACKEND" in
+  intel)
+    GPU_ARGS=(--device /dev/dri/renderD128 --device /dev/dri/card1
+              --group-add "$RENDER_GID" --group-add "$VIDEO_GID"
+              -e RENDER_BACKEND=intel -e PX4_MODEL=gz_x500_depth)
+    ;;
+  nvidia)
+    GPU_ARGS=(--gpus all
+              -e NVIDIA_VISIBLE_DEVICES=all
+              -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility,display
+              -e RENDER_BACKEND=nvidia
+              -e __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+              -e PX4_MODEL=gz_x500_depth)
+    ;;
+  *)  # cpu
+    GPU_ARGS=(-e RENDER_BACKEND=cpu -e PX4_MODEL=gz_x500)
+    ;;
+esac
 
 echo "Launching swarm-multi (N=$N, world=$WORLD, GPU=$GPU)…"
 docker rm -f swarm-multi >/dev/null 2>&1 || true
@@ -51,6 +73,7 @@ docker run -d --name swarm-multi -p 8000:8000 \
   -v "$PWD:/workspace" -v "$CRED:/root/.claude" -v "$CRED.json:/root/.claude.json" \
   -v "$FUEL:/root/.gz/fuel" \
   -e SWARM_N="$N" -e PX4_GZ_WORLD="$WORLD" -e GZ_WORLD="$WORLD" \
+  -e CAM_W="$CAM_W" -e CAM_H="$CAM_H" -e CAM_FPS="$CAM_FPS" \
   "$IMG" bash -lc 'sim/launch/swarm_sim.sh' >/dev/null
 
 # Baylands' Fuel download (first run) + gz load + N staggered spawns is slow; give

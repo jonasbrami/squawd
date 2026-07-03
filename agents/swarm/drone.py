@@ -22,7 +22,7 @@ from agents.flight import make_drone_options
 class DroneAgent:
     """drone_<i>: its MAVSDK System + cmd channel + onboard Claude client + loop."""
 
-    def __init__(self, i: int, world, bridge, n: int, cameras, env=None) -> None:
+    def __init__(self, i: int, world, bridge, n: int, cameras, env=None, model=None) -> None:
         self.i = i
         self.name = f"drone_{i}"
         self._bridge = bridge
@@ -34,7 +34,7 @@ class DroneAgent:
         # start with a digit, so drone_<i>, not <i>).
         self._cmd = TopicLog(bridge, f"/swarm/cmd/drone_{i}", String, CHAT_QOS)
         self.client = ClaudeSDKClient(options=make_drone_options(
-            i, self._system, world, bridge, n, cameras, self.report, env))
+            i, self._system, world, bridge, n, cameras, self.report, env, model))
         self._seen = 0
 
     def report(self, message: str) -> None:

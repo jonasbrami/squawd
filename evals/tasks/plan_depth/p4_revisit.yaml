@@ -1,0 +1,25 @@
+# Sequencing with a revisit + per-leg altitude change + terminal dwell: five
+# simultaneous constraints. The chained ordering check supports the a-revisit
+# (each waypoint matched strictly after the previous). Expected haiku fail
+# (drops the revisit or the altitude change), sonnet mostly pass, opus pass.
+id: p4_revisit
+target_layer: single_drone
+suite: plan_depth
+difficulty: {plan_depth: 3, coordination: 1, ambiguity: 1, spatial: 3}
+setup:
+  world: default
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: a, east: 80, north: 0}
+    - {id: b, east: 80, north: 80}
+    - {id: c, east: 0, north: 80}
+prompt: "Take off to 20 m. Fly to a (east 80, north 0), then b (east 80, north 80), then return to a, all at 20 m. Then descend to 10 m and fly to c (east 0, north 80). Hold over c for 10 seconds at 10 m."
+budget: {wall_clock_s: 320, max_steps: 16}
+oracle:
+  - {check: alive}
+  - {check: ordering, sequence: [a, b, a, c], tol_m: 12}
+  - {check: altitude, target: b, min_m: 18, max_m: 22}
+  - {check: altitude, target: c, min_m: 8, max_m: 12}
+  - {check: dwell, target: c, tol_m: 12, hold_s: 8}
+  - {check: within_step_budget, max_steps: 16}

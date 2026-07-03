@@ -114,8 +114,8 @@ docker build -f docker/Dockerfile.swarm -t squawd:dev .
 # procedural building world (adds building obstacle-scan)
 WORLD=city ./scripts/run_swarm_demo.sh 3
 
-# software rendering, no cameras (flight + chat only, much slower)
-GPU=0 ./scripts/run_swarm_demo.sh 3
+# pick the render backend: intel iGPU (default) / nvidia dGPU / cpu (no cameras)
+RENDER_BACKEND=nvidia ./scripts/run_swarm_demo.sh 3
 ```
 > First baylands launch downloads ~400MB of Gazebo Fuel terrain/water models
 > (cached in `/tmp/swarm-gz-fuel`, reused after that — needs internet once).
@@ -142,8 +142,9 @@ docker rm -f swarm-multi                          # stop everything
 | `50051 + i` | `mavsdk_server` gRPC for drone *i* |
 | `14540 + i` | PX4 MAVLink (offboard) for drone *i* |
 
-> Camera rendering uses the Intel iGPU by default. GPU vs. software vs. NVIDIA
-> render paths are covered in [docs/rendering.md](docs/rendering.md).
+> Camera rendering uses the Intel iGPU by default; `RENDER_BACKEND=nvidia|cpu`
+> selects the dGPU or software GL. All render paths, resolution knobs, and the
+> measured capacity ceilings are covered in [docs/rendering.md](docs/rendering.md).
 
 ---
 
@@ -184,7 +185,6 @@ docs/                       # architecture, rendering, design specs (see Learn m
   and are self-contained objects, so a per-process entrypoint that constructs a single
   `DroneAgent(i)` (or the `CommanderAgent`) and awaits its `run()` would put a drone's
   agent on its own onboard computer with no protocol change.
-- NVIDIA dGPU path for larger camera feeds (see [docs/rendering.md](docs/rendering.md)).
 - Higher-level behaviors (follow, search patterns) as composable tools.
 
 ---
@@ -194,6 +194,8 @@ docs/                       # architecture, rendering, design specs (see Learn m
 - **[Architecture](docs/architecture.md)** — module map, runtime data flow, the
   data buses + QoS, the poll-based comms model, the vision pipeline, and wake/token
   dynamics.
-- **[Rendering & GPU](docs/rendering.md)** — iGPU / software / NVIDIA render paths
-  and why the launcher is set up the way it is.
+- **[Rendering & GPU](docs/rendering.md)** — the `RENDER_BACKEND` switch
+  (Intel iGPU / NVIDIA dGPU / software GL), resolution knobs, and why the launcher
+  is set up the way it is; measured drone-count ceilings in
+  [docs/benchmarks/RESULTS.md](docs/benchmarks/RESULTS.md).
 - **[Design specs & plans](docs/superpowers/)** — how the system was designed, decision by decision.

@@ -19,7 +19,7 @@ def _err(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
-def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
+def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, model=None):
     name = f"drone_{i}"
     ops = FlightOps(drone, world, bridge, i, n)
 
@@ -32,23 +32,29 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
             return _err(f"{name} takeoff failed: {e}")
 
     @tool("fly", "Fly a relative offset from the current position (metres). Turns to "
-          "face the travel direction so your camera looks where you're going.",
-          {"north": {"type": "number"}, "east": {"type": "number"}, "up": {"type": "number"}})
+          "face the travel direction so your camera looks where you're going. Returns "
+          "when you ARRIVE; set wait=false to return immediately and act mid-flight.",
+          {"north": {"type": "number"}, "east": {"type": "number"}, "up": {"type": "number"},
+           "wait": {"type": "boolean"}})
     async def fly(args):
         try:
-            return _ok(await ops.fly(args.get("north", 0), args.get("east", 0), args.get("up", 0)))
+            return _ok(await ops.fly(args.get("north", 0), args.get("east", 0), args.get("up", 0),
+                                     args.get("wait", True)))
         except Exception as e:
             return _err(f"{name} fly failed: {e}")
 
     @tool("goto", "Fly to an ABSOLUTE world point (east, north, up=altitude metres) OR a named "
-          "target (a drone like 'drone_1', a building like 'bldg_7'). Optional heading: a compass "
-          "word ('north'..) or 'travel' (default, face the way you go).",
+          "target (a drone like 'drone_1', a building like 'bldg_7'). Returns when you ARRIVE — "
+          "so fly an ordered route as one goto per leg, in order. Optional heading: a compass "
+          "word ('north'..) or 'travel' (default, face the way you go). Set wait=false to "
+          "return immediately and act mid-flight.",
           {"target": {"type": "string"}, "east": {"type": "number"}, "north": {"type": "number"},
-           "up": {"type": "number"}, "heading": {"type": "string"}})
+           "up": {"type": "number"}, "heading": {"type": "string"}, "wait": {"type": "boolean"}})
     async def goto(args):
         try:
             return _ok(await ops.goto(args.get("target", ""), args.get("east"), args.get("north"),
-                                      args.get("up"), args.get("heading", "travel")))
+                                      args.get("up"), args.get("heading", "travel"),
+                                      args.get("wait", True)))
         except Exception as e:
             return _err(f"{name} goto failed: {e}")
 
@@ -65,10 +71,12 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
         except Exception as e:
             return _err(f"{name} orbit failed: {e}")
 
-    @tool("hover", "Hold current position (loiter in place).", {})
+    @tool("hover", "Hold current position (loiter in place). Pass seconds=N to keep "
+          "holding for N seconds before returning — use this for 'hold/dwell for N "
+          "seconds' tasks.", {"seconds": {"type": "number"}})
     async def hover(args):
         try:
-            return _ok(await ops.hover())
+            return _ok(await ops.hover(args.get("seconds", 0)))
         except Exception as e:
             return _err(f"{name} hover failed: {e}")
 
@@ -142,21 +150,31 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None):
                        f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission"],
         setting_sources=[],
         env=env or {},
+        model=model,
         system_prompt=(
             f"You are {name}, an autonomous drone in a swarm of {n}, with your own onboard "
             "thinking. The COMMANDER sends you tasks; you do not hear the other drones. Carry "
             "out each task with your tools, then call report(...) with a short result. Be "
             "terse.\n"
             "MOVE: `goto` (an absolute world point east/north/up OR a named target like 'bldg_7' "
-            "or 'drone_1'); `orbit` (circle a target keeping your camera on it — ONE call, no need "
-            "to compute waypoints); `fly` (relative north/east/up); `face` (turn in place to aim "
-            "your camera); `hover` (hold); `set_speed`; `take_off`; `land`. Prefer `goto`/`orbit` "
-            "with named targets and the world coords from `scan` over hand-computing paths.\n"
+            "or 'drone_1') — it returns once you ARRIVE, so for an ordered route just call it "
+            "once per leg, in order; `orbit` (circle a target keeping your camera on it — ONE "
+            "call, no need to compute waypoints); `fly` (relative north/east/up, also returns on "
+            "arrival); `face` (turn in place to aim your camera); `hover` (hold; seconds=N "
+            "holds N seconds — use it for dwell tasks); `set_speed`; "
+            "`take_off`; `land`. Pass wait=false to goto/fly if you need to scan/look/report "
+            "while moving. Prefer `goto`/`orbit` with named targets and the world coords from "
+            "`scan` over hand-computing paths.\n"
+            "PLAN: when a task carries constraints (no-fly zones, altitude ceilings, distance "
+            "or action budgets), write out your full waypoint plan FIRST and check every leg "
+            "against every constraint before your first move — a leg that clips a no-fly zone "
+            "or busts the budget fails the mission even if you reach the goal.\n"
             "SENSE: `scan` lists nearby buildings + drones with distance and bearing RELATIVE to "
             "where you face — items marked [IN VIEW] are in your camera. `look` returns your live "
             "camera image. Camera is fixed forward (~69deg): to see something not [IN VIEW], `face` "
             "or `orbit` it, then `look`. Use `scan` before moving near obstacles.\n"
-            "MISSION: for a multi-leg or smooth trajectory, `run_mission(code, timeout)` "
+            "MISSION: for a smooth or geometry-heavy trajectory (arcs, figure-8s, per-leg "
+            "speed/camera control), `run_mission(code, timeout)` "
             "runs your OWN async MAVSDK. Pre-bound (no import): `drone`, "
             "`mission_item(**fields)`, `await world_to_geo(east,north,up)`, "
             "`await arm_and_start()`, `log(msg)`; "

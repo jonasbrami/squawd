@@ -1,0 +1,26 @@
+id: c1_recon_patrol
+target_layer: single_drone
+suite: capstone
+difficulty: {plan_depth: 3, coordination: 1, ambiguity: 2, spatial: 3, capstone: 1}
+setup:
+  world: default
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: a, east: 50, north: 0}
+    - {id: b, east: 50, north: 50}
+    - {id: c, east: 0, north: 50}
+prompt: "Take off and climb to about 18 m. Patrol these points in order at that altitude: a (east 50, north 0), b (east 50, north 50), c (east 0, north 50). Then hold your position over c for at least 12 seconds."
+budget: {wall_clock_s: 240, max_steps: 20}
+oracle:
+  - {check: alive}
+  - {check: ordering, sequence: [a, b, c], tol_m: 12}
+  - {check: altitude, target: c, min_m: 14, max_m: 22}
+  - {check: dwell, target: c, tol_m: 12, hold_s: 10}
+  - {check: within_step_budget, max_steps: 20}
+pilot:
+  - {tool: take_off, args: {altitude: 18}}
+  - {tool: goto, args: {east: 50, north: 0, up: 18}}
+  - {tool: goto, args: {east: 50, north: 50, up: 18}}
+  - {tool: goto, args: {east: 0, north: 50, up: 18}}
+  - {tool: hover, args: {seconds: 14}}

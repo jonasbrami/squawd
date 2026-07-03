@@ -1,0 +1,29 @@
+# Irrelevant info + decoy coordinates. The brief carries weather noise, a
+# decommissioned pad, and a fuel truck to keep clear of. Transposing the relay's
+# coordinates (east -60, north 90) lands exactly on the fuel truck — the classic
+# east/north swap fails two checks at once. Expected haiku partial.
+id: am4_briefing
+target_layer: single_drone
+suite: ambiguity
+difficulty: {plan_depth: 1, coordination: 1, ambiguity: 4, spatial: 2}
+setup:
+  world: default
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: relay, east: 90, north: -60}
+    - {id: pad, east: 200, north: 200}
+    - {id: truck, east: -60, north: 90}
+prompt: "Pre-flight brief: winds 12 knots from 270, ceiling unlimited. Ground crew report an old calibration pad at east 200, north 200 — it is decommissioned, ignore it. A fuel truck is staged at east -60, north 90; do not overfly it. Your tasking: take off to 12 m, proceed to the active relay at east 90, north -60, and hold over it for 10 seconds."
+budget: {wall_clock_s: 180, max_steps: 8}
+oracle:
+  - {check: alive}
+  - {check: reached, target: relay, tol_m: 12}
+  - {check: dwell, target: relay, tol_m: 12, hold_s: 8}
+  - {check: not_reached, target: pad, tol_m: 30}
+  - {check: not_reached, target: truck, tol_m: 30}
+  - {check: within_step_budget, max_steps: 8}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 90, north: -60, up: 12}}
+  - {tool: hover, args: {seconds: 12}}

@@ -1,0 +1,30 @@
+# Two waypoints threading building gaps. margin 6 is calibrated so the lazy
+# direct diagonal home->wp1 (clearance 5.4m past obs_0) FAILS while the
+# obs_0/obs_1 gap route (9.0m) passes — the model must actually thread, not
+# merely lean away. wp1->wp2 direct clears obs_3 by 9.2m (legal).
+id: o2_slalom
+target_layer: single_drone
+suite: obstacle
+difficulty: {plan_depth: 3, coordination: 1, ambiguity: 1, spatial: 4, obstacle: 2}
+setup:
+  world: obstacles
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: wp1, east: 60, north: 20}
+    - {id: wp2, east: 95, north: -15}
+prompt: "Take off to 12 m. Inspect waypoint one at east 60, north 20, then waypoint two at east 95, north -15, in that order. Stay below 14 m and keep at least 6 metres from every building at all times. Scan first and plan a route through the gaps."
+budget: {wall_clock_s: 260, max_steps: 14}
+oracle:
+  - {check: alive}
+  - {check: ordering, sequence: [wp1, wp2], tol_m: 10}
+  - {check: clearance, margin_m: 6}
+  - {check: alt_ceiling, max_m: 15}
+  - {check: within_step_budget, max_steps: 14}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 20, north: 16, up: 12}}
+  - {tool: goto, args: {east: 60, north: 16, up: 12}}
+  - {tool: goto, args: {east: 60, north: 20, up: 12}}
+  - {tool: goto, args: {east: 95, north: -15, up: 12}}
+  - {tool: hover}

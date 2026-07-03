@@ -1,0 +1,29 @@
+# Close-quarters inspection: get to obs_4 (the far tower past two building
+# rows — direct approach clips obs_0 at 1.6m) and hold station near it for 25s
+# below its 18m top. The r18 orbit ring clears everything by 7.4m; hovering at
+# standoff also passes — the graded skill is a safe approach + sustained close
+# proximity without a 2D clearance violation.
+id: o3_inspect
+target_layer: single_drone
+suite: obstacle
+difficulty: {plan_depth: 3, coordination: 1, ambiguity: 2, spatial: 4, obstacle: 3}
+setup:
+  world: obstacles
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: tower, east: 110, north: 0}
+prompt: "Take off to 12 m. The tower at east 110, north 0 needs inspection: get close and keep station around it for at least 25 seconds (orbiting it at about 18 m radius works well). Stay below 14 m and never come within 5 metres of any building, including on your way there."
+budget: {wall_clock_s: 300, max_steps: 14}
+oracle:
+  - {check: alive}
+  - {check: dwell, target: tower, tol_m: 28, hold_s: 22}
+  - {check: clearance, margin_m: 5}
+  - {check: alt_ceiling, max_m: 15}
+  - {check: within_step_budget, max_steps: 14}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 20, north: -15, up: 12}}
+  - {tool: goto, args: {east: 95, north: -15, up: 12}}
+  - {tool: goto, args: {east: 110, north: -25, up: 12}}
+  - {tool: hover, args: {seconds: 28}}

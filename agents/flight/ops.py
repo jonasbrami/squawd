@@ -45,6 +45,12 @@ def _mission_item(**kw):
 
 DEFAULT_MISSION_TIMEOUT_S = 180.0
 
+ARRIVE_TOL_M = 4.0          # horizontal arrival radius (well inside oracle tolerances)
+ARRIVE_ALT_TOL_M = 2.5
+ARRIVE_POLL_S = 0.5
+ARRIVE_MIN_TIMEOUT_S = 15.0
+ARRIVE_MARGIN = 2.5         # arrival timeout = MARGIN * dist / speed (accel/decel headroom)
+
 
 def _result_text(logs, body):
     """Prefix any log() lines before the result/traceback body."""
@@ -61,6 +67,7 @@ class FlightOps:
         self.i = i
         self.n = n
         self.name = f"drone_{i}"
+        self._speed = 5.0            # last commanded cruise speed (PX4 default)
 
     # ---- helpers ----
     def _alt(self):
@@ -80,6 +87,25 @@ class FlightOps:
         if me is None:
             return origin
         return offset_point(origin, north - me[1], east - me[0], up - me[2])
+
+    async def _await_arrival(self, t_e, t_n, t_u=None) -> str:
+        """Poll the world-frame fix until within ARRIVE_TOL_M of (t_e, t_n) (and
+        ARRIVE_ALT_TOL_M of t_u when given), or a distance-scaled timeout. Returns a
+        status suffix; NEVER raises — a timeout reads 'still enroute' so the caller
+        can wait again or re-command rather than see a hard error."""
+        me = self.world.world_xy(self.bridge, self.i)
+        dist = math.hypot(t_e - me[0], t_n - me[1]) if me else 100.0
+        t_max = max(ARRIVE_MIN_TIMEOUT_S, ARRIVE_MARGIN * dist / max(self._speed, 0.5))
+        for _ in range(max(1, int(t_max / ARRIVE_POLL_S))):
+            await asyncio.sleep(ARRIVE_POLL_S)
+            me = self.world.world_xy(self.bridge, self.i)
+            if me is None:
+                continue
+            d = math.hypot(t_e - me[0], t_n - me[1])
+            if d <= ARRIVE_TOL_M and (t_u is None or abs(t_u - me[2]) <= ARRIVE_ALT_TOL_M):
+                return f"arrived ({d:.1f}m off target)"
+        pos = f", now E{me[0]:.0f} N{me[1]:.0f}" if me else ""
+        return f"STILL ENROUTE after {t_max:.0f}s{pos} — wait or re-issue"
 
     def _resolve_xy(self, target, east=None, north=None):
         """(east, north) for a symbolic target name, explicit east/north, or None."""
@@ -105,17 +131,22 @@ class FlightOps:
         a = self._alt()
         return f"{self.name} airborne at {a:.0f}m" if a else f"{self.name} airborne"
 
-    async def fly(self, north=0.0, east=0.0, up=0.0) -> str:
+    async def fly(self, north=0.0, east=0.0, up=0.0, wait=True) -> str:
         north, east, up = float(north), float(east), float(up)
+        me = self.world.world_xy(self.bridge, self.i)     # for the arrival gate
         pos = await anext(self.drone.telemetry.position())
         origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
         tgt = offset_point(origin, north, east, up)
         yaw = math.degrees(math.atan2(east, north)) if (north or east) else self._keep_yaw()
         await self.drone.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
                                               tgt.absolute_altitude_m, yaw)
-        return f"{self.name} moving N{north:+.0f} E{east:+.0f} U{up:+.0f}"
+        base = f"{self.name} moving N{north:+.0f} E{east:+.0f} U{up:+.0f}"
+        if not wait or me is None:
+            return base
+        return f"{base}; {await self._await_arrival(me[0] + east, me[1] + north, me[2] + up)}"
 
-    async def goto(self, target="", east=None, north=None, up=None, heading="travel") -> str:
+    async def goto(self, target="", east=None, north=None, up=None, heading="travel",
+                   wait=True) -> str:
         me = self.world.world_xy(self.bridge, self.i)
         target = str(target or "").strip().lower()
         xy = self._resolve_xy(target, east, north)
@@ -123,6 +154,16 @@ class FlightOps:
             raise ValueError("need a target or east/north")
         t_e, t_n = xy
         t_u = float(up) if up is not None else (me[2] if me else 10.0)
+        # Refuse a commanded collision: a target inside a building's footprint
+        # below its roof wedges the drone against the wall (observed: 90s of
+        # grinding on a tower facade). A legible error lets the model re-plan.
+        for b in getattr(self.world, "buildings", None) or []:
+            if (abs(t_e - b["x"]) <= b["w"] / 2 and abs(t_n - b["y"]) <= b["d"] / 2
+                    and t_u < b["h"] + 3.0):
+                raise ValueError(
+                    f"target E{t_e:.0f} N{t_n:.0f} at {t_u:.0f}m is INSIDE {b['name']} "
+                    f"(centre E{b['x']:.0f} N{b['y']:.0f}, {b['w']:.0f}x{b['d']:.0f}m, "
+                    f"{b['h']:.0f}m tall) — pick a standoff point or fly above it")
         tgt = await self._world_to_geo(t_e, t_n, t_u)
         hh = str(heading or "travel").strip().lower()
         if hh in COMPASS:
@@ -135,7 +176,10 @@ class FlightOps:
             yaw = self._keep_yaw()
         await self.drone.action.goto_location(tgt.latitude_deg, tgt.longitude_deg,
                                               tgt.absolute_altitude_m, yaw)
-        return f"{self.name} -> E{t_e:.0f} N{t_n:.0f} alt {t_u:.0f}"
+        base = f"{self.name} -> E{t_e:.0f} N{t_n:.0f} alt {t_u:.0f}"
+        if not wait:
+            return base + " (moving; not waiting)"
+        return f"{base}; {await self._await_arrival(t_e, t_n, t_u)}"
 
     async def orbit(self, target="", east=None, north=None, radius=12.0, speed=3.0,
                     direction="cw", alt=None) -> str:
@@ -157,13 +201,21 @@ class FlightOps:
         return (f"{self.name} orbiting {target or 'point'} r={radius:.0f}m {direction} "
                 f"at {alt_v:.0f}m, camera on center")
 
-    async def hover(self) -> str:
+    async def hover(self, seconds=0.0) -> str:
+        """Hold position; with `seconds`, keep holding that long before returning —
+        the only way to satisfy 'hold over X for N seconds' now that moves block
+        (the post-turn settle no longer burns budget accruing dwell by accident)."""
         await self.drone.action.hold()
+        s = min(max(float(seconds or 0.0), 0.0), 120.0)
+        if s > 0:
+            await asyncio.sleep(s)
+            return f"{self.name} held {s:g}s"
         return f"{self.name} holding"
 
     async def set_speed(self, speed=5.0) -> str:
         v = abs(float(speed))
         await self.drone.action.set_current_speed(v)
+        self._speed = max(v, 0.5)               # scales the arrival timeout
         return f"{self.name} speed {v:.1f} m/s"
 
     async def face(self, target="") -> str:

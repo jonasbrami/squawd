@@ -1,0 +1,26 @@
+# Compass-bearing convention trap. Hidden anchor: 150 m at compass bearing 240
+# (clockwise from north) from c (40, 60) -> offset (150*sin240, 150*cos240) =
+# (-129.9, -75.0) -> (-89.9, -15.0). Classic failure modes land far outside tol:
+# math-convention (CCW from east) gives ~(-35, -70) ≈ 78 m off; offsetting from
+# home instead of c gives (-129.9, -75.0) ≈ 72 m off. Single goto — immune to
+# ordering/tooling effects; expected haiku knee.
+id: s6_bearing
+target_layer: single_drone
+suite: spatial
+difficulty: {plan_depth: 1, coordination: 1, ambiguity: 1, spatial: 6}
+setup:
+  world: default
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: brg, east: -89.9, north: -15.0}
+prompt: "Take off to 12 m. From marker c at east 40, north 60, fly to the point 150 metres away at compass bearing 240 degrees. Hover there."
+budget: {wall_clock_s: 180, max_steps: 8}
+oracle:
+  - {check: alive}
+  - {check: reached, target: brg, tol_m: 15}
+  - {check: within_step_budget, max_steps: 8}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: -89.9, north: -15.0, up: 12}}
+  - {tool: hover}
