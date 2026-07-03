@@ -112,3 +112,47 @@ as `<synthetic>` 401 cells — now flagged infra by `client_failed`, never score
   tighter step budgets, multi-constraint capstones (c2 variants), and the
   planned paraphrase splits (prompt-wording effect is still unmeasured).
 - Obstacle ladder stays blocked on a usable flat-with-buildings world.
+
+## Obstacles world (2026-07-03): the axis that finally orders the tiers
+
+New `obstacles` world (flat default + 6 static boxes, machine-verified layout;
+generator `sim/worlds/make_obstacles_world.py`; the city-world EKF curse did
+NOT reproduce — frame gate clean). Ladder o1-o3 + c4, pilot gate 4/4.
+
+Two sensor gaps found via transcripts and fixed between runs:
+- scan reported edge distance + compass word but NOT centre/footprint — a 5m
+  clearance route around a rectangle you cannot locate is unplannable.
+  Blindfold baseline: ~1/11 across tiers (sonnet flew a sensible detour into
+  an unseen corner; opus groped safely but never found the pad).
+- scan k=4 truncation: haiku derived exact wall boundaries, threaded the first
+  gap, then flew into the 5th building scan had never mentioned. k=8 now.
+
+Full-visibility results (K=2, distinct failure modes per tier):
+
+| task | opus | sonnet | haiku |
+|------|------|--------|-------|
+| o1_detour | 1/2 | 0/2 | 1/2 |
+| o2_slalom | 1/2 | 0/2 | 0/2 |
+| o3_inspect | 2/2 | 1/2 | 0/2 |
+| c4_obstacle_run | 2/2 | 2/2* | 1/2 |
+| **total** | **6/8** | **1/8** | **2/7** |
+
+(*sonnet c4 0/2 — corrected: wandered 483-718m vs the 240m budget)
+
+- **opus 6/8, zero collisions**: both misses are step-budget overruns, not
+  safety. Obstacle navigation with full geometry is basically solved for opus.
+- **sonnet 1/8 but ZERO collisions**: chronic verbosity — o2 flown perfectly
+  both reps and failed purely on 15 steps vs 14; c4 wandered 2-3x the path
+  budget. Safe but inefficient.
+- **haiku 2/7 with repeated collisions**: flew goto to a tower's CENTRE at
+  12m (18m tower) and ground on the facade for 90s. `goto` now REFUSES
+  targets inside a building below its roof (legible error -> re-plan), the
+  same guard class as blocking-goto.
+
+Harness: reset ferry now flies home at 40m (a 10m ferry collided with
+buildings on its way home); collision-wedged sims recover via drive_sweep
+restarts (sonnet needed 5 rounds).
+
+Next: re-probe with the goto building-guard active (haiku's collision mode
+should convert to re-planning), K=8 on the o1/o2 knife-edges, then wind, and
+the commander/coordination layer as the next milestone.
