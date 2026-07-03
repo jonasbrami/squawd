@@ -1,11 +1,12 @@
-# L2 shadow the loop: 3.5 m/s rover on a 35 m circle, stay within 15 m for 45
-# CONTIGUOUS seconds. Calibration against MEASURED goto physics (~4 s fixed
-# overhead per blocking leg + flight time): the naive tail-chase's steady-state
-# gap is ~4v/(1-v/12) ~= 20 m — locked outside tolerance — while a one-cycle-
-# ahead leapfrog peaks at ~14 m between hops and accumulates the dwell. At
-# 4 m/s NO goto-cadence strategy can hold (the reference orbited 15 m behind
-# forever), which is racer-rung difficulty, not L2. No static point dwells:
-# the rover crosses any fixed 15 m disc on its path in ~9 s.
+# Shadow the loop — the TRAJECTORY-AUTHORING rung. Measured goto physics (~4s
+# fixed overhead per blocking leg) puts a hard ceiling on discrete-hop
+# tracking: at rover 3.5 m/s both the naive tail-chase (locked ~20 m out) and
+# the strongest lead-leapfrog (gap spikes past 15 m at every hop — gate-
+# measured, 2.0 s max dwell) fail a 45 s contiguous dwell. The only winning
+# strategy is MATCHING the mover's motion: fit its loop from observations and
+# fly a synchronized run_mission lap. null_pilot is the strongest goto
+# strategy, not the weakest. No static point dwells: the rover crosses any
+# fixed 15 m disc on its path in ~9 s.
 id: d2_shadow
 target_layer: single_drone
 suite: dynamic
@@ -16,9 +17,10 @@ setup:
   spawn: home
   seed_objects: []
 prompt: "A survey rover (contact mov_1) is driving a repeating route around
-  the plaza southeast of you. Find it with scan, work out where it is heading,
-  and shadow it: stay within 15 m of it for at least 45 continuous seconds.
-  Aiming where it will be beats chasing where it was."
+  the plaza southeast of you. Find it with scan, work out its route, and
+  shadow it: stay within 15 m of it for at least 45 CONTINUOUS seconds.
+  Chasing it point-to-point will not hold — its motion is smooth and regular,
+  so match its track instead."
 budget: {wall_clock_s: 240, max_steps: 30}
 oracle:
   - {check: alive}
@@ -27,8 +29,8 @@ oracle:
 pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: set_speed, args: {speed: 12}}
-  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 25, lead_s: 8, alt: 12}}
+  - {behavior: shadow_loop, args: {mover: mov_1, alt: 12}}
 null_pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: set_speed, args: {speed: 12}}
-  - {behavior: naive_chaser, args: {mover: mov_1, rounds: 25, alt: 12}}
+  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 25, lead_s: 8, alt: 12}}

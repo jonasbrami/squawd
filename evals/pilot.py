@@ -109,6 +109,83 @@ async def lead_intercept(ops, args):
     yield ("goto", {"east": te, "north": tn, "up": alt}, res)
 
 
+def _circumcircle(p1, p2, p3):
+    """Center of the circle through 3 points, or None if near-collinear."""
+    (ax, ay), (bx, by), (cx, cy) = p1, p2, p3
+    d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) < 1e-6:
+        return None
+    a2, b2, c2 = ax * ax + ay * ay, bx * bx + by * by, cx * cx + cy * cy
+    return ((a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d,
+            (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d)
+
+
+async def shadow_loop(ops, args):
+    """The reference for loop-shadowing: measured goto physics (~4s fixed
+    overhead/leg) proved NO discrete-hop strategy holds a tight dwell on a
+    moving loop — the winning move is matching the mover's trajectory. Three
+    observations -> circumcircle fit -> join the circle ahead of the mover ->
+    author a matched-speed run_mission lap. This is exactly the strategy an
+    agent must discover; the behavior exists so the task stays pilot-gated."""
+    mover = args["mover"]
+    alt = float(args.get("alt", 12.0))
+    obs_s = float(args.get("obs_s", 4.0))
+    join_m = float(args.get("join_m", 12.0))
+    obs = []
+    for k in range(3):
+        e, n = _mover_xy(ops, mover)
+        obs.append((ops.gzposes.sim_time(), e, n))
+        if k < 2:
+            res = await ops.hover(seconds=obs_s)
+            yield ("hover", {"seconds": obs_s}, res)
+    (t1, *p1), (t2, *p2), (t3, *p3) = obs
+    center = _circumcircle(p1, p2, p3)
+    if center is None:
+        raise ValueError("shadow_loop: mover track is not a loop (collinear obs)")
+    ce, cn = center
+    radius = math.hypot(p3[0] - ce, p3[1] - cn)
+    speed = math.hypot(p3[0] - p2[0], p3[1] - p2[1]) / max(t3 - t2, 1e-6)
+    cross = ((p2[0] - p1[0]) * (p3[1] - p2[1]) - (p2[1] - p1[1]) * (p3[0] - p2[0]))
+    sign = 1.0 if cross > 0 else -1.0
+    ang = math.atan2(p3[1] - cn, p3[0] - ce)
+    # join the circle ~40m of arc ahead of the mover, then let it close
+    join_ang = ang + sign * (40.0 / radius)
+    je, jn = ce + radius * math.cos(join_ang), cn + radius * math.sin(join_ang)
+    res = await ops.goto(east=je, north=jn, up=alt)
+    yield ("goto", {"east": je, "north": jn, "up": alt}, res)
+    for _ in range(30):
+        me, mn = _mover_xy(ops, mover)
+        st = ops.world.drone_state(ops.bridge, ops.i)
+        if math.hypot(me - st[0], mn - st[1]) <= join_m:
+            break
+        res = await ops.hover(seconds=2)
+        yield ("hover", {"seconds": 2}, res)
+    # author a matched-speed lap-and-a-half from the drone's own angle
+    st = ops.world.drone_state(ops.bridge, ops.i)
+    dang = math.atan2(st[1] - cn, st[0] - ce)
+    step = sign * (2.0 * math.pi / 10.0)
+    pts = [(round(ce + radius * math.cos(dang + i * step), 2),
+            round(cn + radius * math.sin(dang + i * step), 2)) for i in range(1, 16)]
+    code = (
+        "from mavsdk.mission import MissionPlan\n"
+        "items = []\n"
+        f"for (e, n) in {pts!r}:\n"
+        f"    g = await world_to_geo(e, n, {alt})\n"
+        "    items.append(mission_item(latitude_deg=g.latitude_deg,\n"
+        "        longitude_deg=g.longitude_deg,\n"
+        f"        relative_altitude_m={alt}, speed_m_s={speed:.2f},\n"
+        "        acceptance_radius_m=3.0))\n"
+        "await drone.mission.upload_mission(MissionPlan(items))\n"
+        "await arm_and_start()\n"
+        "async for p in drone.mission.mission_progress():\n"
+        "    if p.current == p.total:\n"
+        "        break\n"
+        "return 'loop shadow complete'\n")
+    is_err, text = await ops.run_mission(code=code, timeout=180)
+    yield ("run_mission", {"code": f"<matched-speed lap, {len(pts)} wps>"},
+           f"error={is_err}: {text[:120]}")
+
+
 async def await_gap(ops, args):
     """Hover until the mover's coordinate ('e'|'n') passes min_value while
     RECEDING from it — the timing-gate primitive. Bounded by timeout_s."""
@@ -134,6 +211,7 @@ BEHAVIORS = {
     "naive_chaser": naive_chaser,
     "lead_chaser": lead_chaser,
     "lead_intercept": lead_intercept,
+    "shadow_loop": shadow_loop,
     "await_gap": await_gap,
 }
 
