@@ -98,3 +98,125 @@ oracle:
   - {check: alive}
 """)
     assert load_task(str(p)).pilot is None
+
+
+# ---- dynamic behaviors ----
+
+class FakeGz:
+    """Scripted mover positions: pops the next position per poses() call."""
+    def __init__(self, seq, name="mov_x"):
+        self._seq = list(seq)
+        self._name = name
+        self._t = 0.0
+
+    def poses(self):
+        p = self._seq.pop(0) if len(self._seq) > 1 else self._seq[0]
+        self._t += 5.0
+        return {self._name: (p[0], p[1], 8.0)}
+
+    def sim_time(self):
+        return self._t
+
+
+class BehaviorOps:
+    def __init__(self, gz, pos=(0.0, 0.0)):
+        self.gzposes = gz
+        self.calls = []
+        self._pos = pos
+        self._speed = 5.0
+        self.world = self
+        self.bridge = None
+        self.i = 0
+
+    def drone_state(self, bridge, i):
+        return (self._pos[0], self._pos[1], 12.0, 0.0)
+
+    async def goto(self, east=None, north=None, up=None, **kw):
+        self.calls.append(("goto", east, north))
+        return "ARRIVED"
+
+    async def hover(self, seconds=0.0):
+        self.calls.append(("hover", seconds))
+        return "held"
+
+
+async def _drain(gen):
+    return [step async for step in gen]
+
+
+def test_naive_chaser_gotos_current_position():
+    import asyncio
+    from evals.pilot import naive_chaser
+
+    gz = FakeGz([(10, 0), (20, 0), (30, 0)])
+    ops = BehaviorOps(gz)
+    steps = asyncio.run(
+        _drain(naive_chaser(ops, {"mover": "mov_x", "rounds": 3, "alt": 12})))
+    assert [c[1] for c in ops.calls] == [10, 20, 30]   # always where it WAS
+    assert len(steps) == 3 and steps[0][0] == "goto"
+
+
+def test_lead_chaser_aims_ahead_of_motion():
+    import asyncio
+    from evals.pilot import lead_chaser
+
+    gz = FakeGz([(10, 0), (20, 0), (30, 0)])   # 2 m/s east at 5s sim ticks
+    ops = BehaviorOps(gz)
+    asyncio.run(
+        _drain(lead_chaser(ops, {"mover": "mov_x", "rounds": 3, "lead_s": 10, "alt": 12})))
+    # round 1 has no velocity estimate (aims at 10); later rounds lead by v*10 = 20m
+    assert ops.calls[0][1] == 10
+    assert ops.calls[1][1] == 20 + 20 and ops.calls[2][1] == 30 + 20
+
+
+def test_lead_intercept_solves_head_on_meeting():
+    import asyncio
+    from evals.pilot import lead_intercept
+
+    # mover at x=100 flying WEST at 2 m/s (100 -> 90 over the 5s observation);
+    # drone at origin, speed 8 -> meet at x = 90 - 2t = 8t  => t = 9, x = 72
+    gz = FakeGz([(100, 0), (90, 0)])
+    ops = BehaviorOps(gz)
+    asyncio.run(
+        _drain(lead_intercept(ops, {"mover": "mov_x", "speed_mps": 8,
+                                    "obs_s": 0.01, "alt": 12})))
+    tool, east, north = ops.calls[0]
+    assert tool == "goto" and abs(east - 72.0) < 1.0 and abs(north) < 1e-6
+
+
+def test_await_gap_hovers_until_receding_past_threshold():
+    import asyncio
+    from evals.pilot import await_gap
+
+    # n climbs: 5, 12, 18, 26, 31 — first receding sample past 25 is 31
+    gz = FakeGz([(110, 5), (110, 12), (110, 18), (110, 26), (110, 31)])
+    ops = BehaviorOps(gz)
+    steps = asyncio.run(
+        _drain(await_gap(ops, {"mover": "mov_x", "coord": "n", "min_value": 25,
+                               "poll_s": 2, "timeout_s": 30})))
+    assert "gap open" in steps[-1][2]
+    assert all(c[0] == "hover" for c in ops.calls)
+
+
+def test_scripted_client_executes_behavior_steps():
+    import asyncio
+    from evals.pilot import ScriptedClient
+
+    gz = FakeGz([(10, 0), (20, 0)])
+    ops = BehaviorOps(gz)
+
+    async def provider():
+        return ops
+
+    async def run():
+        client = ScriptedClient(provider, [
+            {"tool": "hover", "args": {"seconds": 1}},
+            {"behavior": "naive_chaser", "args": {"mover": "mov_x", "rounds": 2}},
+        ])
+        return [m async for m in client.receive_response()]
+
+    msgs = asyncio.run(run())
+    # 1 static step + 2 behavior-yielded calls = 3 (tool_use, result) pairs
+    assert len(msgs) == 6
+    assert ops.calls[0] == ("hover", 1)
+    assert ops.calls[1][0] == "goto"

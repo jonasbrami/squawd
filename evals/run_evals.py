@@ -95,6 +95,12 @@ async def main(args) -> None:
         if not specs:
             raise SystemExit("pilot: every requested task lacks a pilot script — nothing to run")
         assignments = [{"drones": "pilot"}]
+        # Dual-baseline gate for dynamic tasks: run each null_pilot (the naive
+        # strategy the task exists to defeat) as its own lane. The gate reading:
+        # pilot rows must PASS, pilot_null rows must FAIL.
+        with_null = [t for t, s in specs.items() if s.null_pilot]
+        if with_null:
+            print(f"pilot: null-baseline lane for {with_null}", flush=True)
     else:
         assignments = parse_assignments(args.assignments)
 
@@ -105,7 +111,11 @@ async def main(args) -> None:
     tjsonl = os.path.join(out_dir, "transcripts.jsonl")
 
     done = done_keys(_load_rows(jsonl))
-    cells = shuffled(expand(list(specs), assignments, args.k), seed=args.seed)
+    cells = expand(list(specs), assignments, args.k)
+    if args.pilot:
+        cells += expand([t for t, s in specs.items() if s.null_pilot],
+                        [{"drones": "pilot_null"}], args.k)
+    cells = shuffled(cells, seed=args.seed)
 
     bridge = RosBridge(node_name="evals_runner")
     world = World()
@@ -134,7 +144,9 @@ async def main(args) -> None:
                     continue
                 spec = specs[cell.task_id]
                 if args.pilot:
-                    harness.pilot_script = spec.pilot  # per-cell script for the builder
+                    harness.pilot_script = (   # per-cell script for the builder
+                        spec.null_pilot if cell.assignment.get("drones") == "pilot_null"
+                        else spec.pilot)
                 res = await run_with_retry(
                     lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps, harness))
                 fh.write(json.dumps(res.to_row()) + "\n")

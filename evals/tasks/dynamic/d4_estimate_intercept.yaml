@@ -1,0 +1,35 @@
+# L4 estimate-and-intercept: a 6 m/s constant-velocity transit, course NOT
+# given. Winning requires two scans separated in time -> velocity -> a lead
+# point, plus set_speed (the mover outruns the 5 m/s default). The zone
+# deadline kills the camp-at-its-destination cheat (it parks at dest4 when the
+# 'once' trajectory completes); the path budget kills the fast tail-chase
+# (converges, but flies ~450 m vs ~230 m for a lead intercept).
+id: d4_estimate_intercept
+target_layer: single_drone
+suite: dynamic
+difficulty: {plan_depth: 3, coordination: 1, ambiguity: 3, spatial: 4, dynamic: 4}
+setup:
+  world: dynamic
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: dest4, east: 0, north: 200}
+prompt: "An unidentified aircraft (contact mov_3) is transiting the area to
+  your west at constant velocity. Work out its course from successive scans
+  and intercept it — get within 10 m — before it leaves the area. It is
+  faster than your default cruise, and fuel is limited: fly at most 300 m
+  total. Move immediately."
+budget: {wall_clock_s: 120, max_steps: 10}
+oracle:
+  - {check: alive}
+  - {check: intercept, mover: mov_3, tol_m: 10, zone_target: dest4, zone_radius_m: 30}
+  - {check: path_length, max_m: 300}
+  - {check: within_step_budget, max_steps: 10}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {behavior: lead_intercept, args: {mover: mov_3, speed_mps: 12, obs_s: 5, alt: 12}}
+  - {behavior: naive_chaser, args: {mover: mov_3, rounds: 2, alt: 12}}
+null_pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {behavior: naive_chaser, args: {mover: mov_3, rounds: 8, alt: 12}}

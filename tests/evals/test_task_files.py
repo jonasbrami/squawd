@@ -28,3 +28,22 @@ def test_obstacle_tasks_load_and_use_obstacles_world():
         # 2D clearance grading means overflight = collision: every obstacle task
         # must pin the drone below building height.
         assert any(c["check"] == "alt_ceiling" for c in t.oracle), f"{p} needs alt_ceiling"
+
+
+def test_dynamic_tasks_load_with_dual_baselines():
+    import glob
+    from evals.spec import load_task
+
+    paths = sorted(glob.glob("evals/tasks/dynamic/*.yaml"))
+    assert len(paths) == 5   # d1-d5 (dynamic ladder L1-L5, 2026-07-03)
+    for p in paths:
+        t = load_task(p)
+        assert t.setup.world == "dynamic", f"{p} must use the dynamic world"
+        assert t.suite == "dynamic"
+        assert t.pilot, f"{p} needs a must-PASS pilot"
+        checks = {c["check"] for c in t.oracle}
+        assert checks & {"intercept", "dwell_moving", "avoid_moving", "escort"}, \
+            f"{p} must grade against a mover"
+    # every rung above the entry rung carries the must-FAIL naive baseline
+    for p in paths[1:]:
+        assert load_task(p).null_pilot, f"{p} needs a null_pilot"

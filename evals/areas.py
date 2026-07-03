@@ -11,6 +11,11 @@ AREAS: dict[str, list[tuple[float, float]]] = {
     "ne_quadrant": [(0.0, 0.0), (200.0, 0.0), (200.0, 200.0), (0.0, 200.0)],
     "ne_block": [(20.0, 20.0), (180.0, 20.0), (180.0, 180.0), (20.0, 180.0)],
     "west_block": [(-150.0, -50.0), (-50.0, -50.0), (-50.0, 50.0), (-150.0, 50.0)],
+    # d3 timing gate (dynamic world): the E110 "fence" is impassable except the
+    # N[-10,30] gap that the patrol mover sweeps — these strips make the spatial
+    # bypass around the patrol a violation, so timing is the only way through.
+    "fence_e110_south": [(105.0, -250.0), (115.0, -250.0), (115.0, -10.0), (105.0, -10.0)],
+    "fence_e110_north": [(105.0, 30.0), (115.0, 30.0), (115.0, 250.0), (105.0, 250.0)],
 }
 
 

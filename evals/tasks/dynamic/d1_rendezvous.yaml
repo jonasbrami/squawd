@@ -1,0 +1,27 @@
+# L1 scheduled rendezvous: the mover's route + timetable are IN the prompt —
+# pure space-time arithmetic plus the patience to arrive early and wait. The
+# lag-immune winning strategy (fly ahead of it, hover, let it come to you) is
+# deliberately available; k << 1. Entry rung of the dynamic ladder.
+id: d1_rendezvous
+target_layer: single_drone
+suite: dynamic
+difficulty: {plan_depth: 2, coordination: 1, ambiguity: 1, spatial: 2, dynamic: 1}
+setup:
+  world: dynamic
+  n_drones: 1
+  spawn: home
+  seed_objects: []
+prompt: "A courier drone (contact mov_0) departed E-40 N100 at mission start,
+  flying due east along N100 at 4 m/s toward E140, back and forth. Meet it:
+  get within 10 m of it. Tip: pick a point on its route, arrive EARLY, and
+  hover until it comes to you."
+budget: {wall_clock_s: 120, max_steps: 8}
+oracle:
+  - {check: alive}
+  - {check: intercept, mover: mov_0, tol_m: 10}
+  - {check: within_step_budget, max_steps: 8}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 8}}
+  - {tool: goto, args: {east: 100, north: 100, up: 12}}
+  - {tool: hover, args: {seconds: 40}}
