@@ -93,6 +93,16 @@ elif [ "$PX4_GZ_WORLD" = "obstacles" ]; then
   if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_obstacles_world.py ]; then
     python3 /workspace/sim/worlds/make_obstacles_world.py "$WORLDS/default.sdf" "$WORLDS/obstacles.sdf" || true
   fi
+elif [ "$PX4_GZ_WORLD" = "dynamic" ]; then
+  # Flat default world + scripted kinematic movers (evals dynamic ladder).
+  # Movers are driven per physics step by sim/plugins/mover_system.py
+  # (PythonSystemLoader); the plugin path and the trajectory sidecar must both
+  # be visible to the gz server process launched below.
+  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_dynamic_world.py ]; then
+    python3 /workspace/sim/worlds/make_dynamic_world.py "$WORLDS/default.sdf" "$WORLDS/dynamic.sdf" || true
+  fi
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:+$GZ_SIM_SYSTEM_PLUGIN_PATH:}/workspace/sim/plugins"
+  export MOVERS_JSON="/workspace/PX4-Autopilot/$WORLDS/dynamic_boxes.json"
 elif [ "$PX4_GZ_WORLD" = "baylands" ]; then
   # baylands.sdf <include>s two Gazebo Fuel models (terrain + Coast Water). Cache
   # them once (needs internet on the first run; mount /root/.gz/fuel to persist).
