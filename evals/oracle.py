@@ -232,6 +232,118 @@ def _clearance(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"min clearance {shown} (margin {margin:g})")
 
 
+def _mover_sep(s, name: str) -> float | None:
+    """Min 2D distance from any drone pose to mover `name` within ONE snapshot —
+    drone and mover positions were captured the same tick, so dynamic checks
+    built on this are immune to sim-time vs wall-clock drift."""
+    mv = s.movers.get(name)
+    if mv is None or not s.poses:
+        return None
+    return min(math.hypot(p.e - mv[0], p.n - mv[1]) for p in s.poses.values())
+
+
+def _intercept(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Come within tol of the mover at some instant. Optional deadline: at the
+    moment of contact the mover must still be > zone_radius_m from the objects
+    point zone_target (perimeter-defense: 'catch it BEFORE it reaches X')."""
+    tol = float(p["tol_m"])
+    name = p["mover"]
+    zone = track.objects[p["zone_target"]] if "zone_target" in p else None
+    zr = float(p.get("zone_radius_m", 0.0))
+    best, hit = math.inf, False
+    for s in track.snapshots:
+        d = _mover_sep(s, name)
+        if d is None:
+            continue
+        best = min(best, d)
+        if d <= tol:
+            if zone is None:
+                hit = True
+                break
+            mv = s.movers[name]
+            if math.hypot(mv[0] - zone[0], mv[1] - zone[1]) > zr:
+                hit = True
+                break
+    shown = "inf" if best == math.inf else f"{best:.1f}m"
+    extra = f" before {p['zone_target']}+{zr:g}m" if zone is not None else ""
+    return CheckResult("intercept", hit, 0.0 if best == math.inf else best,
+                       f"min separation {shown} to {name} (tol {tol:g}){extra}")
+
+
+def _dwell_moving(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Stay within tol of the mover for >= hold_s CONTIGUOUS seconds. One
+    outside/missing sample doesn't break the run (2 Hz sampling can drop a
+    tick); two consecutive do."""
+    tol, need = float(p["tol_m"]), float(p["hold_s"])
+    name = p["mover"]
+    best, run_start, gap = 0.0, None, 0
+    for s in track.snapshots:
+        d = _mover_sep(s, name)
+        if d is not None and d <= tol:
+            if run_start is None:
+                run_start = s.t
+            gap = 0
+            best = max(best, s.t - run_start)
+        else:
+            gap += 1
+            if gap >= 2:
+                run_start = None
+    return CheckResult("dwell_moving", best >= need, best,
+                       f"held {best:.1f}s within {tol:g}m of {name} (need {need:g}s)")
+
+
+def _avoid_moving(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Never come within margin of the mover (moving keep-out bubble).
+    grace_s excuses early samples, same convention as avoid_area."""
+    margin = float(p["margin_m"])
+    grace = float(p.get("grace_s", 0.0))
+    name = p["mover"]
+    worst, hits = math.inf, 0
+    for s in track.snapshots:
+        if s.t < grace:
+            continue
+        d = _mover_sep(s, name)
+        if d is None:
+            continue
+        worst = min(worst, d)
+        if d < margin:
+            hits += 1
+    shown = "inf" if worst == math.inf else f"{worst:.1f}m"
+    return CheckResult("avoid_moving", hits == 0, 0.0 if worst == math.inf else worst,
+                       f"{hits} samples within {margin:g}m of {name} (closest {shown})")
+
+
+def _escort(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Station-keeping on a mover: from the FIRST joined sample (<= tol) to the
+    end of the track, the fraction of samples within tol must be >= min_fraction
+    AND no continuous gap outside tol may exceed max_gap_s. Measured from first
+    join so takeoff/transit to the convoy isn't charged against the escort."""
+    tol = float(p["tol_m"])
+    need_frac = float(p["min_fraction"])
+    max_gap = float(p["max_gap_s"])
+    name = p["mover"]
+    seps = [(s.t, _mover_sep(s, name)) for s in track.snapshots]
+    seps = [(t, d) for t, d in seps if d is not None]
+    joined = next((i for i, (_, d) in enumerate(seps) if d <= tol), None)
+    if joined is None:
+        return CheckResult("escort", False, 0.0, f"never within {tol:g}m of {name}")
+    window = seps[joined:]
+    inside = sum(1 for _, d in window if d <= tol)
+    frac = inside / len(window)
+    worst_gap, gap_start = 0.0, None
+    for t, d in window:
+        if d > tol:
+            gap_start = t if gap_start is None else gap_start
+            worst_gap = max(worst_gap, t - gap_start)
+        else:
+            gap_start = None
+    ok = frac >= need_frac and worst_gap <= max_gap
+    return CheckResult("escort", ok, frac,
+                       f"{frac:.0%} of samples within {tol:g}m of {name} after join "
+                       f"(need {need_frac:.0%}); worst gap {worst_gap:.1f}s "
+                       f"(max {max_gap:g}s)")
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
@@ -248,6 +360,10 @@ CHECKS = {
     "alt_ceiling": _alt_ceiling,
     "final_pos": _final_pos,
     "min_visited": _min_visited,
+    "intercept": _intercept,
+    "dwell_moving": _dwell_moving,
+    "avoid_moving": _avoid_moving,
+    "escort": _escort,
 }
 
 
