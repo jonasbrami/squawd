@@ -16,14 +16,16 @@ prompt: "A survey rover (contact mov_1) is driving a repeating route around
   the plaza southeast of you. Find it with scan, work out where it is heading,
   and shadow it: stay within 12 m of it for at least 45 continuous seconds.
   Aiming where it will be beats chasing where it was."
-budget: {wall_clock_s: 240, max_steps: 16}
+budget: {wall_clock_s: 240, max_steps: 30}
 oracle:
   - {check: alive}
   - {check: dwell_moving, mover: mov_1, tol_m: 12, hold_s: 45}
-  - {check: within_step_budget, max_steps: 16}
+  - {check: within_step_budget, max_steps: 30}
 pilot:
   - {tool: take_off, args: {altitude: 12}}
-  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 14, lead_s: 12, alt: 12}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 25, lead_s: 5, alt: 12}}
 null_pilot:
   - {tool: take_off, args: {altitude: 12}}
-  - {behavior: naive_chaser, args: {mover: mov_1, rounds: 14, alt: 12}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {behavior: naive_chaser, args: {mover: mov_1, rounds: 25, alt: 12}}

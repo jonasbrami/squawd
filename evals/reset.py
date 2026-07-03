@@ -114,6 +114,14 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
     # (retried through PX4's transient COMMAND_DENIED), goto world home, land there —
     # each phase bounded. The trigger is the DISARMED state, not an altitude guess
     # (a parked drone's EKF altitude drifts ~2m, past any grounded threshold).
+    # set_speed persists via MPC_XY_CRUISE — restore the default so one cell's
+    # speed choice can't leak into the next (a pass at a speed the agent never
+    # commanded would be a phantom result).
+    for s in systems:
+        try:
+            await s.param.set_param_float("MPC_XY_CRUISE", 5.0)
+        except Exception:
+            pass
     ferry_err = ""
     for i, s in enumerate(systems):
         xy = world.world_xy(bridge, i)

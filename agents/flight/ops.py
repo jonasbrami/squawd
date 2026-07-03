@@ -215,6 +215,14 @@ class FlightOps:
 
     async def set_speed(self, speed=5.0) -> str:
         v = abs(float(speed))
+        # DO_CHANGE_SPEED only applies to the CURRENT reposition — the next
+        # goto_location silently reverts to MPC_XY_CRUISE (observed live: a
+        # "12 m/s" multi-leg dash flew at ~5). Set the cruise param too so the
+        # commanded speed survives across gotos; evals soft_reset restores it.
+        try:
+            await self.drone.param.set_param_float("MPC_XY_CRUISE", min(v, 12.0))
+        except Exception:
+            pass                                 # param plugin unavailable: best effort
         await self.drone.action.set_current_speed(v)
         self._speed = max(v, 0.5)               # scales the arrival timeout
         return f"{self.name} speed {v:.1f} m/s"

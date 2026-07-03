@@ -139,6 +139,11 @@ class BehaviorOps:
         self.calls.append(("hover", seconds))
         return "held"
 
+    async def set_speed(self, speed=5.0):
+        self._speed = speed
+        self.calls.append(("set_speed", speed))
+        return f"speed {speed}"
+
 
 async def _drain(gen):
     return [step async for step in gen]
@@ -180,7 +185,8 @@ def test_lead_intercept_solves_head_on_meeting():
     asyncio.run(
         _drain(lead_intercept(ops, {"mover": "mov_x", "speed_mps": 8,
                                     "obs_s": 0.01, "alt": 12})))
-    tool, east, north = ops.calls[0]
+    assert ops.calls[0] == ("set_speed", 8)
+    tool, east, north = ops.calls[1]
     assert tool == "goto" and abs(east - 72.0) < 1.0 and abs(north) < 1e-6
 
 

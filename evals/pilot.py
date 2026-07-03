@@ -68,6 +68,9 @@ async def lead_intercept(ops, args):
     alt = float(args.get("alt", 12.0))
     obs_s = float(args.get("obs_s", 5.0))
     speed = float(args.get("speed_mps", ops._speed))
+    if speed != ops._speed:
+        res = await ops.set_speed(speed=speed)   # solve AND fly at this speed
+        yield ("set_speed", {"speed": speed}, res)
     e1, n1 = _mover_xy(ops, args["mover"])
     t1 = ops.gzposes.sim_time()
     await asyncio.sleep(obs_s)
