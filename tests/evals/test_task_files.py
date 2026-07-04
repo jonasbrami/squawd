@@ -76,3 +76,16 @@ def test_swarm_tasks_load_operator_layer_and_verified_geometry():
     solo = d(s0, C) + d(C, D) + d(D, B) + d(B, A)
     assert optimal < 460 < 500 < min(interleaved, solo), \
         (optimal, interleaved, solo)
+
+
+def test_step_budget_check_matches_budget_everywhere():
+    """within_step_budget's max_steps must equal budget.max_steps in EVERY task —
+    a drifted pair grades against a budget the prompt never promised."""
+    import glob
+    from evals.spec import load_task
+
+    for p in sorted(glob.glob("evals/tasks/**/*.yaml", recursive=True)):
+        t = load_task(p)
+        for chk in t.oracle:
+            if chk["check"] == "within_step_budget":
+                assert int(chk["max_steps"]) == t.budget.max_steps, p
