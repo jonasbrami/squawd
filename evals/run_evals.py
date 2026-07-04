@@ -1,4 +1,5 @@
-"""Agent task-eval orchestrator (single-drone layer).
+"""Agent task-eval orchestrator (single_drone and operator layers; commander not
+built yet).
 
 For each (task x model-assignment x repeat) cell: soft-reset the world, run the drone
 agent on the task under its budget, grade the sampled WorldTrack, append a row to
@@ -28,7 +29,7 @@ import time
 
 from evals.matrix import expand, done_keys, shuffled
 from evals.report import aggregate, render_markdown
-from evals.runner import Deps, DroneHarness, run_cell
+from evals.runner import Deps, FleetHarness, run_cell
 from evals.spec import load_task
 
 
@@ -134,7 +135,7 @@ async def main(args) -> None:
         gz_world_name = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
         recorder = FrameDump(args.record, gz_world_name, deps=deps)
         print(f"recording frames -> {args.record}", flush=True)
-    harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
+    harness = FleetHarness(deps, n=n_max)  # shared flight links, fresh client per cell
     if args.pilot:
         from evals.pilot import pilot_client_builder
         harness._client_builder = pilot_client_builder(harness, deps)

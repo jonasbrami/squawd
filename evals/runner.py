@@ -1,10 +1,11 @@
-"""Run ONE eval cell (task x model x repeat) against a live sim, single-drone layer.
+"""Run ONE eval cell (task x model x repeat) against a live sim, single_drone OR
+operator layer (per spec.target_layer; commander is not built yet).
 
-Builds a DroneAgent with the chosen model, soft-resets the world, starts the sampler,
-injects the task prompt at the drone's own Claude client, and bounds the run by the
-spec's wall-clock + step budget. Captures latency + tool-call trace, then grades the
-sampled WorldTrack. Infra failures (no fix, RTL/connection errors) are flagged, not
-scored as task failures."""
+Builds the fleet of DroneAgents with the chosen model, soft-resets the world, starts
+the sampler, injects the task prompt at the (single- or fleet-scoped) Claude client,
+and bounds the run by the spec's wall-clock + step budget. Captures latency +
+tool-call trace, then grades the sampled WorldTrack. Infra failures (no fix, RTL/
+connection errors) are flagged, not scored as task failures."""
 import asyncio
 import math
 import time
@@ -153,57 +154,80 @@ class Deps:
     gzposes: object = None   # live mover positions + phase anchor (dynamic worlds)
 
 
-class DroneHarness:
-    """Owns the persistent MAVSDK link + telemetry subscription for drone 0, built
-    ONCE and reused across every cell — this is the fix for the per-cell subscription
-    /System leak (building a DroneAgent per cell re-subscribed the non-idempotent
-    RosBridge and spun a new System each time, growing linearly over a sweep).
+class FleetHarness:
+    """Owns the persistent MAVSDK links for drones 0..n-1, built ONCE and reused
+    across every cell — this is the fix for the per-cell subscription/System leak
+    (building a DroneAgent per cell re-subscribed the non-idempotent RosBridge and
+    spun a new System each time, growing linearly over a sweep), generalized from
+    one drone to a fleet of n.
 
-    It hands out a FRESH Claude client per cell (bound to the shared System with the
+    It hands out a FRESH Claude client per cell (bound to the shared Systems with the
     cell's model), because the SDK model is fixed at client construction AND each
     cell/repeat must run an independent agent session — a reused client would bleed
     one cell's conversation into the next and poison the accuracy numbers. So: cache
-    the model-independent flight link, rebuild only the cheap per-cell client.
+    the model-independent flight links, rebuild only the cheap per-cell client.
+    single_drone specs (n_drones==1) get the classic one-drone options; operator
+    specs get make_operator_options (one client, all n drones).
 
     The `agent_factory`/`client_builder` hooks exist so the caching lifecycle is
     unit-testable without ROS; production paths default to the real deferred imports."""
 
-    def __init__(self, deps: Deps, agent_factory=None, client_builder=None) -> None:
+    def __init__(self, deps: Deps, n: int = 1, agent_factory=None,
+                client_builder=None) -> None:
         self._deps = deps
+        self._n = n
         self._agent_factory = agent_factory
         self._client_builder = client_builder
-        self._agent = None  # cached DroneAgent; we use only its connected _system
+        self._agents: list | None = None  # cached DroneAgents; we use only their connected _system
 
-    def _make_agent(self):
+    def _make_agent(self, i: int):
         if self._agent_factory is not None:
-            return self._agent_factory()
+            return self._agent_factory(i)
         from agents.swarm.drone import DroneAgent  # deferred: rclpy/mavsdk at runtime only
-        return DroneAgent(0, self._deps.world, self._deps.bridge, 1,
+        return DroneAgent(i, self._deps.world, self._deps.bridge, self._n,
                           self._deps.cameras, model=None)
 
-    async def _ensure(self):
-        if self._agent is None:
-            agent = self._make_agent()
-            await agent.connect()  # connects the MAVSDK link + arms PX4 geofence, once
-            self._agent = agent
-        return self._agent
+    async def _ensure(self) -> list:
+        if self._agents is None:
+            agents = [self._make_agent(i) for i in range(self._n)]
+            for a in agents:
+                await a.connect()  # connects the MAVSDK link + arms PX4 geofence, once
+            self._agents = agents
+        return self._agents
+
+    async def systems_list(self) -> list:
+        """The shared, connected MAVSDK Systems for drones 0..n-1 (built + connected
+        once)."""
+        return [a._system for a in await self._ensure()]
 
     async def system(self):
-        """The shared, connected MAVSDK System for drone 0 (built + connected once)."""
-        return (await self._ensure())._system
+        """Back-compat accessor: the shared System for drone 0."""
+        return (await self.systems_list())[0]
 
-    def client_for(self, model):
-        """A fresh ClaudeSDKClient bound to the shared System, with `model`. Caller
-        drives it under `async with` so each cell gets an independent session."""
+    def client_for(self, model, n_drones: int = 1):
+        """A fresh ClaudeSDKClient bound to the shared System(s), with `model`.
+        Caller drives it under `async with` so each cell gets an independent session.
+        n_drones<=1 gets the classic single-drone options; n_drones>1 gets the
+        operator layer (one client, all n drones)."""
         if self._client_builder is not None:
             return self._client_builder(model)
         from claude_agent_sdk import ClaudeSDKClient
-        from agents.flight import make_drone_options
-        opts = make_drone_options(0, self._agent._system, self._deps.world,
-                                  self._deps.bridge, 1, self._deps.cameras,
-                                  report=lambda _m: None, env=None, model=model,
-                                  gzposes=self._deps.gzposes)
+        if n_drones <= 1:
+            from agents.flight import make_drone_options
+            opts = make_drone_options(0, self._agents[0]._system, self._deps.world,
+                                      self._deps.bridge, 1, self._deps.cameras,
+                                      report=lambda _m: None, env=None, model=model,
+                                      gzposes=self._deps.gzposes)
+        else:
+            from agents.flight.tools import make_operator_options
+            opts, _fleet = make_operator_options(
+                [a._system for a in self._agents], self._deps.world,
+                self._deps.bridge, n_drones, self._deps.cameras,
+                gzposes=self._deps.gzposes, model=model)
         return ClaudeSDKClient(options=opts)
+
+
+DroneHarness = FleetHarness  # back-compat alias for older imports/tests
 
 
 async def _drive(client, prompt: str, deadline_s: float, max_steps: int) -> tuple[Trace, bool, str]:
@@ -237,13 +261,21 @@ def client_failed(trace: Trace) -> bool:
     return trace.model is None or trace.model == "<synthetic>"
 
 
-def require_single_drone(spec) -> None:
-    """This runner only flies drone 0. Reject multi-drone specs loudly rather than
-    silently producing plausible-but-wrong results."""
+def require_layer_supported(spec) -> None:
+    """single_drone cells must be n==1; operator cells may be multi-drone;
+    the commander layer is a later phase — reject loudly, never silently."""
+    layer = getattr(spec, "target_layer", "single_drone")
+    if layer == "operator":
+        return
+    if layer == "commander":
+        raise ValueError(f"target_layer 'commander' not built yet (task {spec.id})")
     if spec.setup.n_drones != 1:
         raise ValueError(
             f"single_drone runner requires n_drones==1, got {spec.setup.n_drones} "
             f"(task {spec.id})")
+
+
+require_single_drone = require_layer_supported  # back-compat alias for older imports/tests
 
 
 async def _settle(world, bridge, n: int, deadline: float,
@@ -275,22 +307,22 @@ async def _settle(world, bridge, n: int, deadline: float,
 
 
 async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
-                   harness: "DroneHarness") -> CellResult:
-    require_single_drone(spec)
+                   harness: "FleetHarness") -> CellResult:
+    require_layer_supported(spec)
     label = assignment_label(assignment)
     base = CellResult(spec.id, label, repeat, passed=False)
     base.difficulty = dict(spec.difficulty)
     base.suite = spec.suite
-    n = spec.setup.n_drones  # 1 for single_drone tasks
+    n = spec.setup.n_drones  # 1 for single_drone tasks; >1 for operator tasks
 
     try:
-        system = await harness.system()  # built + connected once, reused across cells
+        systems = await harness.systems_list()  # built + connected once, reused across cells
     except Exception as e:
         base.infra_fail = True
         base.failure_reason = f"connect failed: {e}"
         return base
 
-    rr = await soft_reset([system], deps.world, deps.bridge, n)
+    rr = await soft_reset(systems, deps.world, deps.bridge, n)
     if not rr.ok:
         base.infra_fail = True
         base.failure_reason = f"reset unclean: {rr.reason}"
@@ -305,7 +337,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     samp_task = asyncio.create_task(sampler.run())
     t_start = time.monotonic()
     t0_epoch = time.time()
-    client = harness.client_for(model_for(assignment, "drones"))
+    client = harness.client_for(model_for(assignment, "drones"), n_drones=n)
     try:
         async with client:  # fresh session per cell — no context bleed between cells
             trace, crashed, reason = await _drive(
@@ -314,10 +346,12 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         # the PX4 setpoint keeps flying with nothing to stop it — drones ended cells
         # 150-770m out, RTL couldn't recover in the reset window, and the infra fuse
         # tripped on healthy sims. Same hazard run_mission guards with ops._halt.
-        try:
-            await asyncio.wait_for(system.action.hold(), timeout=5)
-        except Exception:
-            pass
+        # Per-system isolation: one dead link must not skip the others' halt.
+        for s in systems:
+            try:
+                await asyncio.wait_for(s.action.hold(), timeout=5)
+            except Exception:
+                pass
         # Settle gets its OWN allowance, not the tail of the turn budget: sharing one
         # deadline gave slower-thinking tiers less real-time flight before grading —
         # a structural bias against exactly the tiers being compared. With blocking

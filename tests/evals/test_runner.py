@@ -123,7 +123,7 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
 
     agents_made = []
 
-    def agent_factory():
+    def agent_factory(i):
         a = FakeAgent()
         agents_made.append(a)
         return a
@@ -152,3 +152,58 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
     assert len(agents_made) == 1               # only one DroneAgent ever built
     assert len(clients) == 2                   # one client per client_for call
     assert s is agents_made[0]._system
+
+
+def test_fleet_harness_connects_n_agents_once():
+    import asyncio
+    from evals.runner import Deps, FleetHarness
+
+    made = []
+
+    class FakeAgent:
+        def __init__(self, i):
+            self.i = i
+            self._system = f"sys{i}"
+            self.connects = 0
+
+        async def connect(self):
+            self.connects += 1
+
+    def factory(i):
+        a = FakeAgent(i)
+        made.append(a)
+        return a
+
+    h = FleetHarness(Deps(world=None, bridge=None, cameras=None), n=2,
+                     agent_factory=factory)
+
+    async def run():
+        s1 = await h.systems_list()
+        s2 = await h.systems_list()
+        return s1, s2
+
+    s1, s2 = asyncio.run(run())
+    assert s1 == ["sys0", "sys1"] and s2 is not s1 and s2 == s1
+    assert [a.connects for a in made] == [1, 1]          # built + connected once
+    assert asyncio.run(h.system()) == "sys0"             # back-compat accessor
+
+
+def test_layer_gate_allows_operator_multidrone_only():
+    import pytest
+    from evals.runner import require_layer_supported
+
+    class Setup:
+        n_drones = 2
+
+    class Spec:
+        id = "w1"
+        setup = Setup()
+        target_layer = "single_drone"
+
+    with pytest.raises(ValueError, match="n_drones==1"):
+        require_layer_supported(Spec())
+    Spec.target_layer = "operator"
+    require_layer_supported(Spec())                      # no raise
+    Spec.target_layer = "commander"
+    with pytest.raises(ValueError, match="not built"):
+        require_layer_supported(Spec())
