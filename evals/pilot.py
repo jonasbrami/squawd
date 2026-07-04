@@ -246,13 +246,17 @@ class ScriptedClient:
     async def receive_response(self):
         ops = await self._ops_provider()
         seq = 0
+        # fleet routing: `ops` is a FleetOps — a step's `drone:` picks the
+        # body (default 0); tools that live on the fleet itself (goto_all)
+        # run fleet-level. Behaviors bind one drone's FlightOps.
         for i, step in enumerate(self._script):
             if "behavior" in step:
                 fn = BEHAVIORS.get(step["behavior"])
                 if fn is None:
                     raise ValueError(f"pilot step {i}: unknown behavior "
                                      f"'{step['behavior']}' ({sorted(BEHAVIORS)})")
-                async for tool, targs, out in fn(ops, step.get("args", {})):
+                body = ops.drone(step.get("drone", 0)) if hasattr(ops, "drone") else ops
+                async for tool, targs, out in fn(body, step.get("args", {})):
                     yield AssistantMessage(
                         content=[ToolUseBlock(id=f"pilot{seq}", name=f"pilot__{tool}",
                                               input=targs)], model="pilot")
@@ -265,7 +269,13 @@ class ScriptedClient:
             yield AssistantMessage(
                 content=[ToolUseBlock(id=f"pilot{seq}", name=f"pilot__{tool}", input=args)],
                 model="pilot")
-            fn = getattr(ops, tool, None)
+            if hasattr(ops, tool):
+                target = ops
+            elif hasattr(ops, "drone"):
+                target = ops.drone(step.get("drone", 0))
+            else:
+                target = ops
+            fn = getattr(target, tool, None)
             if fn is None or tool.startswith("_"):
                 raise ValueError(f"pilot step {i}: unknown tool '{tool}'")
             out = fn(**args)
@@ -281,10 +291,13 @@ def pilot_client_builder(harness, deps):
     run_evals sets `harness.pilot_script` before each run_cell; the builder reads it."""
 
     async def ops_provider():
+        from agents.flight.fleet import FleetOps
         from agents.flight.ops import FlightOps
-        system = await harness.system()
-        return FlightOps(system, deps.world, deps.bridge, 0, 1,
-                         gzposes=deps.gzposes)
+        systems = await harness.systems_list()
+        n = len(systems)
+        return FleetOps([FlightOps(s, deps.world, deps.bridge, i, n,
+                                   gzposes=deps.gzposes)
+                         for i, s in enumerate(systems)])
 
     def build(model):
         return ScriptedClient(ops_provider, getattr(harness, "pilot_script", []))

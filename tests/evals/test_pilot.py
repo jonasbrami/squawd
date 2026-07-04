@@ -227,3 +227,46 @@ def test_scripted_client_executes_behavior_steps():
     assert len(msgs) == 6
     assert ops.calls[0] == ("hover", 1)
     assert ops.calls[1][0] == "goto"
+
+
+# ---- fleet-aware routing ----
+
+def test_scripted_client_routes_steps_by_drone_field():
+    import asyncio
+    from agents.flight.fleet import FleetOps
+    from evals.pilot import ScriptedClient
+
+    class MiniOps:
+        def __init__(self, i):
+            self.i = i
+            self.calls = []
+
+        async def take_off(self, altitude=10.0):
+            self.calls.append(("take_off", altitude))
+            return f"drone_{self.i} airborne"
+
+        async def goto(self, target="", east=None, north=None, up=None,
+                       heading="travel", wait=True):
+            self.calls.append(("goto", east, north))
+            return f"drone_{self.i} arrived"
+
+    a, b = MiniOps(0), MiniOps(1)
+    fleet = FleetOps([a, b])
+
+    async def provider():
+        return fleet
+
+    async def run():
+        client = ScriptedClient(provider, [
+            {"tool": "take_off", "args": {"altitude": 12}},              # default d0
+            {"tool": "take_off", "drone": 1, "args": {"altitude": 12}},
+            {"tool": "goto_all", "args": {"moves": [
+                {"drone": 0, "east": 10, "north": 0, "up": 12},
+                {"drone": 1, "east": -10, "north": 0, "up": 12}]}},
+        ])
+        return [m async for m in client.receive_response()]
+
+    msgs = asyncio.run(run())
+    assert len(msgs) == 6                     # 3 steps -> 3 (use, result) pairs
+    assert a.calls[0] == ("take_off", 12) and b.calls[0] == ("take_off", 12)
+    assert a.calls[1] == ("goto", 10, 0) and b.calls[1] == ("goto", -10, 0)
