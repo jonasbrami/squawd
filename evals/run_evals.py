@@ -128,6 +128,12 @@ async def main(args) -> None:
         gzposes = GzPoses(gz_world, [m["name"] for m in world.movers])
     bridge.start()
     deps = Deps(world=world, bridge=bridge, cameras=cameras, gzposes=gzposes)
+    recorder = None
+    if getattr(args, "record", None):
+        from evals.filming import FrameDump
+        gz_world_name = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
+        recorder = FrameDump(args.record, gz_world_name, deps=deps)
+        print(f"recording frames -> {args.record}", flush=True)
     harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
     if args.pilot:
         from evals.pilot import pilot_client_builder
@@ -178,6 +184,8 @@ async def main(args) -> None:
             with open(os.path.join(out_dir, "TOOLS.md"), "w") as f:
                 f.write(render_tools(aggregate_transcripts(trows)))
     finally:
+        if recorder is not None:
+            print(recorder.stop(), flush=True)
         bridge.shutdown()
 
 
@@ -193,6 +201,9 @@ def _cli() -> None:
     ap.add_argument("--pilot", action="store_true",
                     help="fly each task's declared ideal script with NO LLM (trap "
                          "gate): a task the pilot can't pass is a harness bug")
+    ap.add_argument("--record", default=None,
+                    help="dump POV + cinecam JPEG frames to this dir while cells "
+                         "run (film containers only — needs a render backend)")
     args = ap.parse_args()
     asyncio.run(main(args))
 

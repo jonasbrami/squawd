@@ -153,10 +153,20 @@ async def shadow_loop(ops, args):
     je, jn = ce + radius * math.cos(join_ang), cn + radius * math.sin(join_ang)
     res = await ops.goto(east=je, north=jn, up=alt)
     yield ("goto", {"east": je, "north": jn, "up": alt}, res)
-    for _ in range(30):
+    prev_m = None
+    for _ in range(40):
         me, mn = _mover_xy(ops, mover)
         st = ops.world.drone_state(ops.bridge, ops.i)
-        if math.hypot(me - st[0], mn - st[1]) <= join_m:
+        sep = math.hypot(me - st[0], mn - st[1])
+        # start the lap only with the mover BEHIND and closing: joining with it
+        # alongside/ahead makes any pacing error open the gap immediately
+        # (observed: 4.5s dwell on an otherwise perfect lap)
+        behind = True
+        if prev_m is not None:
+            mve, mvn = me - prev_m[0], mn - prev_m[1]
+            behind = (st[0] - me) * mve + (st[1] - mn) * mvn > 0
+        prev_m = (me, mn)
+        if 4.0 <= sep <= join_m and behind:
             break
         res = await ops.hover(seconds=2)
         yield ("hover", {"seconds": 2}, res)
