@@ -91,3 +91,64 @@ class TestDroneFilter:
                           "tol_m": 10, "drone": 1}], META).passed
         assert not grade(t, [{"check": "ordering", "sequence": ["pad_s", "pad_n"],
                               "tol_m": 10, "drone": 0}], META).passed
+
+
+class TestSimultaneous:
+    OBJS = {"mark_a": (80.0, 80.0), "mark_b": (80.0, -80.0)}
+    SPEC = [{"check": "simultaneous",
+             "marks": [{"target": "mark_a", "tol_m": 10},
+                       {"target": "mark_b", "tol_m": 10}]}]
+
+    def test_both_marks_same_snapshot_distinct_drones_passes(self):
+        t = _track([_snap(0, {0: (0, 0), 1: (0, 3)}),
+                    _snap(30, {0: (80, 80), 1: (80, -80)})], self.OBJS)
+        assert grade(t, self.SPEC, META).passed
+
+    def test_sequential_solo_visits_fail(self):
+        t = _track([_snap(10, {0: (80, 80), 1: (0, 3)}),
+                    _snap(60, {0: (80, -80), 1: (0, 3)})], self.OBJS)
+        assert not grade(t, self.SPEC, META).passed
+
+    def test_one_drone_cannot_satisfy_two_marks(self):
+        # marks 12m apart, one drone within tol of both — still needs a partner
+        objs = {"mark_a": (80.0, 6.0), "mark_b": (80.0, -6.0)}
+        t = _track([_snap(30, {0: (80, 0), 1: (0, 3)})], objs)
+        assert not grade(t, [{"check": "simultaneous",
+                              "marks": [{"target": "mark_a", "tol_m": 10},
+                                        {"target": "mark_b", "tol_m": 10}]}],
+                         META).passed
+
+
+class TestWithinWindow:
+    def _movers(self, t, positions, movers):
+        return Snapshot(t, {i: DronePose(e, n, 10.0, 0.0)
+                            for i, (e, n) in positions.items()},
+                        {k: (v[0], v[1], 8.0) for k, v in movers.items()})
+
+    def test_two_intercepts_inside_window_pass(self):
+        snaps = [self._movers(40, {0: (50, 100), 1: (70, -100)},
+                              {"mov_0": (52, 100), "mov_1": (72, -100)})]
+        t = WorldTrack(snaps, {}, n_drones=2, geofence_m=300.0)
+        spec = [{"check": "within_window", "window_s": 25,
+                 "events": [{"type": "intercept", "mover": "mov_0", "tol_m": 12},
+                            {"type": "intercept", "mover": "mov_1", "tol_m": 12}]}]
+        assert grade(t, spec, META).passed
+
+    def test_spread_events_fail_window(self):
+        snaps = [self._movers(10, {0: (52, 100), 1: (0, 3)},
+                              {"mov_0": (50, 100), "mov_1": (300, 300)}),
+                 self._movers(80, {0: (0, 0), 1: (72, -100)},
+                              {"mov_0": (300, 300), "mov_1": (70, -100)})]
+        t = WorldTrack(snaps, {}, n_drones=2, geofence_m=300.0)
+        spec = [{"check": "within_window", "window_s": 25,
+                 "events": [{"type": "intercept", "mover": "mov_0", "tol_m": 12},
+                            {"type": "intercept", "mover": "mov_1", "tol_m": 12}]}]
+        g = grade(t, spec, META)
+        assert not g.passed and "70.0s apart" in g.checks[0].detail
+
+    def test_missing_event_fails(self):
+        t = WorldTrack([self._movers(10, {0: (0, 0)}, {"mov_0": (300, 300)})],
+                       {}, n_drones=1, geofence_m=300.0)
+        spec = [{"check": "within_window", "window_s": 25,
+                 "events": [{"type": "intercept", "mover": "mov_0", "tol_m": 12}]}]
+        assert not grade(t, spec, META).passed

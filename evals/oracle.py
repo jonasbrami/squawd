@@ -398,6 +398,61 @@ def _fleet_separation(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"{', 3D' if use_3d else ''})")
 
 
+def _simultaneous(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Some single snapshot where DISTINCT drones cover all marks at once —
+    the coordinated-timing primitive. Distinctness is a permutation match
+    (fleet sizes here are small)."""
+    import itertools
+    marks = p["marks"]
+    for s in track.snapshots:
+        ids = sorted(s.poses)
+        if len(ids) < len(marks):
+            continue
+        for perm in itertools.permutations(ids, len(marks)):
+            ok = True
+            for mk, did in zip(marks, perm):
+                xy = track.objects[mk["target"]]
+                q = s.poses[did]
+                if math.hypot(q.e - xy[0], q.n - xy[1]) > float(mk["tol_m"]):
+                    ok = False
+                    break
+            if ok:
+                return CheckResult("simultaneous", True, s.t,
+                                   f"all {len(marks)} marks held at t={s.t:.1f}s")
+    return CheckResult("simultaneous", False, 0.0,
+                       f"no snapshot with {len(marks)} marks covered by "
+                       f"distinct drones")
+
+
+def _event_time(track: WorldTrack, ev: dict) -> float | None:
+    tol = float(ev["tol_m"])
+    for s in track.snapshots:
+        if ev["type"] == "reach":
+            xy = track.objects[ev["target"]]
+            if any(math.hypot(q.e - xy[0], q.n - xy[1]) <= tol
+                   for q in s.poses.values()):
+                return s.t
+        elif ev["type"] == "intercept":
+            d = _mover_sep(s, ev["mover"])
+            if d is not None and d <= tol:
+                return s.t
+    return None
+
+
+def _within_window(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """All listed events (first occurrence each) within window_s of one another
+    — forces a fleet SPLIT when the event sites are far apart."""
+    times = [_event_time(track, ev) for ev in p["events"]]
+    if any(t is None for t in times):
+        missing = [p["events"][i] for i, t in enumerate(times) if t is None]
+        return CheckResult("within_window", False, 0.0,
+                           f"events never occurred: {missing}")
+    spread = max(times) - min(times)
+    win = float(p["window_s"])
+    return CheckResult("within_window", spread <= win, spread,
+                       f"events {spread:.1f}s apart (window {win:g}s)")
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
@@ -416,6 +471,8 @@ CHECKS = {
     "min_visited": _min_visited,
     "targets_covered": _targets_covered,
     "fleet_separation": _fleet_separation,
+    "simultaneous": _simultaneous,
+    "within_window": _within_window,
     "intercept": _intercept,
     "dwell_moving": _dwell_moving,
     "avoid_moving": _avoid_moving,
