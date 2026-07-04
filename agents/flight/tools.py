@@ -19,10 +19,9 @@ def _err(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
-def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, model=None,
-                       gzposes=None):
+def _drone_server(i, ops, cameras, report):
+    """The 12 per-drone tools bound to one FlightOps; returns (server, allowed)."""
     name = f"drone_{i}"
-    ops = FlightOps(drone, world, bridge, i, n, gzposes=gzposes)
 
     @tool("take_off", "Arm and take off (default 10m). Returns once airborne at altitude.",
           {"altitude": {"type": "number"}})
@@ -143,12 +142,21 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, mo
     server = create_sdk_mcp_server(
         name=f"d{i}", tools=[take_off, fly, goto, orbit, hover, set_speed, face, land,
                              report_tool, look, scan, run_mission])
+    allowed = [f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__goto",
+               f"mcp__d{i}__orbit", f"mcp__d{i}__hover", f"mcp__d{i}__set_speed",
+               f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__report",
+               f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission"]
+    return server, allowed
+
+
+def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, model=None,
+                       gzposes=None):
+    name = f"drone_{i}"
+    ops = FlightOps(drone, world, bridge, i, n, gzposes=gzposes)
+    server, allowed = _drone_server(i, ops, cameras, report)
     return ClaudeAgentOptions(
         mcp_servers={f"d{i}": server},
-        allowed_tools=[f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__goto",
-                       f"mcp__d{i}__orbit", f"mcp__d{i}__hover", f"mcp__d{i}__set_speed",
-                       f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__report",
-                       f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission"],
+        allowed_tools=allowed,
         setting_sources=[],
         env=env or {},
         model=model,
@@ -198,3 +206,58 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, mo
             "  return 'mission complete'\n"
             "Set `timeout` to the seconds the path needs."),
     )
+
+
+def make_operator_options(systems, world, bridge, n, cameras, gzposes=None,
+                          env=None, model=None):
+    """ONE client flying ALL n drones: per-drone namespaces d0..d{n-1} plus a
+    fleet server whose goto_all moves drones CONCURRENTLY (sequential blocking
+    gotos would serialize the fleet). Returns (options, fleet_ops)."""
+    from agents.flight.fleet import FleetOps
+
+    ops_list = [FlightOps(systems[i], world, bridge, i, n, gzposes=gzposes)
+                for i in range(n)]
+    fleet = FleetOps(ops_list)
+    servers, allowed = {}, []
+    for i in range(n):
+        server, names = _drone_server(i, ops_list[i], cameras,
+                                      report=lambda _m: None)
+        servers[f"d{i}"] = server
+        allowed += names
+
+    @tool("goto_all",
+          "Move SEVERAL drones at once: moves=[{drone, east, north, up}, ...]. "
+          "Issues every move concurrently and returns when ALL arrive, with a "
+          "per-drone result line. This is the primitive for coordinated legs — "
+          "one-at-a-time goto calls make the other drones WAIT.",
+          {"moves": {"type": "array", "items": {"type": "object", "properties": {
+              "drone": {"type": "number"}, "east": {"type": "number"},
+              "north": {"type": "number"}, "up": {"type": "number"}}}}})
+    async def goto_all(args):
+        try:
+            return _ok(await fleet.goto_all(args.get("moves", [])))
+        except Exception as e:
+            return _err(f"goto_all failed: {e}")
+
+    servers["fleet"] = create_sdk_mcp_server(name="fleet", tools=[goto_all])
+    allowed.append("mcp__fleet__goto_all")
+    drone_words = ", ".join(f"d{i}" for i in range(n))
+    return ClaudeAgentOptions(
+        mcp_servers=servers, allowed_tools=allowed, setting_sources=[],
+        env=env or {}, model=model,
+        system_prompt=(
+            f"You are the OPERATOR of a fleet of {n} drones. You fly ALL of "
+            f"them yourself: each drone has its own tool namespace ({drone_words} "
+            f"— e.g. d1's goto is mcp__d1__goto), and mcp__fleet__goto_all moves "
+            "several drones AT ONCE (per-drone goto/fly BLOCK until arrival, so "
+            "moving drones one at a time leaves the rest parked — use goto_all "
+            "for coordinated legs).\n"
+            "PLAN: before your first move, assign each drone to its goals "
+            "EXPLICITLY (which drone takes which target, at which altitude) and "
+            "check the assignment against every constraint — separation minimums, "
+            "fleet path budgets, timing windows. Keep your drones apart unless "
+            "the task says otherwise; give crossing routes different altitudes.\n"
+            "SENSE: each drone's scan/look reports from ITS position (other "
+            "drones appear as 'drone_j' contacts). MOVE/MISSION semantics per "
+            "drone are identical to a single drone's tools."),
+    ), fleet
