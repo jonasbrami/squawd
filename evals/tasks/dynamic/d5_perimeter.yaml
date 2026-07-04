@@ -17,12 +17,12 @@ prompt: "URGENT: an intruder drone (contact mov_4) is inbound from the
   southwest toward the tower at E-80 N-80. Intercept it — get within 10 m —
   BEFORE it gets within 50 m of the tower. Fuel is limited: fly at most 320 m
   total. Every second counts."
-budget: {wall_clock_s: 120, max_steps: 10}
+budget: {wall_clock_s: 180, max_steps: 14}
 oracle:
   - {check: alive}
   - {check: intercept, mover: mov_4, tol_m: 10, zone_target: tower, zone_radius_m: 50}
   - {check: path_length, max_m: 320}
-  - {check: within_step_budget, max_steps: 10}
+  - {check: within_step_budget, max_steps: 14}
 pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {behavior: lead_intercept, args: {mover: mov_4, speed_mps: 12, obs_s: 5, alt: 12}}

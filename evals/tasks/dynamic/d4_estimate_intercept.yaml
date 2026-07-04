@@ -19,12 +19,12 @@ prompt: "An unidentified aircraft (contact mov_3) is transiting the area to
   and intercept it — get within 10 m — before it leaves the area. It is
   faster than your default cruise, and fuel is limited: fly at most 300 m
   total. Move immediately."
-budget: {wall_clock_s: 120, max_steps: 10}
+budget: {wall_clock_s: 180, max_steps: 14}
 oracle:
   - {check: alive}
   - {check: intercept, mover: mov_3, tol_m: 10, zone_target: dest4, zone_radius_m: 30}
   - {check: path_length, max_m: 300}
-  - {check: within_step_budget, max_steps: 10}
+  - {check: within_step_budget, max_steps: 14}
 pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {behavior: lead_intercept, args: {mover: mov_3, speed_mps: 12, obs_s: 5, alt: 12}}

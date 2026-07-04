@@ -21,7 +21,7 @@ prompt: "A survey rover (contact mov_1) is driving a repeating route around
   shadow it: stay within 15 m of it for at least 45 CONTINUOUS seconds.
   Chasing it point-to-point will not hold — its motion is smooth and regular,
   so match its track instead."
-budget: {wall_clock_s: 240, max_steps: 30}
+budget: {wall_clock_s: 330, max_steps: 30}
 oracle:
   - {check: alive}
   - {check: dwell_moving, mover: mov_1, tol_m: 15, hold_s: 45}

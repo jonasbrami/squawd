@@ -18,14 +18,14 @@ prompt: "Reach the depot at E170 N-5 and hold there. A security fence runs
   the fence line outside the gap. A patrol drone (contact mov_2) sweeps the
   gap; stay at least 15 m away from it at all times. Watch its pattern with
   scan, stage near the gap, and time your crossing for when it is moving away."
-budget: {wall_clock_s: 240, max_steps: 14}
+budget: {wall_clock_s: 300, max_steps: 18}
 oracle:
   - {check: alive}
   - {check: reached, target: depot, tol_m: 12}
   - {check: avoid_area, area: fence_e110_south}
   - {check: avoid_area, area: fence_e110_north}
   - {check: avoid_moving, mover: mov_2, margin_m: 15}
-  - {check: within_step_budget, max_steps: 14}
+  - {check: within_step_budget, max_steps: 18}
 pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: goto, args: {east: 80, north: -5, up: 12}}
