@@ -60,3 +60,25 @@ def test_drone_accessor_and_n():
     ops = [FakeOps(0), FakeOps(1)]
     fleet = FleetOps(ops)
     assert fleet.n == 2 and fleet.drone(1) is ops[1]
+
+
+def test_drone_accepts_model_style_string_ids():
+    """Operator LLMs pass the names the harness taught them — d0/d1 namespaces,
+    drone_1 scan contacts. goto_all must accept them (observed live: opus's
+    correct layered plan was rejected for '\"drone\":\"d0\"')."""
+    ops = [FakeOps(0), FakeOps(1)]
+    fleet = FleetOps(ops)
+    for alias in (1, "1", "d1", "drone_1", "Drone_1"):
+        assert fleet.drone(alias) is ops[1], alias
+    out = asyncio.run(fleet.goto_all([
+        {"drone": "d0", "east": 1, "north": 0, "up": 10},
+        {"drone": "drone_1", "east": 2, "north": 0, "up": 10}]))
+    assert "drone_0 arrived" in out and "drone_1 arrived" in out
+
+
+def test_drone_still_rejects_garbage_ids():
+    import pytest
+    fleet = FleetOps([FakeOps(0)])
+    for bad in ("dx", "drone_", "seven", None):
+        with pytest.raises((ValueError, TypeError)):
+            fleet.drone(bad)

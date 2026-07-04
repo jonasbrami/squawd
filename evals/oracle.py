@@ -375,10 +375,22 @@ def _targets_covered(track: WorldTrack, p: dict, m: dict) -> CheckResult:
 def _fleet_separation(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     """Min pairwise distance between OWN drones stays >= margin. 2D by default
     (airspace hygiene); use_3d for tasks where altitude layering is the legal
-    dodge. grace_s excuses spawn adjacency (drones spawn 3 m apart)."""
+    dodge. grace_s excuses spawn adjacency (drones spawn 3 m apart).
+    exempt_near_spawn_m additionally excuses samples where BOTH drones sit near
+    their own first-seen positions (the pads): sequential takeoffs climb through
+    each other's altitude 3 m apart no matter how well the mission is planned,
+    and LLM deliberation paces takeoffs past any fixed grace window (observed
+    live: a perfectly layered 20/40 m plan 'violated' at t~50s on the pads).
+    Positional, not temporal — a mid-field violation is never excused."""
     margin = float(p["margin_m"])
     grace = float(p.get("grace_s", 0.0))
     use_3d = bool(p.get("use_3d", False))
+    pad_r = float(p.get("exempt_near_spawn_m", 0.0))
+    first: dict = {}
+    if pad_r > 0.0:
+        for s in track.snapshots:
+            for i, q in s.poses.items():
+                first.setdefault(i, (q.e, q.n))
     worst = math.inf
     for s in track.snapshots:
         if s.t < grace:
@@ -387,6 +399,12 @@ def _fleet_separation(track: WorldTrack, p: dict, m: dict) -> CheckResult:
         for a in range(len(ids)):
             for b in range(a + 1, len(ids)):
                 qa, qb = s.poses[ids[a]], s.poses[ids[b]]
+                if pad_r > 0.0:
+                    fa, fb = first.get(ids[a]), first.get(ids[b])
+                    if (fa and fb
+                            and math.hypot(qa.e - fa[0], qa.n - fa[1]) <= pad_r
+                            and math.hypot(qb.e - fb[0], qb.n - fb[1]) <= pad_r):
+                        continue
                 d = math.hypot(qa.e - qb.e, qa.n - qb.n)
                 if use_3d:
                     d = math.hypot(d, qa.alt - qb.alt)

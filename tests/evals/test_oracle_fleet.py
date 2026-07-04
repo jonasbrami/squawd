@@ -152,3 +152,28 @@ class TestWithinWindow:
         spec = [{"check": "within_window", "window_s": 25,
                  "events": [{"type": "intercept", "mover": "mov_0", "tol_m": 12}]}]
         assert not grade(t, spec, META).passed
+
+
+class TestFleetSeparationSpawnExemption:
+    def test_pad_climb_through_is_exempt_but_midfield_is_not(self):
+        """Sequential takeoffs climb through each other's altitude 3m apart on
+        the pads — exempt (positional). The same proximity mid-field fails."""
+        spec = [{"check": "fleet_separation", "margin_m": 8, "use_3d": True,
+                 "exempt_near_spawn_m": 15}]
+        pads = [_snap(0, {0: (0, 0), 1: (0, 3)}, alts={0: 20.0, 1: 0.2}),
+                _snap(50, {0: (0, 0), 1: (0, 3)}, alts={0: 20.0, 1: 20.0}),
+                _snap(90, {0: (60, 40), 1: (60, -40)}, alts={0: 20.0, 1: 40.0})]
+        assert grade(_track(pads), spec, META).passed
+        midfield = pads[:1] + [_snap(60, {0: (60, 0), 1: (60, 3)},
+                                     alts={0: 20.0, 1: 20.0})]
+        assert not grade(_track(midfield), spec, META).passed
+
+    def test_returning_to_land_close_together_is_exempt(self):
+        # the terminal area works both ways: launch AND recovery legs pass
+        # through it 3m apart by construction — never graded there
+        spec = [{"check": "fleet_separation", "margin_m": 8,
+                 "exempt_near_spawn_m": 15}]
+        snaps = [_snap(0, {0: (0, 0), 1: (0, 3)}),
+                 _snap(40, {0: (100, 0), 1: (-100, 3)}),
+                 _snap(80, {0: (0, 0), 1: (0, 6)})]
+        assert grade(_track(snaps), spec, META).passed

@@ -18,10 +18,27 @@ class FleetOps:
     def n(self) -> int:
         return len(self._ops)
 
-    def drone(self, i: int):
-        if not 0 <= int(i) < len(self._ops):
-            raise ValueError(f"unknown drone {i} (fleet of {len(self._ops)})")
-        return self._ops[int(i)]
+    @staticmethod
+    def _coerce_id(i) -> int:
+        """Accept the names models actually use: 0, "0", "d0", "drone_0" — the
+        tool namespaces are called d0/d1 and scan says drone_1, so an operator
+        LLM passing those strings is right, not wrong (observed live: opus's
+        goto_all was rejected for '"drone":"d0"' and had to fall back)."""
+        if isinstance(i, str):
+            s = i.strip().lower()
+            for prefix in ("drone_", "drone", "d"):
+                if s.startswith(prefix) and s[len(prefix):].isdigit():
+                    return int(s[len(prefix):])
+        return int(i)
+
+    def drone(self, i):
+        try:
+            idx = self._coerce_id(i)
+        except (TypeError, ValueError):
+            raise ValueError(f"unknown drone {i!r} (fleet of {len(self._ops)})")
+        if not 0 <= idx < len(self._ops):
+            raise ValueError(f"unknown drone {i!r} (fleet of {len(self._ops)})")
+        return self._ops[idx]
 
     async def goto_all(self, moves: list[dict]) -> str:
         tasks = []

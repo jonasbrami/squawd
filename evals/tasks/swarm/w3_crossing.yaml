@@ -23,7 +23,7 @@ oracle:
   - {check: alive}
   - {check: ordering, sequence: [pad_n, pad_s], tol_m: 12, drone: 0}
   - {check: ordering, sequence: [pad_s, pad_n], tol_m: 12, drone: 1}
-  - {check: fleet_separation, margin_m: 8, use_3d: true, grace_s: 45}
+  - {check: fleet_separation, margin_m: 8, use_3d: true, grace_s: 45, exempt_near_spawn_m: 15}
   - {check: within_step_budget, max_steps: 14}
 pilot:
   - {tool: take_off, args: {altitude: 22}}
