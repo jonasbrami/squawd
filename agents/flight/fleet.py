@@ -1,0 +1,41 @@
+"""FleetOps: one object owning every drone's FlightOps, plus the fleet-level
+movement primitive.
+
+`goto_all` exists because the per-drone `goto` BLOCKS until arrival: an
+operator commanding drones one tool call at a time would serialize the fleet
+— the harness, not the model, would forbid coordination (the blocking-goto
+lesson at fleet granularity). goto_all issues every move concurrently and
+returns when ALL arrive, reporting per-drone outcomes (one drone's error
+never hides the others')."""
+import asyncio
+
+
+class FleetOps:
+    def __init__(self, ops_list) -> None:
+        self._ops = list(ops_list)
+
+    @property
+    def n(self) -> int:
+        return len(self._ops)
+
+    def drone(self, i: int):
+        if not 0 <= int(i) < len(self._ops):
+            raise ValueError(f"unknown drone {i} (fleet of {len(self._ops)})")
+        return self._ops[int(i)]
+
+    async def goto_all(self, moves: list[dict]) -> str:
+        tasks = []
+        for mv in moves:
+            ops = self.drone(mv["drone"])   # validate BEFORE launching any move
+            tasks.append((mv["drone"], ops.goto(
+                east=mv.get("east"), north=mv.get("north"), up=mv.get("up"),
+                wait=True)))
+        results = await asyncio.gather(*(t for _, t in tasks),
+                                       return_exceptions=True)
+        lines = []
+        for (i, _), r in zip(tasks, results):
+            if isinstance(r, BaseException):
+                lines.append(f"drone_{i} ERROR: {r}")
+            else:
+                lines.append(str(r))
+        return "\n".join(lines)
