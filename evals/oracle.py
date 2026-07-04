@@ -25,9 +25,19 @@ class GradeResult:
     checks: list[CheckResult]
 
 
+def _sel(poses: dict, p: dict) -> list:
+    """Poses considered by a check: one drone when the check carries `drone:`
+    (per-drone assignments — e.g. grading a swap), else the whole fleet."""
+    if "drone" in p:
+        pose = poses.get(int(p["drone"]))
+        return [pose] if pose is not None else []
+    return list(poses.values())
+
+
 def _reached(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     xy = track.objects[p["target"]]
-    d = track.min_dist_to(xy)
+    d = min((math.hypot(q.e - xy[0], q.n - xy[1]) for s in track.snapshots
+             for q in _sel(s.poses, p)), default=math.inf)
     tol = float(p["tol_m"])
     return CheckResult("reached", d <= tol, d, f"min dist {d:.1f}m to {p['target']} (tol {tol:g})")
 
@@ -57,7 +67,7 @@ def _within_step_budget(track: WorldTrack, p: dict, m: dict) -> CheckResult:
 
 
 def _first_reach_time(track: WorldTrack, xy: tuple, tol: float,
-                      after: float | None = None) -> float | None:
+                      after: float | None = None, p: dict | None = None) -> float | None:
     """First time any drone comes within `tol` of `xy`. If `after` is given, only
     consider samples strictly after that time — this lets `ordering` chain reaches so a
     waypoint that coincides with an earlier position (e.g. return-to-home) is matched at
@@ -65,7 +75,7 @@ def _first_reach_time(track: WorldTrack, xy: tuple, tol: float,
     for s in track.snapshots:
         if after is not None and s.t <= after:
             continue
-        for pose in s.poses.values():
+        for pose in _sel(s.poses, p or {}):
             if math.hypot(pose.e - xy[0], pose.n - xy[1]) <= tol:
                 return s.t
     return None
@@ -90,7 +100,7 @@ def _ordering(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     times: list[float | None] = []
     prev: float | None = None
     for t in seq:
-        rt = _first_reach_time(track, track.objects[t], tol, after=prev)
+        rt = _first_reach_time(track, track.objects[t], tol, after=prev, p=p)
         times.append(rt)
         if rt is None:
             break
@@ -218,7 +228,7 @@ def _final_pos(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     tol = float(p["tol_m"])
     last = track.snapshots[-1] if track.snapshots else None
     d = min((math.hypot(pose.e - xy[0], pose.n - xy[1])
-             for pose in last.poses.values()), default=math.inf) if last else math.inf
+             for pose in _sel(last.poses, p)), default=math.inf) if last else math.inf
     shown = "inf" if d == math.inf else f"{d:.1f}m"
     return CheckResult("final_pos", d <= tol, 0.0 if d == math.inf else d,
                        f"ended {shown} from {p['target']} (tol {tol:g})")
@@ -344,6 +354,50 @@ def _escort(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"(max {max_gap:g}s)")
 
 
+def _targets_covered(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Every listed target visited within tol by SOME drone. Drone-agnostic on
+    purpose: budgets (fleet path, wall clock) punish solo tours, not this check."""
+    tol = float(p["tol_m"])
+    missed = []
+    for t in p["targets"]:
+        xy = track.objects[t]
+        d = min((math.hypot(q.e - xy[0], q.n - xy[1])
+                 for s in track.snapshots for q in s.poses.values()),
+                default=math.inf)
+        if d > tol:
+            missed.append(t)
+    got = len(p["targets"]) - len(missed)
+    return CheckResult("targets_covered", not missed, float(got),
+                       f"covered {got}/{len(p['targets'])} within {tol:g}m; "
+                       f"missed {missed}")
+
+
+def _fleet_separation(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Min pairwise distance between OWN drones stays >= margin. 2D by default
+    (airspace hygiene); use_3d for tasks where altitude layering is the legal
+    dodge. grace_s excuses spawn adjacency (drones spawn 3 m apart)."""
+    margin = float(p["margin_m"])
+    grace = float(p.get("grace_s", 0.0))
+    use_3d = bool(p.get("use_3d", False))
+    worst = math.inf
+    for s in track.snapshots:
+        if s.t < grace:
+            continue
+        ids = sorted(s.poses)
+        for a in range(len(ids)):
+            for b in range(a + 1, len(ids)):
+                qa, qb = s.poses[ids[a]], s.poses[ids[b]]
+                d = math.hypot(qa.e - qb.e, qa.n - qb.n)
+                if use_3d:
+                    d = math.hypot(d, qa.alt - qb.alt)
+                worst = min(worst, d)
+    ok = worst >= margin or worst == math.inf
+    shown = "inf" if worst == math.inf else f"{worst:.1f}m"
+    return CheckResult("fleet_separation", ok, 0.0 if worst == math.inf else worst,
+                       f"min own-fleet separation {shown} (margin {margin:g}"
+                       f"{', 3D' if use_3d else ''})")
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
@@ -360,6 +414,8 @@ CHECKS = {
     "alt_ceiling": _alt_ceiling,
     "final_pos": _final_pos,
     "min_visited": _min_visited,
+    "targets_covered": _targets_covered,
+    "fleet_separation": _fleet_separation,
     "intercept": _intercept,
     "dwell_moving": _dwell_moving,
     "avoid_moving": _avoid_moving,
