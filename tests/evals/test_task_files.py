@@ -47,3 +47,27 @@ def test_dynamic_tasks_load_with_dual_baselines():
     # every rung above the entry rung carries the must-FAIL naive baseline
     for p in paths[1:]:
         assert load_task(p).null_pilot, f"{p} needs a null_pilot"
+
+
+def test_swarm_tasks_load_operator_layer_and_verified_geometry():
+    import glob
+    import math
+    from evals.spec import load_task
+
+    paths = sorted(glob.glob("evals/tasks/swarm/*.yaml"))
+    assert len(paths) == 3   # w1-w3 (w4/w5 arrive with the dynamic fleet rung)
+    for p in paths:
+        t = load_task(p)
+        assert t.target_layer == "operator" and t.suite == "swarm"
+        assert t.setup.n_drones == 2
+        assert t.pilot, f"{p} needs a pilot"
+
+    # w2 allocation numbers: budget must separate optimal from interleaved+solo
+    A, B, C, D = (120, 20), (140, -30), (-100, 60), (-90, -70)
+    s0, s1 = (0, 0), (0, 3)
+    d = math.dist
+    optimal = d(s0, A) + d(A, B) + d(s1, C) + d(C, D)
+    interleaved = d(s0, A) + d(A, C) + d(s1, B) + d(B, D)
+    solo = d(s0, C) + d(C, D) + d(D, B) + d(B, A)
+    assert optimal < 460 < 500 < min(interleaved, solo), \
+        (optimal, interleaved, solo)
