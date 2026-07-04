@@ -55,12 +55,17 @@ def test_swarm_tasks_load_operator_layer_and_verified_geometry():
     from evals.spec import load_task
 
     paths = sorted(glob.glob("evals/tasks/swarm/*.yaml"))
-    assert len(paths) == 3   # w1-w3 (w4/w5 arrive with the dynamic fleet rung)
+    assert len(paths) == 5   # w1-w5
     for p in paths:
         t = load_task(p)
         assert t.target_layer == "operator" and t.suite == "swarm"
         assert t.setup.n_drones == 2
         assert t.pilot, f"{p} needs a pilot"
+
+    # w4 uses dynamic world; all others use default
+    assert load_task("evals/tasks/swarm/w4_double_intercept.yaml").setup.world == "dynamic"
+    for name in ["w1_split_reach", "w2_allocation", "w3_crossing", "w5_sync_mark"]:
+        assert load_task(f"evals/tasks/swarm/{name}.yaml").setup.world == "default"
 
     # w2 allocation numbers: budget must separate optimal from interleaved+solo
     A, B, C, D = (120, 20), (140, -30), (-100, 60), (-90, -70)

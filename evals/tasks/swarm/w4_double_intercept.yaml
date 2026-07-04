@@ -1,0 +1,46 @@
+# evals/tasks/swarm/w4_double_intercept.yaml
+# Cooperative dynamics: tag the courier (N edge) AND the rover (SE plaza)
+# within 25s of each other. The sites are ~230m apart: a solo drone tags them
+# >=45s apart (gate-verified null) — only a split fleet makes the window.
+id: w4_double_intercept
+target_layer: operator
+suite: swarm
+difficulty: {plan_depth: 3, coordination: 4, ambiguity: 2, spatial: 3, swarm: 4, dynamic: 3}
+setup:
+  world: dynamic
+  n_drones: 2
+  spawn: home
+  seed_objects: []
+prompt: "You operate BOTH drones. Two contacts must be tagged nearly
+  simultaneously (within 25 seconds of each other): get a drone within 12 m of
+  contact mov_0 (patrolling the far north) and within 12 m of contact mov_1
+  (circling the plaza to your southeast). One drone cannot do both in time —
+  split up, observe each contact's motion, and time your tags together."
+budget: {wall_clock_s: 300, max_steps: 18}
+oracle:
+  - {check: alive}
+  - {check: within_window, window_s: 25, events: [
+      {type: intercept, mover: mov_0, tol_m: 12},
+      {type: intercept, mover: mov_1, tol_m: 12}]}
+  - {check: within_step_budget, max_steps: 18}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: take_off, drone: 1, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 10}}
+  - {tool: set_speed, drone: 1, args: {speed: 10}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 100, up: 12},
+                                    {drone: 1, east: 70, north: -65, up: 12}]}}
+  - {behavior: lead_chaser, args: {mover: mov_0, rounds: 4, lead_s: 8, alt: 12}}
+  - {behavior: lead_chaser, drone: 1, args: {mover: mov_1, rounds: 4, lead_s: 8, alt: 12}}
+null_pilot:
+  # solo attempt: tag the courier, then transit ~230m and tag the rover
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {behavior: lead_chaser, args: {mover: mov_0, rounds: 3, lead_s: 8, alt: 12}}
+  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 5, lead_s: 8, alt: 12}}
+# NOTE for the implementer: the pilot's sequential `lead_chaser` steps run one
+# drone at a time — drone 1 waits while drone 0 chases. If the gate shows the
+# window missed because of serialization, replace the two chaser steps with a
+# single `goto_all` to each mover's predicted position (positions are
+# deterministic post-anchor: courier at phase t on the N100 line, rover on the
+# r=35 circle) and re-gate; keep whichever passes 2/2.
