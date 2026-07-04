@@ -140,8 +140,11 @@ class _FerryAction:
 
     async def return_to_launch(self):
         self.calls.append("rtl")
-        # PX4 home was re-set AT ARMING (the ferry spot): RTL flies back THERE.
-        if self.world.state == "airborne_away":
+        # PX4 home was re-set AT ARMING (the ferry spot): RTL from ANY airborne
+        # state flies back THERE — including from over world home (observed live:
+        # the RTL wave caught the ferried drone mid-descent and teleported it
+        # back to the w2 checkpoint it was stranded at).
+        if self.world.state in ("airborne_away", "airborne_home"):
             self.world.state = "landed_away"
 
 
@@ -189,3 +192,15 @@ def test_soft_reset_ferry_triggers_on_disarmed_even_with_drifted_altitude():
     r = asyncio.run(soft_reset([s], w, None, 1, timeout_s=5.0, poll_interval_s=0.01))
     assert r.ok, r.reason
     assert "goto_location" in s.action.calls
+
+
+def test_soft_reset_never_rtls_a_ferried_drone():
+    """The RTL wave must EXCLUDE ferried drones: they re-armed away from home, so
+    their PX4 home is the stranding point — RTL would undo the ferry (observed
+    live at N=2: ferry 'succeeded', RTL flew the drone straight back out)."""
+    w = _FerryWorld()
+    s = _FerrySystem(w)
+    r = asyncio.run(soft_reset([s], w, None, 1, timeout_s=5.0, poll_interval_s=0.01))
+    assert r.ok, r.reason
+    assert "rtl" not in s.action.calls
+    assert w.state == "home"

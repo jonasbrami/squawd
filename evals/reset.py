@@ -95,7 +95,21 @@ async def _ferry_home(s, world, bridge, i: int, hx: float, hy: float,
         await s.action.land()
     except Exception as e:
         return f"drone_{i} ferry land failed: {e}"
-    return ""
+    # Wait for TOUCHDOWN (disarm), not just the land command. The ferry re-armed
+    # away from home, so this drone's PX4 home is the STRANDING POINT — if
+    # soft_reset's RTL wave catches it still airborne over world home, RTL
+    # faithfully flies it straight back to where it was stranded (observed live:
+    # ferry 'succeeded', drone teleported back to the w2 checkpoint).
+    for _ in range(int(60 / max(poll_interval_s, 0.05))):
+        await asyncio.sleep(poll_interval_s)
+        try:
+            async for a in s.telemetry.armed():
+                if a is False:
+                    return ""
+                break
+        except Exception:
+            pass
+    return f"drone_{i} ferry landed-wait timed out (still armed at home)"
 
 
 async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
@@ -123,6 +137,7 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
         except Exception:
             pass
     ferry_err = ""
+    ferried: set[int] = set()
     for i, s in enumerate(systems):
         xy = world.world_xy(bridge, i)
         if xy is None or len(xy) < 3:
@@ -138,12 +153,17 @@ async def soft_reset(systems, world, bridge, n, tol_m=5.0, timeout_s=120.0,
         except Exception:
             pass
         if armed is False or (armed is None and xy[2] < 2.5):
+            ferried.add(i)
             ferry_err = await _ferry_home(s, world, bridge, i, hx, hy, poll_interval_s)
 
+    # NEVER RTL a ferried drone: it re-armed away from home, so its PX4 home is
+    # the stranding point — RTL would undo the ferry (see _ferry_home's landing
+    # wait for the same trap when the RTL wave races the ferry's descent).
+    rtl_ids = [i for i in range(len(systems)) if i not in ferried]
     results = await asyncio.gather(
-        *[s.action.return_to_launch() for s in systems],
+        *[systems[i].action.return_to_launch() for i in rtl_ids],
         return_exceptions=True)
-    errors = [f"drone_{i}: {r}" for i, r in enumerate(results)
+    errors = [f"drone_{i}: {r}" for i, r in zip(rtl_ids, results)
               if isinstance(r, Exception)]
     if errors:
         return ResetResult(False, "RTL command failed: " + "; ".join(errors))
