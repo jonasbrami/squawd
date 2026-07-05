@@ -24,6 +24,8 @@ Architecture:
   every turn; workers are cancelled on the way out either way.
 """
 import asyncio
+import os
+import shutil
 import time
 
 from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient,
@@ -33,6 +35,25 @@ from agents.flight import make_drone_options
 from agents.flight.fleet import FleetOps
 from agents.perception import situation_text
 from evals.runner import Trace
+
+
+def _agent_env(i: int) -> dict:
+    """Per-drone CLAUDE_CONFIG_DIR, SEEDED with credentials (same discipline as
+    agents/swarm/run.py agent_env): an empty isolated config dir silently
+    no-ops the client — observed live as a commander dispatching perfectly
+    while every drone sat parked (drone_steps=0). No creds found -> no
+    override (single shared config beats N dead clients)."""
+    base = os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
+    src = os.path.join(base, ".credentials.json")
+    if not os.path.exists(src):
+        return {}
+    d = f"/tmp/claude-agent-{i}"
+    os.makedirs(d, exist_ok=True)
+    try:
+        shutil.copy(src, os.path.join(d, ".credentials.json"))
+    except Exception:
+        return {}
+    return {"CLAUDE_CONFIG_DIR": d}
 
 STATUS_IDLE_S = 20.0   # nudge the commander if the fleet goes quiet this long
 _POLL_S = 0.05          # how often the drive loop rechecks reports/idle while waiting
@@ -156,8 +177,8 @@ class CommanderSession:
         opts = make_drone_options(
             i, self._systems[i], self._deps.world, self._deps.bridge, self._n,
             self._deps.cameras, report=lambda _m: None,
-            env={"CLAUDE_CONFIG_DIR": f"/tmp/claude-agent-{i}"},
-            model=self._drone_model, gzposes=self._deps.gzposes)
+            env=_agent_env(i), model=self._drone_model,
+            gzposes=self._deps.gzposes)
         return ClaudeSDKClient(options=opts)
 
     async def _worker(self, i: int) -> None:
