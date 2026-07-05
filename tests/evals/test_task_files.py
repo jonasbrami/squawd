@@ -55,16 +55,17 @@ def test_swarm_tasks_load_operator_layer_and_verified_geometry():
     from evals.spec import load_task
 
     paths = sorted(glob.glob("evals/tasks/swarm/*.yaml"))
-    assert len(paths) == 5   # w1-w5
+    assert len(paths) == 8   # w1-w5 + w7 n2/n4/n8 (2026-07-05)
     for p in paths:
         t = load_task(p)
         assert t.target_layer == "operator" and t.suite == "swarm"
-        assert t.setup.n_drones == 2
+        assert t.setup.n_drones in (2, 4, 8)
         assert t.pilot, f"{p} needs a pilot"
 
     # w4 uses dynamic world; all others use default
     assert load_task("evals/tasks/swarm/w4_double_intercept.yaml").setup.world == "dynamic"
-    for name in ["w1_split_reach", "w2_allocation", "w3_crossing", "w5_sync_mark"]:
+    for name in ["w1_split_reach", "w2_allocation", "w3_crossing", "w5_sync_mark",
+                 "w7_survey_n2", "w7_survey_n4", "w7_survey_n8"]:
         assert load_task(f"evals/tasks/swarm/{name}.yaml").setup.world == "default"
 
     # w2 allocation numbers: budget must separate optimal from interleaved+solo
@@ -76,6 +77,17 @@ def test_swarm_tasks_load_operator_layer_and_verified_geometry():
     solo = d(s0, C) + d(C, D) + d(D, B) + d(B, A)
     assert optimal < 460 < 500 < min(interleaved, solo), \
         (optimal, interleaved, solo)
+
+
+def test_w7_scaling_family_loads_and_scales():
+    from evals.spec import load_task
+
+    for n in (2, 4, 8):
+        t = load_task(f"evals/tasks/swarm/w7_survey_n{n}.yaml")
+        assert t.setup.n_drones == n and t.target_layer == "operator"
+        zones = [c["area"] for c in t.oracle if c["check"] == "coverage"]
+        assert zones == [f"zone_{k * (8 // n)}" for k in range(n)]
+        assert t.pilot and (n == 2 or t.null_pilot)
 
 
 def test_step_budget_check_matches_budget_everywhere():

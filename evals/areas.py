@@ -16,6 +16,14 @@ AREAS: dict[str, list[tuple[float, float]]] = {
     # bypass around the patrol a violation, so timing is the only way through.
     "fence_e110_south": [(105.0, -250.0), (115.0, -250.0), (115.0, -10.0), (105.0, -10.0)],
     "fence_e110_north": [(105.0, 30.0), (115.0, 30.0), (115.0, 250.0), (105.0, 250.0)],
+    # w7 survey ring: 8 60x60 zones at r=130, 45deg apart, zone_0 due east.
+    # Fleet N surveys zones {k*(8//N)}: N=2 -> E/W, N=4 -> the diagonals too,
+    # N=8 -> all. Same world, same geometry, only N scales.
+    **{f"zone_{k}": [(cx - 30.0, cy - 30.0), (cx + 30.0, cy - 30.0),
+                     (cx + 30.0, cy + 30.0), (cx - 30.0, cy + 30.0)]
+       for k, (cx, cy) in enumerate([(130.0, 0.0), (92.0, 92.0), (0.0, 130.0),
+                                     (-92.0, 92.0), (-130.0, 0.0), (-92.0, -92.0),
+                                     (0.0, -130.0), (92.0, -92.0)])},
 }
 
 

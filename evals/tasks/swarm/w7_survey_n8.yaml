@@ -1,0 +1,163 @@
+# evals/tasks/swarm/w7_survey_n8.yaml
+# Scaling capstone: N drones, N zones on the survey ring — one zone each is
+# the only plan that fits the budgets. Coverage is drone-agnostic; budgets and
+# separation make solo tours and sloppy airspace fail. Same geometry at every
+# N: only the fleet and the zone count scale.
+id: w7_survey_n8
+target_layer: operator
+suite: swarm
+difficulty: {plan_depth: 3, coordination: 3, ambiguity: 1, spatial: 3, swarm: 5}
+setup:
+  world: default
+  n_drones: 8
+  spawn: home
+  seed_objects: []
+prompt: "You operate ALL drones of this fleet. Survey every assigned zone:
+  each is a 60x60 m box — zone centers: E130 N0, E92 N92, E0 N130, E-92 N92,
+  E-130 N0, E-92 N-92, E0 N-130, E92 N-92. Cover at least 60% of every zone
+  (fly lawnmower passes ~25 m apart at 20 m altitude). Assign ONE drone per
+  zone and fly them concurrently; the fleet fuel budget only fits
+  one-zone-each. Keep drones 6 m apart outside the launch area."
+budget: {wall_clock_s: 600, max_steps: 40}
+oracle:
+  - {check: alive}
+  - {check: coverage, area: zone_0, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_1, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_2, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_3, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_4, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_5, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_6, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_7, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: fleet_separation, margin_m: 6, exempt_near_spawn_m: 20, grace_s: 30}
+  - {check: path_length, max_m: 3200}
+  - {check: within_step_budget, max_steps: 40}
+pilot:
+  - {tool: take_off, args: {altitude: 20}}
+  - {tool: take_off, drone: 1, args: {altitude: 18}}
+  - {tool: take_off, drone: 2, args: {altitude: 22}}
+  - {tool: take_off, drone: 3, args: {altitude: 16}}
+  - {tool: take_off, drone: 4, args: {altitude: 24}}
+  - {tool: take_off, drone: 5, args: {altitude: 14}}
+  - {tool: take_off, drone: 6, args: {altitude: 26}}
+  - {tool: take_off, drone: 7, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 10}}
+  - {tool: set_speed, drone: 1, args: {speed: 10}}
+  - {tool: set_speed, drone: 2, args: {speed: 10}}
+  - {tool: set_speed, drone: 3, args: {speed: 10}}
+  - {tool: set_speed, drone: 4, args: {speed: 10}}
+  - {tool: set_speed, drone: 5, args: {speed: 10}}
+  - {tool: set_speed, drone: 6, args: {speed: 10}}
+  - {tool: set_speed, drone: 7, args: {speed: 10}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: -25, up: 20},
+                                    {drone: 1, east: 62, north: 67, up: 18},
+                                    {drone: 2, east: -30, north: 105, up: 22},
+                                    {drone: 3, east: -62, north: 67, up: 16},
+                                    {drone: 4, east: -100, north: -25, up: 24},
+                                    {drone: 5, east: -62, north: -117, up: 14},
+                                    {drone: 6, east: -30, north: -155, up: 26},
+                                    {drone: 7, east: 62, north: -117, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: -25, up: 20},
+                                    {drone: 1, east: 122, north: 67, up: 18},
+                                    {drone: 2, east: 30, north: 105, up: 22},
+                                    {drone: 3, east: -122, north: 67, up: 16},
+                                    {drone: 4, east: -160, north: -25, up: 24},
+                                    {drone: 5, east: -122, north: -117, up: 14},
+                                    {drone: 6, east: 30, north: -155, up: 26},
+                                    {drone: 7, east: 122, north: -117, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: 0, up: 20},
+                                    {drone: 1, east: 122, north: 92, up: 18},
+                                    {drone: 2, east: 30, north: 130, up: 22},
+                                    {drone: 3, east: -122, north: 92, up: 16},
+                                    {drone: 4, east: -160, north: 0, up: 24},
+                                    {drone: 5, east: -122, north: -92, up: 14},
+                                    {drone: 6, east: 30, north: -130, up: 26},
+                                    {drone: 7, east: 122, north: -92, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 0, up: 20},
+                                    {drone: 1, east: 62, north: 92, up: 18},
+                                    {drone: 2, east: -30, north: 130, up: 22},
+                                    {drone: 3, east: -62, north: 92, up: 16},
+                                    {drone: 4, east: -100, north: 0, up: 24},
+                                    {drone: 5, east: -62, north: -92, up: 14},
+                                    {drone: 6, east: -30, north: -130, up: 26},
+                                    {drone: 7, east: 62, north: -92, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 25, up: 20},
+                                    {drone: 1, east: 62, north: 117, up: 18},
+                                    {drone: 2, east: -30, north: 155, up: 22},
+                                    {drone: 3, east: -62, north: 117, up: 16},
+                                    {drone: 4, east: -100, north: 25, up: 24},
+                                    {drone: 5, east: -62, north: -67, up: 14},
+                                    {drone: 6, east: -30, north: -105, up: 26},
+                                    {drone: 7, east: 62, north: -67, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: 25, up: 20},
+                                    {drone: 1, east: 122, north: 117, up: 18},
+                                    {drone: 2, east: 30, north: 155, up: 22},
+                                    {drone: 3, east: -122, north: 117, up: 16},
+                                    {drone: 4, east: -160, north: 25, up: 24},
+                                    {drone: 5, east: -122, north: -67, up: 14},
+                                    {drone: 6, east: 30, north: -105, up: 26},
+                                    {drone: 7, east: 122, north: -67, up: 12}]}}
+null_pilot:
+  # HALF the fleet (drone 0-3) tries to cover all eight zones by sweeping
+  # two zones each, sequentially -> misses coverage on the zones it never
+  # gets to at full budget, and blows wall-clock doing two full lawnmowers
+  # back-to-back per drone.
+  - {tool: take_off, args: {altitude: 20}}
+  - {tool: take_off, drone: 1, args: {altitude: 18}}
+  - {tool: take_off, drone: 2, args: {altitude: 22}}
+  - {tool: take_off, drone: 3, args: {altitude: 16}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {tool: set_speed, drone: 1, args: {speed: 12}}
+  - {tool: set_speed, drone: 2, args: {speed: 12}}
+  - {tool: set_speed, drone: 3, args: {speed: 12}}
+  # first pass: drone0->zone_0, drone1->zone_1, drone2->zone_2, drone3->zone_3
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: -25, up: 20},
+                                    {drone: 1, east: 62, north: 67, up: 18},
+                                    {drone: 2, east: -30, north: 105, up: 22},
+                                    {drone: 3, east: -62, north: 67, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: -25, up: 20},
+                                    {drone: 1, east: 122, north: 67, up: 18},
+                                    {drone: 2, east: 30, north: 105, up: 22},
+                                    {drone: 3, east: -122, north: 67, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: 0, up: 20},
+                                    {drone: 1, east: 122, north: 92, up: 18},
+                                    {drone: 2, east: 30, north: 130, up: 22},
+                                    {drone: 3, east: -122, north: 92, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 0, up: 20},
+                                    {drone: 1, east: 62, north: 92, up: 18},
+                                    {drone: 2, east: -30, north: 130, up: 22},
+                                    {drone: 3, east: -62, north: 92, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 25, up: 20},
+                                    {drone: 1, east: 62, north: 117, up: 18},
+                                    {drone: 2, east: -30, north: 155, up: 22},
+                                    {drone: 3, east: -62, north: 117, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: 25, up: 20},
+                                    {drone: 1, east: 122, north: 117, up: 18},
+                                    {drone: 2, east: 30, north: 155, up: 22},
+                                    {drone: 3, east: -122, north: 117, up: 16}]}}
+  # second pass: drone0->zone_4, drone1->zone_5, drone2->zone_6, drone3->zone_7
+  # (each drone now doubles its own sweep, sequentially)
+  - {tool: goto_all, args: {moves: [{drone: 0, east: -100, north: -25, up: 20},
+                                    {drone: 1, east: -62, north: -117, up: 18},
+                                    {drone: 2, east: -30, north: -155, up: 22},
+                                    {drone: 3, east: 62, north: -117, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: -160, north: -25, up: 20},
+                                    {drone: 1, east: -122, north: -117, up: 18},
+                                    {drone: 2, east: 30, north: -155, up: 22},
+                                    {drone: 3, east: 122, north: -117, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: -160, north: 0, up: 20},
+                                    {drone: 1, east: -122, north: -92, up: 18},
+                                    {drone: 2, east: 30, north: -130, up: 22},
+                                    {drone: 3, east: 122, north: -92, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: -100, north: 0, up: 20},
+                                    {drone: 1, east: -62, north: -92, up: 18},
+                                    {drone: 2, east: -30, north: -130, up: 22},
+                                    {drone: 3, east: 62, north: -92, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: -100, north: 25, up: 20},
+                                    {drone: 1, east: -62, north: -67, up: 18},
+                                    {drone: 2, east: -30, north: -105, up: 22},
+                                    {drone: 3, east: 62, north: -67, up: 16}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: -160, north: 25, up: 20},
+                                    {drone: 1, east: -122, north: -67, up: 18},
+                                    {drone: 2, east: 30, north: -105, up: 22},
+                                    {drone: 3, east: 122, north: -67, up: 16}]}}

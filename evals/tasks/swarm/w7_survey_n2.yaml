@@ -1,0 +1,46 @@
+# evals/tasks/swarm/w7_survey_n2.yaml
+# Scaling capstone: N drones, N zones on the survey ring — one zone each is
+# the only plan that fits the budgets. Coverage is drone-agnostic; budgets and
+# separation make solo tours and sloppy airspace fail. Same geometry at every
+# N: only the fleet and the zone count scale.
+id: w7_survey_n2
+target_layer: operator
+suite: swarm
+difficulty: {plan_depth: 3, coordination: 3, ambiguity: 1, spatial: 3, swarm: 5}
+setup:
+  world: default
+  n_drones: 2
+  spawn: home
+  seed_objects: []
+prompt: "You operate ALL drones of this fleet. Survey every assigned zone:
+  each is a 60x60 m box — zone centers: E130 N0 and E-130 N0. Cover at least
+  60% of every zone (fly lawnmower passes ~25 m apart at 20 m altitude).
+  Assign ONE drone per zone and fly them concurrently; the fleet fuel budget
+  only fits one-zone-each. Keep drones 6 m apart outside the launch area."
+budget: {wall_clock_s: 300, max_steps: 16}
+oracle:
+  - {check: alive}
+  - {check: coverage, area: zone_0, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: coverage, area: zone_4, min_pct: 60, radius_m: 15, cell_m: 20}
+  - {check: fleet_separation, margin_m: 6, exempt_near_spawn_m: 20, grace_s: 30}
+  - {check: path_length, max_m: 800}
+  - {check: within_step_budget, max_steps: 16}
+pilot:
+  - {tool: take_off, args: {altitude: 20}}
+  - {tool: take_off, drone: 1, args: {altitude: 18}}
+  - {tool: set_speed, args: {speed: 10}}
+  - {tool: set_speed, drone: 1, args: {speed: 10}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: -25, up: 20},
+                                    {drone: 1, east: -100, north: -25, up: 18}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: -25, up: 20},
+                                    {drone: 1, east: -160, north: -25, up: 18}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: 0, up: 20},
+                                    {drone: 1, east: -160, north: 0, up: 18}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 0, up: 20},
+                                    {drone: 1, east: -100, north: 0, up: 18}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: 25, up: 20},
+                                    {drone: 1, east: -100, north: 25, up: 18}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: 25, up: 20},
+                                    {drone: 1, east: -160, north: 25, up: 18}]}}
+# n2 is the family's entry configuration: no null (w1 already proved split-
+# or-die at N=2).
