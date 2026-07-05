@@ -99,9 +99,10 @@ pilot:
                                     {drone: 7, east: 122, north: -67, up: 12}]}}
 null_pilot:
   # HALF the fleet (drone 0-3) tries to cover all eight zones by sweeping
-  # two zones each, sequentially -> misses coverage on the zones it never
-  # gets to at full budget, and blows wall-clock doing two full lawnmowers
-  # back-to-back per drone.
+  # two zones each, sequentially. Tour completes in ~74s (well under budget)
+  # with coverage reaching 100% (cumulative, drone-agnostic). Fails on
+  # path_length (~3411m > 3200m limit) and fleet_separation (~0.7m at
+  # ring-center crossing of opposite-zone transit legs, violates 6m margin).
   - {tool: take_off, args: {altitude: 20}}
   - {tool: take_off, drone: 1, args: {altitude: 18}}
   - {tool: take_off, drone: 2, args: {altitude: 22}}

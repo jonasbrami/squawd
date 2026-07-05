@@ -63,9 +63,9 @@ pilot:
                                     {drone: 3, east: 30, north: -105, up: 16}]}}
 null_pilot:
   # HALF the fleet (drone 0, drone 1) tries to cover all four zones by
-  # sweeping two zones each, sequentially -> misses coverage on the
-  # zones it never gets to at full budget, and blows wall-clock doing
-  # two full lawnmowers back-to-back per drone.
+  # sweeping two zones each, sequentially. Tour completes in ~74s (well
+  # under budget) with coverage reaching 100% (cumulative, drone-agnostic).
+  # Fails on path_length: ~1713m > 1600m limit.
   - {tool: take_off, args: {altitude: 20}}
   - {tool: take_off, drone: 1, args: {altitude: 18}}
   - {tool: set_speed, args: {speed: 12}}
