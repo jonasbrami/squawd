@@ -190,7 +190,7 @@ class CommanderSession:
         counts COMMANDER tool calls only; trace.meta["drone_steps"] is the total
         across every dispatched drone task."""
         trace = Trace()
-        trace.meta = {"drone_steps": 0}
+        trace.meta["drone_steps"] = 0   # Trace.meta is first-class, default {}; mutate it
         self._done = False
         self._done_summary = ""
         self._reports = []
@@ -200,8 +200,10 @@ class CommanderSession:
 
         t0 = time.monotonic()
         reason = ""
-        self._workers = [asyncio.create_task(self._worker(i)) for i in range(self._n)]
+        # Build the client BEFORE spawning workers: a client-build failure must not
+        # leak unstarted worker tasks with nothing left to cancel them.
         client = self._build_commander_client()
+        self._workers = [asyncio.create_task(self._worker(i)) for i in range(self._n)]
 
         async def _drain_turn():
             async for msg in client.receive_response():

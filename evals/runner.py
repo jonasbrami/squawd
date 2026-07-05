@@ -1,5 +1,6 @@
-"""Run ONE eval cell (task x model x repeat) against a live sim, single_drone OR
-operator layer (per spec.target_layer; commander is not built yet).
+"""Run ONE eval cell (task x model x repeat) against a live sim: single_drone,
+operator, or commander layer (per spec.target_layer, or a --layer override carried
+in assignment["_layer"]).
 
 Builds the fleet of DroneAgents with the chosen model, soft-resets the world, starts
 the sampler, injects the task prompt at the (single- or fleet-scoped) Claude client,
@@ -70,6 +71,7 @@ class Trace:
         self.cost_usd: float | None = None
         self.num_turns: int | None = None
         self.api_ms: int | None = None
+        self.meta: dict = {}   # first-class side-channel; e.g. commander's drone_steps
 
     def observe(self, msg, now: float) -> None:
         if isinstance(msg, AssistantMessage):
@@ -121,6 +123,8 @@ class CellResult:
     difficulty: dict = field(default_factory=dict)
     suite: str | None = None
     transcript: dict = field(default_factory=dict)
+    layer: str = ""            # effective layer this cell ran under (spec/CLI override)
+    drone_steps: int = 0       # commander layer only: total tool calls across dispatched drones
 
     def to_transcript_row(self) -> dict:
         """One transcripts.jsonl line, keyed by the same triple as to_row so a cell
@@ -142,6 +146,8 @@ class CellResult:
             "suite": self.suite,
             "checks": [{"name": c.name, "passed": c.passed, "detail": c.detail}
                        for c in self.checks],
+            "layer": self.layer,
+            "drone_steps": self.drone_steps,
         }
 
 
@@ -261,14 +267,16 @@ def client_failed(trace: Trace) -> bool:
     return trace.model is None or trace.model == "<synthetic>"
 
 
-def require_layer_supported(spec) -> None:
-    """single_drone cells must be n==1; operator cells may be multi-drone;
-    the commander layer is a later phase — reject loudly, never silently."""
-    layer = getattr(spec, "target_layer", "single_drone")
-    if layer == "operator":
+def require_layer_supported(spec, layer: str | None = None) -> None:
+    """single_drone cells must be n==1; operator and commander cells may be
+    multi-drone. `layer` (a --layer CLI override) takes precedence over
+    spec.target_layer when given; an unrecognized layer is rejected loudly,
+    never silently."""
+    effective = layer or getattr(spec, "target_layer", "single_drone")
+    if effective in ("operator", "commander"):
         return
-    if layer == "commander":
-        raise ValueError(f"target_layer 'commander' not built yet (task {spec.id})")
+    if effective != "single_drone":
+        raise ValueError(f"unknown target_layer {effective!r} (task {spec.id})")
     if spec.setup.n_drones != 1:
         raise ValueError(
             f"single_drone runner requires n_drones==1, got {spec.setup.n_drones} "
@@ -308,11 +316,13 @@ async def _settle(world, bridge, n: int, deadline: float,
 
 async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
                    harness: "FleetHarness") -> CellResult:
-    require_layer_supported(spec)
+    effective_layer = assignment.get("_layer") or spec.target_layer
+    require_layer_supported(spec, effective_layer)
     label = assignment_label(assignment)
     base = CellResult(spec.id, label, repeat, passed=False)
     base.difficulty = dict(spec.difficulty)
     base.suite = spec.suite
+    base.layer = effective_layer
     n = spec.setup.n_drones  # 1 for single_drone tasks; >1 for operator tasks
 
     try:
@@ -337,11 +347,23 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     samp_task = asyncio.create_task(sampler.run())
     t_start = time.monotonic()
     t0_epoch = time.time()
-    client = harness.client_for(model_for(assignment, "drones"), n_drones=n)
     try:
-        async with client:  # fresh session per cell — no context bleed between cells
-            trace, crashed, reason = await _drive(
-                client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
+        if effective_layer == "commander":
+            # Deferred: evals.commander imports evals.runner.Trace, so importing it
+            # at module scope here would be a circular import.
+            from evals.commander import CommanderSession
+            session = CommanderSession(
+                deps, systems,
+                commander_model=(model_for(assignment, "commander")
+                                or model_for(assignment, "drones")),
+                drone_model=model_for(assignment, "drones"))
+            trace, crashed, reason = await session.run(
+                spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
+        else:
+            client = harness.client_for(model_for(assignment, "drones"), n_drones=n)
+            async with client:  # fresh session per cell — no context bleed between cells
+                trace, crashed, reason = await _drive(
+                    client, spec.prompt, spec.budget.wall_clock_s, spec.budget.max_steps)
         # HALT before settling: if the deadline cancelled a blocking goto mid-flight,
         # the PX4 setpoint keeps flying with nothing to stop it — drones ended cells
         # 150-770m out, RTL couldn't recover in the reset window, and the infra fuse
@@ -371,6 +393,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         base.infra_fail = True
         base.failure_reason = f"client never ran the model: {first[:120]}"
         base.transcript = trace.transcript(t0_epoch)
+        base.drone_steps = trace.meta.get("drone_steps", 0)
         return base
 
     track = sampler.track()
@@ -385,4 +408,5 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     base.latency_s = trace.first_action_t
     base.failure_reason = reason
     base.transcript = trace.transcript(t0_epoch)
+    base.drone_steps = trace.meta.get("drone_steps", 0)
     return base

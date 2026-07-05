@@ -1,5 +1,4 @@
-"""Agent task-eval orchestrator (single_drone and operator layers; commander not
-built yet).
+"""Agent task-eval orchestrator (single_drone, operator, and commander layers).
 
 For each (task x model-assignment x repeat) cell: soft-reset the world, run the drone
 agent on the task under its budget, grade the sampled WorldTrack, append a row to
@@ -45,6 +44,16 @@ def parse_assignments(spec_str: str) -> list[dict]:
             d[role.strip()] = tier.strip()
         out.append(d)
     return out
+
+
+def apply_layer_override(assignments: list[dict], layer: str) -> list[dict]:
+    """--layer spec (default) honors each task's own target_layer, so assignments
+    pass through untouched. Any other value rides along in assignment["_layer"] —
+    expand()/assignment_label() carry it verbatim, so cells/rows/resume keys pick
+    it up automatically; run_cell reads it as an override of spec.target_layer."""
+    if layer == "spec":
+        return assignments
+    return [{**a, "_layer": layer} for a in assignments]
 
 
 class InfraFuse:
@@ -104,6 +113,7 @@ async def main(args) -> None:
             print(f"pilot: null-baseline lane for {with_null}", flush=True)
     else:
         assignments = parse_assignments(args.assignments)
+    assignments = apply_layer_override(assignments, args.layer)
 
     out_dir = args.out or os.path.join(
         os.path.dirname(__file__), "out", time.strftime("%Y%m%d-%H%M%S"))
@@ -114,8 +124,9 @@ async def main(args) -> None:
     done = done_keys(_load_rows(jsonl))
     cells = expand(list(specs), assignments, args.k)
     if args.pilot:
+        null_assignments = apply_layer_override([{"drones": "pilot_null"}], args.layer)
         cells += expand([t for t, s in specs.items() if s.null_pilot],
-                        [{"drones": "pilot_null"}], args.k)
+                        null_assignments, args.k)
     cells = shuffled(cells, seed=args.seed)
 
     bridge = RosBridge(node_name="evals_runner")
@@ -190,7 +201,7 @@ async def main(args) -> None:
         bridge.shutdown()
 
 
-def _cli() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Agent task-eval harness (single-drone).")
     ap.add_argument("--tasks", nargs="+", required=True, help="task YAML paths")
     ap.add_argument("--assignments", default="drones=opus",
@@ -199,13 +210,20 @@ def _cli() -> None:
     ap.add_argument("--out", default=None, help="output dir (default evals/out/<ts>)")
     ap.add_argument("--seed", type=int, default=0,
                     help="cell-order shuffle seed (logged; resume-safe)")
+    ap.add_argument("--layer", default="spec", choices=["spec", "operator", "commander"],
+                    help="override every task's target_layer for this run (default "
+                         "'spec': honor each task YAML's own target_layer)")
     ap.add_argument("--pilot", action="store_true",
                     help="fly each task's declared ideal script with NO LLM (trap "
                          "gate): a task the pilot can't pass is a harness bug")
     ap.add_argument("--record", default=None,
                     help="dump POV + cinecam JPEG frames to this dir while cells "
                          "run (film containers only — needs a render backend)")
-    args = ap.parse_args()
+    return ap
+
+
+def _cli() -> None:
+    args = _build_arg_parser().parse_args()
     asyncio.run(main(args))
 
 
