@@ -66,7 +66,11 @@ COMMANDER_SYSTEM_PROMPT = (
     "Write dispatch tasks the way you'd brief a pilot who knows nothing else:\n"
     "exact coordinates, altitudes, hold times, constraints. Drones cannot hear\n"
     "each other; only you see the whole picture. Re-dispatch on bad reports.\n"
-    "Mind the fleet constraints in the mission (separation, budgets, windows)."
+    "Mind the fleet constraints in the mission (separation, budgets, windows).\n"
+    "EVERY tool call — including situation() — spends one step of a tight\n"
+    "mission budget. After dispatching, WAIT: drones report back when they\n"
+    "finish (you'll get their reports automatically). Do not poll situation()\n"
+    "while drones are simply en route; check it only to plan or verify."
 )
 
 
