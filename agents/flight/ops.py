@@ -227,6 +227,108 @@ class FlightOps:
         self._speed = max(v, 0.5)               # scales the arrival timeout
         return f"{self.name} speed {v:.1f} m/s"
 
+    async def track(self, target="", mode="shadow", alt=12.0, duration_s=60.0,
+                    within_m=15.0, speed=12.0, standoff_east=0.0,
+                    standoff_north=0.0) -> str:
+        """Real-time pursuit of a gz mover: 10 Hz offboard streaming of
+        position + velocity-feedforward setpoints (PX4's cascade is the PD
+        law — see agents/flight/track.py). Blocks until duration_s (capped)
+        elapses, or returns EARLY in intercept mode the moment the horizontal
+        gap closes within within_m."""
+        import time as _time
+
+        from mavsdk.offboard import (OffboardError, PositionNedYaw,
+                                     VelocityNedYaw)
+
+        from agents.flight import track as trk
+
+        if self.gzposes is None:
+            raise ValueError("track needs a dynamic world (no mover feed)")
+        name = str(target or "").strip()
+        poses = self.gzposes.poses()
+        if name not in poses:
+            known = ", ".join(sorted(poses)) or "none seen yet"
+            raise ValueError(f"unknown moving contact {name!r} (visible: {known})")
+        mode = str(mode or "shadow").strip().lower()
+        if mode not in ("shadow", "intercept"):
+            raise ValueError("mode must be 'shadow' or 'intercept'")
+        alt = float(alt)
+        within = max(1.0, float(within_m))
+        speed = min(abs(float(speed)), trk.MAX_SPEED_MPS) or trk.MAX_SPEED_MPS
+        dur = min(max(float(duration_s), 1.0), trk.MAX_DURATION_S)
+        so_e, so_n = float(standoff_east), float(standoff_north)
+
+        # world ENU -> PX4 local NED: constant offset from one simultaneous read
+        me = self.world.world_xy(self.bridge, self.i)
+        lp = self.bridge.latest(f"/px4_{self.i}/fmu/out/vehicle_local_position")
+        if me is None or lp is None:
+            raise ValueError("no position fix yet — take off first")
+        off_n, off_e, off_d = lp.x - me[1], lp.y - me[0], lp.z + me[2]
+
+        def _sp(ref_e, ref_n, ref_u, ff_ve, ff_vn, yaw):
+            return (PositionNedYaw(ref_n + off_n, ref_e + off_e,
+                                   off_d - ref_u, yaw),
+                    VelocityNedYaw(ff_vn, ff_ve, 0.0, yaw))
+
+        tp = poses[name]
+        yaw = math.degrees(math.atan2(tp[0] - me[0], tp[1] - me[1]))
+        pos, vel = _sp(me[0], me[1], alt, 0.0, 0.0, yaw)
+        for _ in range(5):                       # prime the stream before start()
+            await self.drone.offboard.set_position_velocity_ned(pos, vel)
+            await asyncio.sleep(0.05)
+        try:
+            await self.drone.offboard.start()
+        except OffboardError as e:
+            raise ValueError(f"offboard start refused: {e._result.result} — "
+                             "are you airborne?") from e
+
+        est = trk.TargetEstimator()
+        log = trk.TrackLog(within)
+        wall0 = _time.monotonic()
+        hit = None
+        try:
+            while _time.monotonic() - wall0 < dur:
+                tp = self.gzposes.poses().get(name)
+                me = self.world.world_xy(self.bridge, self.i)
+                if tp is None or me is None:
+                    await asyncio.sleep(1.0 / trk.CTRL_HZ)
+                    continue
+                est.update(self.gzposes.sim_time(), tp[0], tp[1])
+                gap = math.hypot(tp[0] - me[0], tp[1] - me[1])
+                log.sample(_time.monotonic() - wall0, gap)
+                if mode == "intercept" and gap <= within:
+                    hit = (_time.monotonic() - wall0, gap)
+                    break
+                ref_e, ref_n, ff_ve, ff_vn = trk.control_ref(
+                    mode, me[0], me[1], tp[0], tp[1], est, speed, so_e, so_n)
+                ref_u = trk.clamp_ref_alt(self.world, ref_e, ref_n, alt)
+                yaw = math.degrees(math.atan2(tp[0] - me[0], tp[1] - me[1]))
+                pos, vel = _sp(ref_e, ref_n, ref_u, ff_ve, ff_vn, yaw)
+                await self.drone.offboard.set_position_velocity_ned(pos, vel)
+                await asyncio.sleep(1.0 / trk.CTRL_HZ)
+        finally:
+            # leave offboard cleanly even on cancellation; Hold keeps position
+            try:
+                await asyncio.shield(self.drone.offboard.stop())
+            except Exception:
+                try:
+                    await self.drone.action.hold()
+                except Exception:
+                    pass
+
+        t_total = _time.monotonic() - wall0
+        v = (f"target v≈{est.speed():.1f} m/s ({est.ve:+.1f}E {est.vn:+.1f}N)"
+             if est.ready else "target velocity not established")
+        if mode == "intercept":
+            if hit:
+                return (f"{self.name} INTERCEPTED {name} at t+{hit[0]:.0f}s, "
+                        f"gap {hit[1]:.1f}m; {v}")
+            return (f"{self.name} did NOT close within {within:g}m of {name} "
+                    f"in {t_total:.0f}s (min gap {log.min_gap:.1f}m); {v}")
+        return (f"{self.name} shadowed {name} for {t_total:.0f}s: gap min "
+                f"{log.min_gap:.1f}m / mean {log.mean_gap():.1f}m, best "
+                f"contiguous ≤{within:g}m: {log.best_dwell:.0f}s; {v}")
+
     async def face(self, target="") -> str:
         tgt = str(target or "").strip().lower()
         if tgt in COMPASS:

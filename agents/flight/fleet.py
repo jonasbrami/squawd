@@ -56,3 +56,26 @@ class FleetOps:
             else:
                 lines.append(str(r))
         return "\n".join(lines)
+
+    async def track_all(self, tracks: list[dict]) -> str:
+        """Concurrent per-drone `track` calls — the pursuit counterpart of
+        goto_all (sequential blocking tracks would serialize the fleet and
+        blow every timing window)."""
+        keys = ("target", "mode", "alt", "duration_s", "within_m", "speed",
+                "standoff_east", "standoff_north")
+        tasks = []
+        for spec in tracks:
+            ops = self.drone(spec.get("drone", 0))   # validate BEFORE launching
+            kw = {k: spec[k] for k in keys if k in spec}
+            tasks.append((spec.get("drone", 0), ops.track(**kw)))
+        if not tasks:
+            raise ValueError("tracks is empty")
+        results = await asyncio.gather(*(t for _, t in tasks),
+                                       return_exceptions=True)
+        lines = []
+        for (i, _), r in zip(tasks, results):
+            if isinstance(r, BaseException):
+                lines.append(f"drone_{i} track ERROR: {r}")
+            else:
+                lines.append(str(r))
+        return "\n".join(lines)

@@ -139,13 +139,38 @@ def _drone_server(i, ops, cameras, report):
         except Exception as e:
             return _err(f"{name} run_mission failed: {e}")
 
+    @tool("track",
+          "REAL-TIME PURSUIT of a moving contact (a mov_* from scan): an onboard "
+          "10 Hz controller flies the chase for you — far better than chasing "
+          "with repeated gotos. mode='shadow' holds station on the moving target "
+          "(optional standoff_east/standoff_north offset, metres); "
+          "mode='intercept' flies a lead-collision course and returns EARLY the "
+          "moment the horizontal gap closes within within_m. Blocks up to "
+          "duration_s (max 120s) and reports min/mean gap, best contiguous dwell "
+          "within within_m, and the target's measured velocity. You must be "
+          "airborne first (take_off).",
+          {"target": {"type": "string"}, "mode": {"type": "string"},
+           "alt": {"type": "number"}, "duration_s": {"type": "number"},
+           "within_m": {"type": "number"}, "speed": {"type": "number"},
+           "standoff_east": {"type": "number"}, "standoff_north": {"type": "number"}})
+    async def track(args):
+        try:
+            return _ok(await ops.track(
+                args.get("target", ""), args.get("mode", "shadow"),
+                args.get("alt", 12.0), args.get("duration_s", 60.0),
+                args.get("within_m", 15.0), args.get("speed", 12.0),
+                args.get("standoff_east", 0.0), args.get("standoff_north", 0.0)))
+        except Exception as e:
+            return _err(f"{name} track failed: {e}")
+
     server = create_sdk_mcp_server(
         name=f"d{i}", tools=[take_off, fly, goto, orbit, hover, set_speed, face, land,
-                             report_tool, look, scan, run_mission])
+                             report_tool, look, scan, run_mission, track])
     allowed = [f"mcp__d{i}__take_off", f"mcp__d{i}__fly", f"mcp__d{i}__goto",
                f"mcp__d{i}__orbit", f"mcp__d{i}__hover", f"mcp__d{i}__set_speed",
                f"mcp__d{i}__face", f"mcp__d{i}__land", f"mcp__d{i}__report",
-               f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission"]
+               f"mcp__d{i}__look", f"mcp__d{i}__scan", f"mcp__d{i}__run_mission",
+               f"mcp__d{i}__track"]
     return server, allowed
 
 
@@ -174,6 +199,12 @@ def make_drone_options(i, drone, world, bridge, n, cameras, report, env=None, mo
             "`take_off`; `land`. Pass wait=false to goto/fly if you need to scan/look/report "
             "while moving. Prefer `goto`/`orbit` with named targets and the world coords from "
             "`scan` over hand-computing paths.\n"
+            "TRACK: for a MOVING contact (mov_* in scan), `track(target, mode, alt, "
+            "duration_s, within_m)` runs an onboard real-time pursuit controller — "
+            "mode='shadow' to stay on it (dwell tasks), mode='intercept' to close on it "
+            "fast (returns early on contact). One call beats any sequence of gotos at "
+            "following a mover; verify its returned gap/dwell numbers against your "
+            "task before reporting success.\n"
             "PLAN: when a task carries constraints (no-fly zones, altitude ceilings, distance "
             "or action budgets), write out your full waypoint plan FIRST and check every leg "
             "against every constraint before your first move — a leg that clips a no-fly zone "
@@ -239,8 +270,26 @@ def make_operator_options(systems, world, bridge, n, cameras, gzposes=None,
         except Exception as e:
             return _err(f"goto_all failed: {e}")
 
-    servers["fleet"] = create_sdk_mcp_server(name="fleet", tools=[goto_all])
+    @tool("track_all",
+          "Run REAL-TIME PURSUIT on SEVERAL drones at once: tracks=[{drone, "
+          "target, mode, alt, duration_s, within_m, speed}, ...] — same "
+          "semantics as each drone's `track`, but concurrent (sequential track "
+          "calls would leave the other drones parked and blow timing windows). "
+          "Returns one summary line per drone.",
+          {"tracks": {"type": "array", "items": {"type": "object", "properties": {
+              "drone": {"type": "number"}, "target": {"type": "string"},
+              "mode": {"type": "string"}, "alt": {"type": "number"},
+              "duration_s": {"type": "number"}, "within_m": {"type": "number"},
+              "speed": {"type": "number"}}}}})
+    async def track_all(args):
+        try:
+            return _ok(await fleet.track_all(args.get("tracks", [])))
+        except Exception as e:
+            return _err(f"track_all failed: {e}")
+
+    servers["fleet"] = create_sdk_mcp_server(name="fleet", tools=[goto_all, track_all])
     allowed.append("mcp__fleet__goto_all")
+    allowed.append("mcp__fleet__track_all")
     drone_words = ", ".join(f"d{i}" for i in range(n))
     return ClaudeAgentOptions(
         mcp_servers=servers, allowed_tools=allowed, setting_sources=[],
@@ -252,6 +301,9 @@ def make_operator_options(systems, world, bridge, n, cameras, gzposes=None,
             "several drones AT ONCE (per-drone goto/fly BLOCK until arrival, so "
             "moving drones one at a time leaves the rest parked — use goto_all "
             "for coordinated legs).\n"
+            "mcp__fleet__track_all runs real-time pursuit (shadow/intercept) on several "
+            "drones AT ONCE — for simultaneous moving-target work, one track_all call "
+            "beats interleaving anything by hand.\n"
             "PLAN: before your first move, assign each drone to its goals "
             "EXPLICITLY (which drone takes which target, at which altitude) and "
             "check the assignment against every constraint — separation minimums, "
