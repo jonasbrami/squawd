@@ -127,11 +127,22 @@ immediately rather than scan first.
 tiers × k2), `evals/out/pilot_track/` (gates). Pre-track control arm:
 `evals/out/dyn_v2_merged/`, `evals/out/swarm_e1_merged/`.
 
-## Open follow-ups
+## d4 follow-up — the latency floor is real (tested)
 
-- d4 unlock hypothesis: a tool-description line ("`track` estimates the target's
-  course itself — dispatch immediately, don't scan first") may convert d4 from
-  latency-blocked to solvable. One-line test, frozen oracle.
+The hypothesis: tell the model, in the `track` tool description, that the
+controller measures the target's velocity itself, so it should dispatch
+immediately instead of scanning first. Tested (`evals/out/track_d4_immediate/`,
+frozen oracle). The hint **worked directionally** — dispatch got leaner (opus
+8–9 steps vs 10–14; sonnet 5–7) and every intercept still closes to 0.1–2.4 m —
+but d4 stays **0/2**. The residual killer is the model's *thinking time between
+tool calls* (gap_p50 ~8 s), which the zero-latency scripted pilot never pays.
+The deadline is calibrated tighter than a single LLM reasoning turn, so **no
+controller can unlock d4 with an LLM in the loop** — d4 is a pure
+decision-latency probe. That is the sharpest possible confirmation of the
+through-line: the classical executor removes execution cost to zero, and what's
+left standing is exactly the latency the LLM cannot shed.
+
+## Open follow-ups
 - Reactive obstacle avoidance as a velocity-space repulsion term in the same
   10 Hz loop (the design doc's noted extension) — the user's "obstacle
   avoidance" ask, deferred from this pass.

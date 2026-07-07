@@ -145,7 +145,11 @@ def _drone_server(i, ops, cameras, report):
           "with repeated gotos. mode='shadow' holds station on the moving target "
           "(optional standoff_east/standoff_north offset, metres); "
           "mode='intercept' flies a lead-collision course and returns EARLY the "
-          "moment the horizontal gap closes within within_m. Blocks up to "
+          "moment the horizontal gap closes within within_m. The controller "
+          "MEASURES the target's velocity and computes the lead itself, so you "
+          "do NOT need to scan the target repeatedly first — for a fleeing or "
+          "deadline target, take off and track IMMEDIATELY (dithering lets a "
+          "fast mover escape). Blocks up to "
           "duration_s (max 120s) and reports min/mean gap, best contiguous dwell "
           "within within_m, and the target's measured velocity. You must be "
           "airborne first (take_off).",
