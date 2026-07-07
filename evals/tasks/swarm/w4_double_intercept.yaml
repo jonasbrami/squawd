@@ -37,16 +37,17 @@ oracle:
 # their own drone). Offline sweep of departure offsets -5..+15s keeps the
 # two first-intercepts 2-18s apart (window 25s). The naive_chaser
 # touch-ups are post-window insurance only.
+# Pilot (2026-07-06): track_all replaced the timed-ambush script — two
+# concurrent onboard pursuit controllers make the simultaneity trivial (both
+# intercepts land seconds apart, far inside the 25s window; the ambush comment
+# above is kept as the record of what discrete tools required). Altitudes
+# split 12/14 as airspace hygiene.
 pilot:
   - {tool: take_off, args: {altitude: 12}}
-  - {tool: take_off, drone: 1, args: {altitude: 12}}
-  - {tool: set_speed, args: {speed: 10}}
-  - {tool: set_speed, drone: 1, args: {speed: 10}}
-  - {tool: goto_all, args: {moves: [{drone: 0, east: 110, north: 100, up: 12},
-                                    {drone: 1, east: 94.8, north: -124.7, up: 12}]}}
-  - {tool: hover, args: {seconds: 35}}
-  - {behavior: naive_chaser, args: {mover: mov_0, rounds: 2, alt: 12}}
-  - {behavior: naive_chaser, drone: 1, args: {mover: mov_1, rounds: 2, alt: 12}}
+  - {tool: take_off, drone: 1, args: {altitude: 14}}
+  - {tool: track_all, args: {tracks: [
+      {drone: 0, target: mov_0, mode: intercept, alt: 12, within_m: 12, speed: 12, duration_s: 110},
+      {drone: 1, target: mov_1, mode: intercept, alt: 14, within_m: 12, speed: 12, duration_s: 110}]}}
 null_pilot:
   # solo attempt: tag the courier, then transit ~230m and tag the rover
   - {tool: take_off, args: {altitude: 12}}

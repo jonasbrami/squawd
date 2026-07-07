@@ -25,10 +25,12 @@ oracle:
   - {check: intercept, mover: mov_3, tol_m: 10, zone_target: dest4, zone_radius_m: 30}
   - {check: path_length, max_m: 300}
   - {check: within_step_budget, max_steps: 14}
+# Pilot (2026-07-06): the track primitive replaced the scripted lead_intercept
+# — the closed-form lead solution recomputed at 10 Hz (smoke: INTERCEPTED at
+# t+13s from home, velocity estimate exact, path well inside the 300m budget).
 pilot:
   - {tool: take_off, args: {altitude: 12}}
-  - {behavior: lead_intercept, args: {mover: mov_3, speed_mps: 12, obs_s: 5, alt: 12}}
-  - {behavior: naive_chaser, args: {mover: mov_3, rounds: 2, alt: 12}}
+  - {tool: track, args: {target: mov_3, mode: intercept, alt: 12, within_m: 10, speed: 12, duration_s: 90}}
 null_pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: set_speed, args: {speed: 12}}

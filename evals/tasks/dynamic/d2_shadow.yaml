@@ -26,10 +26,13 @@ oracle:
   - {check: alive}
   - {check: dwell_moving, mover: mov_1, tol_m: 15, hold_s: 45}
   - {check: within_step_budget, max_steps: 30}
+# Pilot (2026-07-06): the track primitive replaced shadow_loop's trajectory
+# fit as the ideal toolpath — an onboard 10 Hz pursuit controller holds the
+# rover directly (smoke: mean gap 2.2m, 56s dwell in a 60s call). 75s covers
+# ~14s transit from home + the 45s dwell + margin.
 pilot:
   - {tool: take_off, args: {altitude: 12}}
-  - {tool: set_speed, args: {speed: 12}}
-  - {behavior: shadow_loop, args: {mover: mov_1, alt: 12}}
+  - {tool: track, args: {target: mov_1, mode: shadow, alt: 12, duration_s: 75, within_m: 15}}
 null_pilot:
   - {tool: take_off, args: {altitude: 12}}
   - {tool: set_speed, args: {speed: 12}}
