@@ -98,7 +98,66 @@ the win is not a better controller but a faster commit — the LLM must learn th
 `track` estimates the course itself, so the optimal play is to dispatch it
 immediately rather than scan first.
 
-## Cost / effort notes
+## How the lock-on works — mechanisms & cost-effectiveness
+
+Three classical mechanisms, one per sub-problem (`agents/flight/track.py`, pure &
+unit-tested; `FlightOps.track` streams to PX4 offboard in `agents/flight/ops.py`):
+
+**1. Sense — where is the target.** `GzPoses` ground-truth pose at ~49 Hz
+(`agents/core/gzposes.py`), position only. *Honest caveat:* this is ground truth.
+In the real world this box becomes a perception front-end (detector + data
+association + noisy-measurement filtering) — that is where cost genuinely shifts,
+and where a Kalman filter or learned tracker starts to earn its keep. Everything
+below is "cost-effective *given clean state*"; the primitive deliberately
+sidesteps the expensive part.
+
+**2. Estimate velocity — where is it going.** Finite difference between control
+ticks + an EMA (`V_EMA_ALPHA=0.35`) — algebraically a Benedict–Bordner α–β filter.
+
+| Option | Cost | Verdict here |
+|---|---|---|
+| Raw finite difference | ~0 flops | Usable on ground truth; jittery |
+| **α–β / EMA (used)** | a few flops/axis, no state matrix | **Best fit** — one line, one knob |
+| 1-D Kalman/axis | matrix bookkeeping | Equivalent to α–β at steady state for a constant-velocity model — no gain for the compute |
+| IMM / adaptive KF | heavy | Only pays off for a *maneuvering* target under *noisy* measurement — neither is true here |
+
+**3a. Shadow law — hold station.** PD-on-a-moving-reference with velocity
+feedforward, but *delegated to PX4's own cascade*: we stream
+`set_position_velocity_ned(target+standoff, v̂)` at 10 Hz and PX4's
+`v_des = v_ff + MPC_XY_P·(p_sp − p)` **is** the loop — zero new controller code,
+zero gain tuning, riding PX4's jerk-limited position controller. vs **pure
+pursuit** (aim at current position, cheapest possible): pursuit *structurally
+lags* by ≈ v/Kp and can never close on a fast mover — that lag is the difference
+between the 0.4 m lock and the ~20 m trail the goto-chasers gave. One feedforward
+term buys the whole improvement.
+
+**3b. Intercept law — catch a mover.** Closed-form lead-collision, recomputed
+every tick: solve `(v·v − s²)t² + 2(r·v)t + r·r = 0` for the smallest positive
+time-to-go, aim at `p_target + v·t_go`.
+
+| Option | Per-tick cost | Verdict here |
+|---|---|---|
+| **Closed-form lead (used)** | one quadratic + one sqrt, O(1) | **Best fit** |
+| Proportional Navigation (PN) | needs LOS-rate estimation | Built for *acceleration-limited, non-holonomic* vehicles (missiles); a multicopter is ~holonomic in velocity, so PN's advantage doesn't apply — and it can fail to converge on negative closing velocity |
+| MPC | solve an optimization every tick | Pays off only with *constraints* to honor — exactly the obstacle-avoidance extension, not plain intercept |
+| Learned / VLA controller | GPU inference | Data-hungry, heavy; classical wins decisively on a well-modeled task |
+
+Because the drone's speed cap (12 m/s) exceeds the target speed, a real positive
+root always exists — the closed form is not just cheap, it's *complete* for this
+regime.
+
+**The cost comparison that actually matters.** All of the above run in
+microseconds, deterministically, at 10 Hz — essentially free. The alternative
+they truly compete against isn't another controller, it's **the LLM in the
+real-time loop** — which is what the A/B above measured: d2 shadow and w4
+double-intercept were 0/2 at *every* tier (impossible at any token price), and a
+~free classical loop made them passable. Two-layer verdict: (1) among classical
+options, pick the cheapest that is also *complete* for the regime — the fancier
+methods solve noise/maneuvering/obstacles this task doesn't have; (2) classical
+vs LLM is a straight arbitrage — move the well-modeled microsecond work out of the
+expensive, high-latency model and leave it only the semantic decision.
+
+## Token cost / effort notes (the LLM planner)
 
 - d2 opus: ~$0.64, 7–11 steps, gap_p50 11 s (patient, deliberate). sonnet
   ~$1.39 (kept some gotos alongside track). haiku ~$0 but 48 ToolSearch calls.

@@ -30,6 +30,10 @@ delegate.
   autonomous drone agents — each with its own thinking — which report back.
 - **Drones that see** — the onboard camera frame is fed to Claude's vision, so a
   drone genuinely perceives what's below it (not just telemetry).
+- **Real-time target tracking** — a `track` tool where the LLM only *plans*
+  (which contact, `shadow` vs `intercept`) and a classical 10 Hz controller flies
+  the chase. This unlocks moving-target missions that are impossible with an LLM in
+  the fast loop at *any* model tier — see [the track benchmark](docs/benchmarks/EVALS-TRACK-2026-07-07.md).
 - **Per-drone onboard cameras** rendered on the GPU, streamed to the browser.
 - **A realistic "baylands" world** (PX4's coastal scene — road, grass, water,
   trees) by default. `WORLD=city` swaps in a procedural building world (the only
@@ -185,7 +189,9 @@ docs/                       # architecture, rendering, design specs (see Learn m
   and are self-contained objects, so a per-process entrypoint that constructs a single
   `DroneAgent(i)` (or the `CommanderAgent`) and awaits its `run()` would put a drone's
   agent on its own onboard computer with no protocol change.
-- Higher-level behaviors (follow, search patterns) as composable tools.
+- Higher-level behaviors as composable tools — moving-target `track`
+  (shadow/intercept) has shipped; search patterns and reactive obstacle avoidance
+  (a velocity-space repulsion term in the same 10 Hz control loop) are next.
 
 ---
 
@@ -198,4 +204,12 @@ docs/                       # architecture, rendering, design specs (see Learn m
   (Intel iGPU / NVIDIA dGPU / software GL), resolution knobs, and why the launcher
   is set up the way it is; measured drone-count ceilings in
   [docs/benchmarks/RESULTS.md](docs/benchmarks/RESULTS.md).
+- **[Experiment summary](docs/benchmarks/EXPERIMENTS-SUMMARY.md)** — the full
+  eval program: which Claude tier flies which missions, how tooling (not model
+  size) unlocked most capacity, the swarm role-mix inversion (*intelligence
+  belongs in the cockpit*), and the LLM-plans/classical-executes tracking split.
+  Deep dives: [screening](docs/benchmarks/EVALS-SCREEN-2026-07-02.md) ·
+  [dynamic targets](docs/benchmarks/EVALS-DYNAMIC-2026-07-04.md) ·
+  [swarms](docs/benchmarks/EVALS-SWARM-2026-07-05.md) ·
+  [tracking](docs/benchmarks/EVALS-TRACK-2026-07-07.md).
 - **[Design specs & plans](docs/superpowers/)** — how the system was designed, decision by decision.

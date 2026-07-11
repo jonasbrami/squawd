@@ -158,6 +158,11 @@ flowchart TD
   - **move** — `take_off`, `goto` (absolute world point or a named target like
     `bldg_7`/`drone_1`), `orbit` (circle a target, camera on it), `fly` (relative),
     `face`, `hover`, `set_speed`, `land`
+  - **track** — `track(target, mode, alt, duration_s, within_m, speed)` — real-time
+    pursuit of a **moving** contact: the LLM sets the target and mode
+    (`shadow`/`intercept`); a classical 10 Hz controller (`agents/flight/track.py`,
+    over PX4 offboard) flies the chase. This is the *LLM-plans / classical-executes*
+    split (see §6); the fleet form `track_all` runs several concurrently.
   - **sense** — `scan` (nearby buildings + drones with bearing, `agents.perception`),
     `look` (live camera frame **fed to Claude's vision** — see below)
   - **report** — `report(message)` (the `DroneAgent.report` method, exposed as a tool)
@@ -427,7 +432,60 @@ if the goal isn't met — so the chain terminates instead of ping-ponging.
 
 ---
 
-## 6. Why these choices
+## 6. Real-time tracking — LLM plans, classical controller executes
+
+The flight tools above are **discrete**: `goto` returns on arrival, so chasing a
+*moving* target means a stream of hops, each carrying ~4 s of fixed overhead
+(arrival detection, yaw, accel). Measured, that caps discrete-hop tracking far
+below a 3–6 m/s mover — an LLM in the real-time loop simply cannot hold station.
+The `track` tool resolves this by **splitting the stack**: the LLM stays the
+*planner* (which contact, `shadow` vs `intercept`, altitude, standoff, speed cap);
+a classical controller closes the loop at 10 Hz. The LLM never enters the fast
+loop — it makes one tool call and reads back a gap/dwell/velocity summary.
+
+```mermaid
+flowchart LR
+    LLM["🧠 LLM planner<br/>picks target + mode + params<br/>(one tool call)"]
+    CTRL["⚙️ classical controller · 10 Hz<br/>agents/flight/track.py"]
+    PX4["PX4 offboard cascade<br/>v_des = v_ff + MPC_XY_P·(p_sp − p)"]
+    GZ["ground-truth pose<br/>GzPoses ~49 Hz"]
+    LLM -- "track(mov_1, shadow, …)" --> CTRL
+    GZ -- "target position" --> CTRL
+    CTRL -- "position carrot + velocity feedforward" --> PX4
+```
+
+Three mechanisms, one per sub-problem (`agents/flight/track.py`, pure & unit-tested):
+
+1. **Sense** — `GzPoses` ground-truth position (~49 Hz). *No velocity in the message.*
+2. **Estimate velocity** — `TargetEstimator`: finite difference between ticks +
+   an EMA (`V_EMA_ALPHA=0.35`) — algebraically a Benedict–Bordner **α–β filter**.
+3. **Guide** —
+   - **shadow**: PD-on-a-moving-reference with velocity feedforward, *delegated to
+     PX4's own cascade* — we stream `set_position_velocity_ned(target+standoff,
+     v̂_target)` and PX4's `v_des = v_ff + MPC_XY_P·(p_sp − p)` **is** the PD law
+     (zero new controller code, zero gain tuning). The feedforward term is what
+     removes the pursuit lag (`≈ v/Kp`) that made discrete goto-chasing fail.
+   - **intercept**: closed-form lead-collision — solve
+     `(v·v − s²)t² + 2(r·v)t + r·r = 0` for the smallest positive time-to-go, aim
+     at `p_target + v·t_go`, recomputed every tick.
+
+**Why these mechanisms are cost-effective.** The choices are the *cheapest options
+that are also complete for this regime*, not accuracy compromises: α–β equals a
+Kalman filter at steady state for a constant-velocity target but with no matrix;
+the closed-form lead is O(1) where proportional navigation (built for
+acceleration-limited missiles) and MPC solve constraints a holonomic multicopter
+with speed margin doesn't have. The dominant win, though, is the *arbitrage* — the
+microsecond-scale, well-modeled work moves **out** of the expensive, high-latency
+LLM. Tasks that were **0/2 at every model tier** (holding a moving target;
+firing two intercepts at once) became passable once a ~free classical loop flew
+them. The calculus flips only with noisy/vision sensing (→ Kalman/learned
+tracker), a maneuvering target (→ IMM/PN), or obstacle-dense airspace (→ MPC — the
+velocity-space-repulsion extension noted as future work). Full comparison tables
+and the measured A/B: [benchmarks/EVALS-TRACK-2026-07-07.md](benchmarks/EVALS-TRACK-2026-07-07.md).
+
+---
+
+## 7. Why these choices
 
 - **uXRCE-DDS** bridges PX4 ⇄ ROS 2 so agents and the Observatory read telemetry as
   normal ROS topics, namespaced per drone (`/px4_0/...`, `/px4_1/...`).
@@ -444,7 +502,7 @@ if the goal isn't met — so the chain terminates instead of ping-ponging.
 
 ---
 
-## 7. Honest characterization
+## 8. Honest characterization
 
 - **Decoupling is real.** Agents never call each other; everything goes through
   ROS topics with latched QoS, so any agent can restart independently and the
