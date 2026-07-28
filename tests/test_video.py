@@ -2,7 +2,8 @@
 
 Browser-free: encode synthetic RGB frames, assert keyframe/delta structure and
 that the stream decodes back at the downscaled size, then exercise the VideoHub
-pump's fan-out and forced-keyframe-on-subscribe behaviour.
+pump's fan-out, forced-keyframe-on-subscribe behaviour, and the per-access-unit
+(seq, sim_stamp) stamping the overlay match depends on (ICD §8.2/§8.3).
 """
 import asyncio
 
@@ -10,6 +11,7 @@ import av
 import pytest
 from PIL import Image
 
+from agents.core.contact import Frame
 from agents.observatory.video import H264Encoder, VideoHub, _target_size
 
 
@@ -64,56 +66,69 @@ def test_stream_decodes_at_downscaled_size():
 
 
 class _FakeCameras:
-    """Minimal seq()/raw() camera stand-in with a bumpable frame."""
+    """snapshot()-only camera stand-in (the ICD §8.3 consumer API) with a
+    bumpable frame; sim_stamp advances 0.1 s per frame like the 10 Hz feed."""
 
-    def __init__(self, n):
-        self._n = n
-        self._seq = {i: 0 for i in range(n)}
+    def __init__(self):
+        self._f: Frame | None = None
 
-    def bump(self, i):
-        self._seq[i] += 1
+    def bump(self):
+        seq = (self._f.seq + 1) if self._f else 1
+        self._f = Frame(seq, seq * 0.1, 640, 360, _rgb(640, 360, 10 + seq))
 
-    def seq(self, i):
-        return self._seq[i]
-
-    def raw(self, i):
-        if self._seq[i] == 0:
-            return None
-        return (640, 360, _rgb(640, 360, 10 + self._seq[i]))
+    def snapshot(self, i):
+        return self._f
 
 
-def test_hub_subscriber_gets_keyframe_first_with_codec():
+def test_hub_subscriber_gets_stamped_keyframe_first():
     async def run():
-        cams = _FakeCameras(2)
-        for i in range(2):
-            cams.bump(i)                                 # a frame is available
-        hub = VideoHub(cams, 2, maxpx=320, interval=0.01)
+        cams = _FakeCameras()
+        cams.bump()                                      # a frame is available
+        hub = VideoHub(cams, 0, maxpx=320, interval=0.01)
         q = hub.subscribe()                              # self-starts the pump
-        msgs = []
         try:
-            for _ in range(2):                           # one keyframe per drone
-                msgs.append(await asyncio.wait_for(q.get(), timeout=2.0))
+            return await asyncio.wait_for(q.get(), timeout=2.0)
         finally:
             hub._pump_task.cancel()
             try:
                 await hub._pump_task
             except asyncio.CancelledError:
                 pass
-        return msgs
 
-    msgs = asyncio.run(run())
-    seen = {i: (is_key, codec) for i, is_key, codec, _ in msgs}
-    assert set(seen) == {0, 1}
-    for i, (is_key, codec) in seen.items():
-        assert is_key is True                            # first frame per drone is an IDR
-        assert codec and codec.startswith("avc1.42")
+    seq, stamp, is_key, codec, data = asyncio.run(run())
+    assert (seq, stamp) == (1, 0.1)                      # the frame's own stamps
+    assert is_key is True                                # first frame is an IDR
+    assert codec and codec.startswith("avc1.42")
+    assert len(data) > 0
+
+
+def test_hub_pumps_each_new_frame_with_its_sim_stamp():
+    async def run():
+        cams = _FakeCameras()
+        cams.bump()
+        hub = VideoHub(cams, 0, maxpx=320, interval=0.01)
+        q = hub.subscribe()
+        got = [await asyncio.wait_for(q.get(), timeout=2.0)]
+        cams.bump()                                      # seq 2, stamp 0.2
+        got.append(await asyncio.wait_for(q.get(), timeout=2.0))
+        hub._pump_task.cancel()
+        try:
+            await hub._pump_task
+        except asyncio.CancelledError:
+            pass
+        return got
+
+    first, second = asyncio.run(run())
+    assert (first[0], first[1]) == (1, 0.1)
+    assert (second[0], second[1]) == (2, 0.2)
+    assert second[2] is False                            # delta after the IDR
 
 
 def test_hub_skips_encoding_with_no_subscribers():
     async def run():
-        cams = _FakeCameras(1)
-        cams.bump(0)
-        hub = VideoHub(cams, 1, maxpx=320, interval=0.01)
+        cams = _FakeCameras()
+        cams.bump()
+        hub = VideoHub(cams, 0, maxpx=320, interval=0.01)
         task = asyncio.create_task(hub.pump())
         await asyncio.sleep(0.1)                          # no subscribers
         task.cancel()
@@ -121,9 +136,9 @@ def test_hub_skips_encoding_with_no_subscribers():
             await task
         except asyncio.CancelledError:
             pass
-        return hub._last                                 # nothing encoded => empty
+        return hub._last                                  # nothing encoded => 0
 
-    assert asyncio.run(run()) == {}
+    assert asyncio.run(run()) == 0
 
 
 if __name__ == "__main__":

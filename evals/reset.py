@@ -49,11 +49,14 @@ async def _ferry_home(s, world, bridge, i: int, hx: float, hy: float,
     the last error note. Never raises — check_home stays the arbiter."""
     from agents.core.geo import GeoPoint, offset_point
 
-    # arm + takeoff, retried through the transient post-land COMMAND_DENIED
+    # arm + takeoff, retried through the transient post-land COMMAND_DENIED;
+    # hold() first: PX4's Land nav_state has mode_req_prevent_arming, so arm()
+    # stays denied after any land() until the intention leaves Land.
     airborne = False
     err = ""
     for attempt in range(4):
         try:
+            await s.action.hold()
             await s.action.set_takeoff_altitude(FERRY_ALT_M)
             await s.action.arm()
             await s.action.takeoff()

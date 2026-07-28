@@ -122,6 +122,9 @@ class _FerryAction:
     async def set_takeoff_altitude(self, a):
         self.calls.append("set_takeoff_altitude")
 
+    async def hold(self):
+        self.calls.append("hold")
+
     async def arm(self):
         self.calls.append("arm")
 

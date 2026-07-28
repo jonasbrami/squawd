@@ -1,0 +1,43 @@
+{
+  "n_frames": 413,
+  "n_joined": 413,
+  "n_unjoined": 0,
+  "per_class": {
+    "decoy_red": {
+      "precision": 1.0,
+      "recall": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 317
+    },
+    "target": {
+      "precision": 0.47058823529411764,
+      "recall": 0.03980099502487562,
+      "tp": 8,
+      "fp": 9,
+      "fn": 193
+    },
+    "decoy_blue": {
+      "precision": 1.0,
+      "recall": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 218
+    }
+  },
+  "center_err_p50": 4.534474953779282,
+  "center_err_p95": 5.4185872793534875,
+  "center_err_by_range": {
+    "30-60m": {
+      "n": 8,
+      "p50": 4.534474953779282,
+      "p95": 5.4185872793534875
+    }
+  },
+  "id_switches": null,
+  "id_switch_rate": null,
+  "fragmentations": null,
+  "fragmentation_rate": null,
+  "backend": "blob",
+  "note": "decoy classes are expected recall-0 under single-class backends; id metrics need a track-id backend"
+}

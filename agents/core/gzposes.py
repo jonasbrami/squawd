@@ -52,6 +52,13 @@ class GzPoses:
         with self._lock:
             return self._sim_t
 
+    def velocities(self) -> dict:
+        """ContactProvider's third leg (ICD §5.1): truth feed carries no
+        velocity channel — returns {} so the O3 dispatch falls back to the
+        TargetEstimator EMA path. VisionContacts answers with real EKF
+        velocities."""
+        return {}
+
     def anchor(self) -> None:
         """Re-zero every mover's trajectory phase (mover_system listens on the
         anchor topic). The eval runner calls this during reset so each repeat

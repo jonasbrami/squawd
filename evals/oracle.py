@@ -471,6 +471,31 @@ def _within_window(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"events {spread:.1f}s apart (window {win:g}s)")
 
 
+def _identified_target(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """The agent locked the RIGHT contact (design §3.8, review Codex-B5): the
+    runner's TargetLockEvent path (evals/perceive_eval.note_target_lock) records
+    the first track/goto aimed at a vis_* id and associates the contact's
+    measurement to oracle truth AT that sim moment; run_meta carries the
+    resulting truth id. Grades PERCEPTION (identity at lock time), never the
+    report text (§4.3). Params: truth = the true mover's name; optional
+    max_assoc_m bounds the association error we're willing to trust."""
+    lock = m.get("target_lock")
+    want = p["truth"]
+    if not lock:
+        return CheckResult("identified_target", False, 0.0,
+                           "no vis_* lock (track/goto never targeted a contact)")
+    got = lock.get("truth_id")
+    err = lock.get("assoc_err_m")
+    cap = float(p.get("max_assoc_m", 25.0))
+    ok = got == want and (err is None or err <= cap)
+    detail = (f"locked {lock.get('contact_id')} -> {got} (want {want}) "
+              f"at sim_t={lock.get('sim_stamp'):.1f}s, assoc err {err}m, "
+              f"measured_xy={lock.get('measured_xy')}")
+    if got == want and not ok:
+        detail += f" — over the {cap:g}m association cap"
+    return CheckResult("identified_target", ok, float(err or 0.0), detail)
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
@@ -495,6 +520,7 @@ CHECKS = {
     "dwell_moving": _dwell_moving,
     "avoid_moving": _avoid_moving,
     "escort": _escort,
+    "identified_target": _identified_target,
 }
 
 

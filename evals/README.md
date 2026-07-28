@@ -9,6 +9,8 @@ trades latency vs correctness. Distinct from `bench/` (sim/infra throughput).
   coordination, ambiguity, spatial). Targets are spec-declared coordinates.
 - **Models:** `{opus, sonnet, haiku}` via per-role assignments (`drones=opus`).
   Tier→id: `opus`=claude-opus-4-8, `sonnet`=claude-sonnet-5, `haiku`=claude-haiku-4-5.
+  Kimi subscription tiers are mapped but not yet run (M6): `kimi`=kimi-for-coding,
+  `kimi3`=k3 (design §5.2).
 - **Repeats:** K per cell → success-rate + latency distribution.
 - **Reset:** RTL soft-reset between cells; health check escalates to a fresh sim.
 - **Flight link:** one MAVSDK `System` + telemetry sub is built once and reused across
@@ -88,6 +90,36 @@ built and unit-tested, ready for obstacle tasks once a usable flat-with-building
 exists (fix `city`'s EKF/world-origin config, or add buildings to the `default`/`lawn`
 world). Until then, run only the flat-world ladders (plan-depth / spatial / ambiguity /
 `c1`).
+
+## Perception grading (M5)
+
+- **Deps split (design §3.8):** `Deps.oracle_truth` (GzPoses) feeds the sampler +
+  oracle ONLY. Flight tools read `Deps.flight_contacts` — `VisionContacts` under
+  `--feed vision` (Detector → VisionContacts, the production detect→lock→track
+  path), or GzPoses under `--feed truth` (the explicit truth-fed control).
+  `FleetHarness` never crosses those wires. Per cell, `VisionContacts.reset()`
+  runs at soft_reset — no filter/ID leak across anchored repeats.
+- **Perceive ladder (`tasks/perceive/*`):** the `perceive` world hosts ONE orange
+  rover (`mov_true`) plus visually DISTINCT ground decoys (red tall hauler,
+  blue-grey sled — the blob can't separate same-orange decoys). The
+  `identified_target` oracle check grades the perception act: the first
+  `track`/`goto` aimed at a `vis_*` id logs a `TargetLockEvent`, the harness
+  associates that contact to oracle truth AT that sim moment, and the check
+  compares the truth id (`truth: mov_true`). Report text is never graded.
+  Dual gates as usual: `pilot` (scripted `track_vis` behavior — same contact
+  path as the LLM) must PASS, `pilot_null` (blind) must FAIL.
+- **Offline accuracy (`perceive_eval.accuracy_report`):** recorded frames
+  timestamp-joined to truth by sim_stamp (50 ms tolerance): per-class
+  precision/recall (IoU≥0.5), center error p50/p95 by truth range, ID-switch
+  rate + track fragmentation.
+- **Strategy A/B (§13 item 6):** `--assignments "drones=sonnet;drones=sonnet,strategy=intercept-lead"`
+  appends a validated snippet (`agents/pilot/strategies/*.md`) to the system
+  prompt for the named lane only; `evals/strategy_ab.lift_decision` activates a
+  snippet ONLY on measured lift (snippet Wilson CI-low > base point rate, both
+  lanes ≥3 scored cells).
+- **Primitive statistics (§13 item 7):** `PRIMITIVES.md` per sweep —
+  per-primitive call count, latency p50, stable error-code counts, grouped by
+  model/detector/difficulty. Observational only.
 
 ## Scope
 

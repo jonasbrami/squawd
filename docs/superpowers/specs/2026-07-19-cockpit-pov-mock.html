@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQUAWD-1 · Cockpit POV — design mock (M4)</title>
+<style>
+  :root{
+    --bg:#070b18; --panel:#0e1630; --line:#1e2a52; --line-hi:#2e3f74;
+    --txt:#eef2ff; --dim:#a3aede; --faint:#6b76a8;
+    --accent:#4cc3ff; --green:#3ddc97; --amber:#ffb454; --purple:#b28dff; --red:#ff6b6b;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(900px 500px at 80% -10%,#14204a 0%,var(--bg) 60%);
+       color:var(--txt);font:14px/1.5 var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  code{font-family:var(--mono);font-size:.85em}
+
+  /* ---------- top bar ---------- */
+  header{height:52px;flex:none;display:flex;align-items:center;gap:18px;padding:0 16px;
+    background:#0a1128cc;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:14px;letter-spacing:.5px}
+  .logo .mark{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),#2b6cff);color:#04101e;font-size:12px;font-weight:900}
+  .mode{font-family:var(--mono);font-size:12px;color:var(--green);border:1px solid #1d5c42;
+    background:#3ddc9712;border-radius:6px;padding:4px 10px}
+  .dots{display:flex;gap:12px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .dots span::before{content:"●";margin-right:5px}
+  .dots .g{color:var(--green)} .dots .a{color:var(--amber)}
+  .clock{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .estop{font-family:var(--mono);font-weight:700;font-size:13px;color:#fff;background:linear-gradient(180deg,#e04848,#a02020);
+    border:1px solid #ff8888;border-radius:8px;padding:8px 18px;cursor:pointer;letter-spacing:2px}
+  .estop:hover{filter:brightness(1.15)}
+
+  /* ---------- layout ---------- */
+  main{flex:1;display:grid;grid-template-columns:1fr 330px;gap:12px;padding:12px;min-height:0}
+  .col{display:flex;flex-direction:column;gap:12px;min-height:0}
+
+  /* ---------- POV tile ---------- */
+  .pov{position:relative;flex:1;min-height:0;border:1px solid var(--line-hi);border-radius:14px;
+    overflow:hidden;background:#000}
+  .pov svg.scene{position:absolute;inset:0;width:100%;height:100%}
+  .hud{position:absolute;font-family:var(--mono);pointer-events:none}
+  .tape{top:0;left:0;right:0;height:34px;display:flex;justify-content:center;gap:34px;align-items:center;
+    background:linear-gradient(180deg,#000a,transparent);font-size:11px;color:var(--dim)}
+  .tape b{color:var(--txt);font-size:12px}
+  .tape .cur{position:absolute;left:50%;top:0;transform:translateX(-50%);color:var(--accent);font-size:10px}
+  .banner{top:44px;right:14px;background:#041a10dd;border:1px solid var(--green);border-radius:8px;
+    padding:7px 12px;font-size:12px;color:var(--green)}
+  .banner b{display:block;font-size:13px}
+  .ladder{left:14px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:14px;
+    font-size:10px;color:var(--dim);text-align:right}
+  .ladder .row{display:flex;align-items:center;gap:6px}
+  .ladder .bar{width:26px;height:1px;background:var(--dim)}
+  .ladder .ball{color:var(--amber);font-size:13px}
+  .xh{left:50%;top:50%;transform:translate(-50%,-50%);color:#ffffff90;font-size:22px}
+  .xh::before{content:"+"}
+  .beam{left:58%;top:65%;transform:translate(-50%,-50%);width:74px;height:74px;border:1.5px dashed var(--green);
+    border-radius:50%;opacity:.9}
+  .beam::after{content:"ToF LOCKED";position:absolute;top:-20px;left:50%;transform:translateX(-50%);
+    font-size:10px;color:var(--green);background:#041a10cc;padding:2px 7px;border-radius:4px;border:1px solid #1d5c42;white-space:nowrap}
+  .box{position:absolute;border:1.8px solid var(--green);border-radius:3px}
+  .box .lbl{position:absolute;top:-34px;left:-2px;font-size:10.5px;background:#041a10d0;
+    border:1px solid #1d5c42;border-radius:5px;padding:3px 8px;color:var(--green);white-space:nowrap}
+  .box .rng{position:absolute;bottom:-30px;left:-2px;font-size:11px;background:#041a10d0;
+    border:1px solid #1d5c42;border-radius:5px;padding:3px 8px;color:var(--txt);white-space:nowrap}
+  .box .rng b{color:var(--green)}
+  .box .rng .conf{color:var(--green);letter-spacing:1px}
+  .box2{position:absolute;border:1.8px dashed var(--accent);border-radius:3px}
+  .box2 .lbl{position:absolute;top:-22px;left:-2px;font-size:10.5px;background:#0a1830d0;
+    border:1px solid var(--line-hi);border-radius:5px;padding:3px 8px;color:var(--accent);white-space:nowrap}
+  .box2 .rng{position:absolute;bottom:-24px;left:-2px;font-size:10.5px;color:var(--accent);
+    background:#0a1830d0;border-radius:5px;padding:2px 7px;border:1px solid var(--line-hi);white-space:nowrap}
+  .strip{bottom:0;left:0;right:0;display:flex;gap:0;background:linear-gradient(0deg,#000c,transparent);
+    padding:20px 16px 10px;font-size:11.5px;color:var(--dim)}
+  .strip div{margin-right:22px}
+  .strip b{color:var(--txt);font-size:13px;display:block}
+  .health{bottom:14px;right:14px;display:flex;flex-direction:column;gap:5px;align-items:flex-end}
+  .chip{font-size:10px;padding:3px 8px;border-radius:5px;background:#0a1128cc;border:1px solid var(--line);color:var(--dim)}
+  .chip.g{color:var(--green);border-color:#1d5c42}
+  .chip.a{color:var(--amber);border-color:#6e5223}
+  .fresh{bottom:40px;left:16px;font-size:10px;color:var(--faint)}
+
+  /* ---------- right rail ---------- */
+  .rail{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+  .card{background:linear-gradient(180deg,var(--panel),#0b1228);border:1px solid var(--line);
+    border-radius:12px;padding:14px 16px}
+  .card h4{font-size:11px;font-family:var(--mono);color:var(--faint);text-transform:uppercase;
+    letter-spacing:1.5px;margin-bottom:10px}
+  .map{position:relative;height:210px;display:grid;place-items:center}
+  .map svg{width:200px;height:200px}
+  .clist{display:flex;flex-direction:column;gap:8px}
+  .citem{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono);font-size:11px}
+  .citem .id{color:var(--txt);font-weight:700}
+  .citem .row{display:flex;justify-content:space-between;color:var(--dim);margin-top:3px}
+  .citem .src-tof{color:var(--green)} .citem .src-b{color:var(--accent)}
+  .pill{font-size:9.5px;padding:1px 6px;border-radius:4px;border:1px solid}
+  .pill.g{color:var(--green);border-color:#1d5c42} .pill.b{color:var(--accent);border-color:var(--line-hi)}
+  .sens{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-family:var(--mono);font-size:10.5px}
+  .sens div{background:#0a1128;border:1px solid var(--line);border-radius:6px;padding:6px 8px;color:var(--dim)}
+  .sens b{display:block;color:var(--txt);font-size:12px}
+  .task{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .task .bar{height:6px;border-radius:3px;background:#18224a;margin-top:8px;overflow:hidden}
+  .task .bar i{display:block;height:100%;width:84%;background:linear-gradient(90deg,var(--accent),var(--green))}
+  .task .num{color:var(--green)}
+
+  /* ---------- dock ---------- */
+  .dock{flex:none;height:118px;border-top:1px solid var(--line);background:#0a1128cc;
+    display:grid;grid-template-columns:1fr 330px;gap:12px;padding:10px 12px}
+  .chat{overflow:auto;font-family:var(--mono);font-size:11.5px;display:flex;flex-direction:column;gap:4px}
+  .chat .u{color:var(--accent)} .chat .p{color:var(--green)} .chat .s{color:var(--faint)}
+  .cmd{display:flex;gap:8px}
+  .cmd input{flex:1;background:#080d20;border:1px solid var(--line);border-radius:8px;color:var(--txt);
+    font-family:var(--mono);font-size:12px;padding:9px 12px;outline:none}
+  .cmd input:focus{border-color:var(--accent)}
+  .cmd button{background:linear-gradient(135deg,var(--accent),#2b6cff);border:none;color:#04101e;
+    font-weight:800;font-family:var(--mono);border-radius:8px;padding:0 18px;cursor:pointer}
+  .mocktag{position:fixed;top:60px;left:16px;font-family:var(--mono);font-size:10px;color:var(--faint);
+    background:#0a1128cc;border:1px solid var(--line);border-radius:5px;padding:3px 8px;z-index:60}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span class="mark">S1</span> SQUAWD-1 <span style="color:var(--faint);font-weight:400">cockpit</span></div>
+  <span class="mode">TRACKED · shadow vis_target_0</span>
+  <div class="dots">
+    <span class="g">LINK</span><span class="g">CAM</span><span class="g">DET</span><span class="g">ToF</span><span class="a">EKF 2</span>
+  </div>
+  <span class="clock">SIM 14:22:37 · backend kimi-for-coding</span>
+  <button class="estop">■ ESTOP</button>
+</header>
+
+<main>
+  <!-- ============ POV ============ -->
+  <div class="pov">
+    <!-- simulated camera scene -->
+    <svg class="scene" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#7d9cc4"/><stop offset=".55" stop-color="#a8b8c8"/><stop offset=".56" stop-color="#c2c0ae"/><stop offset="1" stop-color="#c2c0ae"/>
+        </linearGradient>
+        <linearGradient id="gnd" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#8a9676"/><stop offset="1" stop-color="#5e6b4c"/>
+        </linearGradient>
+        <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#777c82"/><stop offset="1" stop-color="#4c5054"/>
+        </linearGradient>
+      </defs>
+      <rect width="1280" height="400" fill="url(#sky)"/>
+      <rect y="400" width="1280" height="320" fill="url(#gnd)"/>
+      <!-- hazy sun -->
+      <circle cx="1010" cy="130" r="52" fill="#fff8e0" opacity=".5"/>
+      <!-- distant trees -->
+      <g fill="#3d4a35" opacity=".8">
+        <ellipse cx="120" cy="415" rx="60" ry="26"/><ellipse cx="230" cy="420" rx="42" ry="20"/>
+        <ellipse cx="1150" cy="412" rx="70" ry="24"/><ellipse cx="1030" cy="422" rx="38" ry="16"/>
+      </g>
+      <!-- buildings -->
+      <g>
+        <rect x="120" y="270" width="130" height="150" fill="#6f7480"/>
+        <rect x="132" y="288" width="24" height="20" fill="#39404e"/><rect x="172" y="288" width="24" height="20" fill="#39404e"/>
+        <rect x="132" y="326" width="24" height="20" fill="#39404e"/><rect x="172" y="326" width="24" height="20" fill="#39404e"/>
+        <rect x="132" y="364" width="24" height="20" fill="#39404e"/><rect x="172" y="364" width="24" height="20" fill="#39404e"/>
+        <rect x="950" y="240" width="170" height="180" fill="#7a7f8a"/>
+        <rect x="968" y="262" width="28" height="24" fill="#3a4050"/><rect x="1014" y="262" width="28" height="24" fill="#3a4050"/>
+        <rect x="1060" y="262" width="28" height="24" fill="#3a4050"/><rect x="968" y="306" width="28" height="24" fill="#3a4050"/>
+        <rect x="1014" y="306" width="28" height="24" fill="#3a4050"/><rect x="1060" y="306" width="28" height="24" fill="#3a4050"/>
+      </g>
+      <!-- road in perspective -->
+      <polygon points="560,720 730,400 810,400 900,720" fill="url(#road)"/>
+      <polygon points="724,720 762,400 768,400 748,720" fill="#c8c8b8" opacity=".55"/>
+      <!-- the rover (target) -->
+      <g>
+        <rect x="694" y="452" width="86" height="40" rx="6" fill="#d08018"/>
+        <rect x="706" y="434" width="44" height="26" rx="4" fill="#b96f16"/>
+        <rect x="712" y="440" width="14" height="12" fill="#2c3138"/><rect x="732" y="440" width="14" height="12" fill="#2c3138"/>
+        <circle cx="714" cy="494" r="9" fill="#23282e"/><circle cx="762" cy="494" r="9" fill="#23282e"/>
+      </g>
+      <!-- second object: distant box at frame edge -->
+      <rect x="1180" y="470" width="52" height="34" rx="4" fill="#7d8894"/>
+    </svg>
+
+    <!-- HUD -->
+    <div class="hud tape">
+      <span class="cur">▼</span>
+      <span>NW</span><span>N</span><b>NE 042°</b><span>E</span><span>SE</span><span>S</span>
+    </div>
+    <div class="hud banner"><b>TRACKED</b>vis_target_0 · gap 12.4 m</div>
+    <div class="hud ladder">
+      <div class="row">+20<span class="bar"></span></div>
+      <div class="row">+10<span class="bar"></span></div>
+      <div class="row"><span class="ball">◈</span><span class="bar" style="width:40px;background:var(--amber)"></span></div>
+      <div class="row">−10<span class="bar"></span></div>
+      <div class="row">−20<span class="bar"></span></div>
+    </div>
+    <div class="hud xh"></div>
+    <div class="hud beam"></div>
+
+    <!-- detection: the rover -->
+    <div class="hud box" style="left:52.5%;top:58%;width:11%;height:14%">
+      <div class="lbl">vis_target_0 · rover · 0.91</div>
+      <div class="rng"><b>34.2 m</b> · ToF &nbsp;<span class="conf">▮▮▮▮▯</span></div>
+    </div>
+    <!-- detection: bearing-only at edge -->
+    <div class="hud box2" style="left:91%;top:62%;width:6%;height:9%">
+      <div class="lbl">vis_box_1 · 0.66</div>
+      <div class="rng">bearing-only</div>
+    </div>
+
+    <div class="hud fresh">overlay Δt +0.03 s · frame #4417 · detections sim-stamp matched</div>
+    <div class="hud strip">
+      <div>ALT<b>24.5 m</b></div>
+      <div>SPD<b>3.4 m/s</b></div>
+      <div>BAT<b>87 %</b></div>
+      <div>MODE<b>shadow</b></div>
+      <div>GEOFENCE<b>212 m</b></div>
+      <div>PITCH<b>−4°</b></div>
+    </div>
+    <div class="hud health">
+      <span class="chip g">CAM 10 Hz · 0.04 s</span>
+      <span class="chip g">DET 14 ms · YOLO11n-seg</span>
+      <span class="chip g">ToF 100 Hz · q 0.92</span>
+      <span class="chip a">EKF 2 tracks · 1 coast</span>
+    </div>
+  </div>
+
+  <!-- ============ right rail ============ -->
+  <div class="rail">
+    <div class="card map">
+      <h4 style="position:absolute;top:12px;left:14px">PPI · world ENU</h4>
+      <svg viewBox="0 0 200 200">
+        <circle cx="100" cy="100" r="92" fill="none" stroke="#1e2a52"/>
+        <circle cx="100" cy="100" r="61" fill="none" stroke="#18224a"/>
+        <circle cx="100" cy="100" r="30" fill="none" stroke="#18224a"/>
+        <line x1="100" y1="8" x2="100" y2="192" stroke="#18224a"/><line x1="8" y1="100" x2="192" y2="100" stroke="#18224a"/>
+        <polygon points="100,100 118,18 138,30" fill="#4cc3ff22"/>
+        <circle cx="100" cy="100" r="4" fill="#4cc3ff"/>
+        <circle cx="122" cy="46" r="3.5" fill="#3ddc97"/>
+        <circle cx="158" cy="120" r="3" fill="#ffb454"/>
+        <text x="126" y="42" fill="#3ddc97" font-size="8" font-family="monospace">t0 34m</text>
+        <text x="162" y="124" fill="#ffb454" font-size="8" font-family="monospace">b1 ?</text>
+        <text x="98" y="14" fill="#6b76a8" font-size="8" font-family="monospace">N</text>
+      </svg>
+    </div>
+
+    <div class="card">
+      <h4>Contacts · authoritative</h4>
+      <div class="clist">
+        <div class="citem">
+          <span class="id">vis_target_0</span> <span class="pill g">MEASURED</span>
+          <div class="row"><span>rover · conf 0.91</span><span class="src-tof">34.2 m ToF</span></div>
+          <div class="row"><span>v 3.1E 1.2N m/s</span><span>E52 N18</span></div>
+        </div>
+        <div class="citem">
+          <span class="id">vis_box_1</span> <span class="pill b">BEARING</span>
+          <div class="row"><span>box · conf 0.66</span><span class="src-b">—</span></div>
+          <div class="row"><span>held E61 N44</span><span>coast 0.4 s</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>Task</h4>
+      <div class="task">shadow mov_1 — hold ≤15 m for 45 s
+        <div class="bar"><i></i></div>
+        <div style="margin-top:5px">dwell <span class="num">38.2 / 45 s</span> · gap min 9.8 mean 12.4</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>Sensors</h4>
+      <div class="sens">
+        <div>camera<b>640×360 @10</b></div>
+        <div>detector<b>5 Hz · 14 ms</b></div>
+        <div>rangefinder<b>LW20 · 100 Hz</b></div>
+        <div>backend<b>kimi-for-coding</b></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="mocktag">M4 DESIGN MOCK — target UI, not a screenshot</div>
+
+<footer class="dock">
+  <div class="chat">
+    <div><span class="s">[14:20:02]</span> <span class="u">you:</span> shadow the rover, stay within 15 m for 45 s</div>
+    <div><span class="s">[14:20:06]</span> <span class="p">pilot:</span> detected vis_target_0 (rover, 0.91) bearing 32R ~34 m — tracking</div>
+    <div><span class="s">[14:20:19]</span> <span class="p">pilot:</span> RANGE_LOCKED · ToF 34.2 m q0.92 · shadowing</div>
+    <div><span class="s">[14:21:55]</span> <span class="p">pilot:</span> dwell 38.2/45 s · gap min 9.8 mean 12.4</div>
+  </div>
+  <div class="cmd">
+    <input value="report when dwell reaches 45 s, then return and land">
+    <button>SEND</button>
+  </div>
+</footer>
+
+</body>
+</html>

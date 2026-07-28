@@ -1,4 +1,4 @@
-from claude_agent_sdk import AssistantMessage, ToolUseBlock
+from agents.flight.backend import ToolCall
 
 from evals.runner import Trace, model_for, CellResult
 
@@ -12,14 +12,12 @@ def test_model_for_maps_tier():
 
 def test_trace_counts_tooluse_and_stamps_first():
     def blk(i):
-        return ToolUseBlock(id=f"t{i}", name="mcp__d0__goto", input={})
-
-    def msg(*blocks):
-        return AssistantMessage(content=list(blocks), model="m")
+        return ToolCall(id=f"t{i}", name="mcp__d0__goto", input={}, model="m")
 
     tr = Trace()
-    tr.observe(msg(blk(1)), now=5.0)
-    tr.observe(msg(blk(2), blk(3)), now=6.0)
+    tr.observe(blk(1), now=5.0)
+    tr.observe(blk(2), now=6.0)
+    tr.observe(blk(3), now=6.0)
     assert tr.steps == 3
     assert tr.first_action_t == 5.0
 
@@ -188,7 +186,9 @@ def test_fleet_harness_connects_n_agents_once():
     assert asyncio.run(h.system()) == "sys0"             # back-compat accessor
 
 
-def test_layer_gate_allows_operator_multidrone_only():
+def test_layer_gate_rejects_dropped_layers_and_multidrone():
+    """operator/commander layers were dropped in the rebuild: the gate must
+    reject them (and any multi-drone spec) loudly — never silently pass."""
     import pytest
     from evals.runner import require_layer_supported
 
@@ -202,142 +202,9 @@ def test_layer_gate_allows_operator_multidrone_only():
 
     with pytest.raises(ValueError, match="n_drones==1"):
         require_layer_supported(Spec())
-    Spec.target_layer = "operator"
-    require_layer_supported(Spec())                      # no raise
-    Spec.target_layer = "commander"
-    require_layer_supported(Spec())                      # no raise: commander is built
-
-
-def test_require_layer_supported_commander_override_allows_multidrone():
-    """A --layer commander CLI override reaches require_layer_supported as the
-    `layer` param and takes precedence over spec.target_layer, so a single_drone
-    spec with n_drones>1 is allowed through under the override."""
-    import pytest
-    from evals.runner import require_layer_supported
-
-    class Setup:
-        n_drones = 3
-
-    class Spec:
-        id = "w1"
-        setup = Setup()
-        target_layer = "single_drone"
-
-    require_layer_supported(Spec(), layer="commander")   # no raise despite n_drones=3
-    with pytest.raises(ValueError, match="n_drones==1"):
-        require_layer_supported(Spec())                  # unoverridden: still gated
-
-
-def test_require_layer_supported_rejects_unknown_layer():
-    import pytest
-    from evals.runner import require_layer_supported
-
-    class Setup:
-        n_drones = 1
-
-    class Spec:
-        id = "w1"
-        setup = Setup()
-        target_layer = "single_drone"
-
-    with pytest.raises(ValueError, match="unknown target_layer"):
+    with pytest.raises(ValueError, match="dropped"):
+        require_layer_supported(Spec(), layer="operator")
+    with pytest.raises(ValueError, match="dropped"):
+        require_layer_supported(Spec(), layer="commander")
+    with pytest.raises(ValueError, match="dropped"):
         require_layer_supported(Spec(), layer="bogus")
-
-
-def test_run_cell_commander_layer_builds_session_row_carries_layer_and_drone_steps(monkeypatch):
-    """assignment["_layer"] == "commander" must route run_cell into a
-    CommanderSession (built with the commander/drone models resolved via model_for)
-    instead of harness.client_for/_drive, and the resulting row must carry the
-    effective layer + the drone-side step count from trace.meta."""
-    import asyncio
-    from types import SimpleNamespace
-
-    import evals.commander as commander_mod
-    import evals.runner as runner_mod
-    from evals.reset import ResetResult
-    from evals.runner import Deps, Trace, run_cell
-    from evals.worldstate import WorldTrack
-
-    captured = {}
-
-    class FakeCommanderSession:
-        def __init__(self, deps, systems, commander_model, drone_model, **kw):
-            captured["deps"] = deps
-            captured["systems"] = systems
-            captured["commander_model"] = commander_model
-            captured["drone_model"] = drone_model
-
-        async def run(self, prompt, deadline_s, max_steps):
-            captured["prompt"] = prompt
-            captured["deadline_s"] = deadline_s
-            captured["max_steps"] = max_steps
-            trace = Trace()
-            trace.model = "fake-commander"
-            trace.steps = 2
-            trace.meta["drone_steps"] = 7
-            return trace, False, "commander done"
-
-    async def fake_soft_reset(systems, world, bridge, n):
-        return ResetResult(True, "ok")
-
-    class FakeSampler:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def run(self):
-            pass
-
-        def stop(self):
-            pass
-
-        def track(self):
-            return WorldTrack(snapshots=[], objects={}, n_drones=2, geofence_m=300.0)
-
-    async def fake_settle(*a, **kw):
-        return None
-
-    monkeypatch.setattr(commander_mod, "CommanderSession", FakeCommanderSession)
-    monkeypatch.setattr(runner_mod, "soft_reset", fake_soft_reset)
-    monkeypatch.setattr(runner_mod, "Sampler", FakeSampler)
-    monkeypatch.setattr(runner_mod, "_settle", fake_settle)
-
-    class FakeAction:
-        async def hold(self):
-            pass
-
-    class FakeSystem:
-        def __init__(self):
-            self.action = FakeAction()
-
-    class FakeHarness:
-        def __init__(self):
-            self.client_for_called = False
-
-        async def systems_list(self):
-            return [FakeSystem(), FakeSystem()]
-
-        def client_for(self, model, n_drones=1):
-            self.client_for_called = True
-            return None
-
-    deps = Deps(world=None, bridge=None, cameras=None)
-    setup = SimpleNamespace(n_drones=2)
-    budget = SimpleNamespace(wall_clock_s=5.0, max_steps=20)
-    spec = SimpleNamespace(
-        id="w1", target_layer="single_drone", setup=setup, prompt="go find it",
-        budget=budget, oracle=[{"check": "alive"}], difficulty={}, suite=None,
-        objects_map=lambda: {})
-
-    assignment = {"drones": "haiku", "commander": "opus", "_layer": "commander"}
-    harness = FakeHarness()
-
-    res = asyncio.run(run_cell(spec, assignment, 0, deps, harness))
-
-    assert not harness.client_for_called   # commander path must not touch client_for
-    assert captured["commander_model"] == "claude-opus-4-8"
-    assert captured["drone_model"] == "claude-haiku-4-5-20251001"
-    assert captured["prompt"] == "go find it"
-    assert res.infra_fail is False
-    assert res.layer == "commander"
-    assert res.drone_steps == 7
-    assert res.passed is True                # trivial 'alive' check on an empty track

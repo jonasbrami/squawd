@@ -220,3 +220,96 @@ def render_tools(aggs: list[ToolAgg]) -> str:
                      f"{a.goto_burst} | {a.gap_p50:.1f}s | {a.out_tokens:.0f} | "
                      f"${a.cost_usd:.2f} |")
     return "\n".join(lines) + "\n"
+
+
+# ---- oracle-derived primitive statistics (design §13 item 7) ------------------
+# OBSERVATIONAL ONLY: per-primitive latency + error-code counts, grouped by the
+# cell dimensions present (model / detector / difficulty). Never rewrites
+# prompts or parameters.
+
+PRIMITIVE_CODES = ("INVALID_PARAM", "NOT_READY", "BLOCKED", "LOST", "TIMEOUT",
+                   "ESTOPPED", "INTERNAL")
+
+
+def _primitive_err_code(result: str | None, is_error: bool) -> str | None:
+    """The stable §9 code a tool result carries (prefix 'CODE: '), 'OTHER' for
+    untagged errors, None for successes."""
+    if result:
+        head = result.split(":", 1)[0]
+        if head in PRIMITIVE_CODES:
+            return head
+    return "OTHER" if is_error else None
+
+
+@dataclass
+class PrimitiveAgg:
+    primitive: str
+    model: str
+    detector: str
+    difficulty: str
+    calls: int = 0
+    dur_p50: float | None = None
+    errors: dict[str, int] = field(default_factory=dict)
+
+
+def _difficulty_label(rrow: dict | None) -> str:
+    if not rrow:
+        return "-"
+    diff = rrow.get("difficulty") or {}
+    suite = rrow.get("suite")
+    if suite and suite in diff:
+        return f"{suite}={diff.get(suite, '?')}"
+    return ",".join(f"{k}={v}" for k, v in sorted(diff.items())) or "-"
+
+
+def primitive_stats(trows: list[dict], rrows: list[dict] = ()) -> list[PrimitiveAgg]:
+    """Aggregate per-primitive latency + error-code counts from transcript rows,
+    grouped by (primitive, model, detector, difficulty). `rrows` (results.jsonl
+    rows) supplies the difficulty dims, joined on the same (task, assignment,
+    repeat) triple the two files share."""
+    rmap = {(r["task_id"], r["assignment"], r["repeat"]): r for r in rrows}
+    groups: dict[tuple, list] = defaultdict(list)
+    durs: dict[tuple, list] = defaultdict(list)
+    for r in trows:
+        key3 = (r.get("task_id"), r.get("assignment"), r.get("repeat"))
+        rrow = rmap.get(key3)
+        model = str(r.get("assignment") or "-")
+        detector = str(r.get("detector") or (rrow or {}).get("detector") or "-")
+        difficulty = _difficulty_label(rrow)
+        for ev in r.get("events", []):
+            if ev.get("type") != "tool_call":
+                continue
+            g = (_tool_name(ev), model, detector, difficulty)
+            groups[g].append(ev)
+            if ev.get("dur_s") is not None:
+                durs[g].append(ev["dur_s"])
+    out: list[PrimitiveAgg] = []
+    for (primitive, model, detector, difficulty), evs in sorted(groups.items()):
+        errs: Counter = Counter()
+        for ev in evs:
+            code = _primitive_err_code(ev.get("result"), bool(ev.get("is_error")))
+            if code:
+                errs[code] += 1
+        ds = durs.get((primitive, model, detector, difficulty), [])
+        out.append(PrimitiveAgg(
+            primitive=primitive, model=model, detector=detector,
+            difficulty=difficulty, calls=len(evs),
+            dur_p50=_percentile(ds, 0.5) if ds else None,
+            errors=dict(errs)))
+    return out
+
+
+def render_primitive_stats(aggs: list[PrimitiveAgg]) -> str:
+    lines = ["# Primitive statistics (observational only — §13 item 7)", "",
+             "Per-primitive call count, latency p50 (tool-call duration), and "
+             "stable error-code counts (ICD §9), grouped by model / detector / "
+             "difficulty. Numbers describe; they never rewrite prompts or "
+             "parameters.", "",
+             "| primitive | model | detector | difficulty | calls | dur_p50 | errors |",
+             "|-----------|-------|----------|------------|-------|---------|--------|"]
+    for a in aggs:
+        errs = ", ".join(f"{k}×{v}" for k, v in sorted(a.errors.items())) or "-"
+        dur = f"{a.dur_p50:.1f}s" if a.dur_p50 is not None else "-"
+        lines.append(f"| {a.primitive} | {a.model} | {a.detector} | "
+                     f"{a.difficulty} | {a.calls} | {dur} | {errs} |")
+    return "\n".join(lines) + "\n"

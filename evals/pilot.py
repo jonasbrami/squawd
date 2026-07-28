@@ -8,9 +8,10 @@ run_cell / sampler / oracle path as a real agent. A task whose pilot can't pass
 is quarantined as a harness bug before any LLM cells are spent on it; run it at
 K=3 and the reach-distance spread is the sim-noise floor for free.
 
-ScriptedClient mimics the ClaudeSDKClient surface run_cell uses (async context
-manager + query + receive_response) and yields REAL SDK message objects, so
-Trace, step budgets, and transcripts.jsonl work unchanged.
+ScriptedClient mimics the BackendClient surface run_cell uses (async context
+manager + query(prompt) -> typed event stream) and emits the seam's typed
+events (design §6.5) directly, so Trace, step budgets, and transcripts.jsonl
+work unchanged.
 
 Dynamic tasks add two twists:
 - a script step may be {behavior: <name>, args: {...}} — behaviors compute
@@ -23,7 +24,7 @@ Dynamic tasks add two twists:
 import asyncio
 import math
 
-from claude_agent_sdk import AssistantMessage, ToolResultBlock, ToolUseBlock, UserMessage
+from agents.flight.backend import ToolCall, ToolResult
 
 
 def _mover_xy(ops, name: str) -> tuple[float, float]:
@@ -217,18 +218,77 @@ async def await_gap(ops, args):
     yield ("hover", {"seconds": 0}, f"await_gap TIMED OUT after {deadline}s")
 
 
+async def track_vis(ops, args):
+    """The scripted PERCEPTION path (design §3.8): read the contact provider —
+    the same source `scan`/`detect` render for the LLM — wait for a contact of
+    class `cls` (a `vis_<cls>_<k>` id), then designate+track it. This is the
+    detect→lock→track path the LLM walks, minus the language: no ground-truth
+    name ever reaches the flight tools.
+
+    `max_range_m` (optional): only lock a contact whose own range estimate is
+    within it — the support-plane projection is hyper-sensitive to attitude
+    noise at shallow depression (far range + low alt), so a first sighting
+    beyond the proven envelope (>=6 deg depression, M2/M3a) seeds the EKF
+    tens of meters off and the TargetLockEvent association gate rightly
+    rejects it. Lock when CLOSE, not when barely-visible."""
+    cls = args.get("cls", "target")
+    wait_s = float(args.get("wait_s", 30.0))
+    poll_s = float(args.get("poll_s", 1.0))
+    max_rng = args.get("max_range_m")
+    max_rng = float(max_rng) if max_rng is not None else None
+    waited, name = 0.0, None
+    while waited < wait_s:
+        poses = ops.contacts.poses()
+        cands = sorted(n for n in poses if n.startswith(f"vis_{cls}_"))
+        if max_rng is not None and cands:
+            views_fn = getattr(ops.contacts, "all_views", None)
+            views = {v.name: v for v in
+                     (views_fn() if callable(views_fn) else [])}
+            cands = [n for n in cands
+                     if views.get(n) is not None
+                     and views[n].range_m is not None
+                     and views[n].range_m <= max_rng]
+        if cands:
+            name = cands[0]
+            break
+        res = await ops.hover(seconds=poll_s)
+        waited += poll_s
+        yield ("hover", {"seconds": poll_s}, res)
+    if name is None:
+        yield ("hover", {"seconds": 0},
+               f"track_vis: no vis_{cls}_* contact after {wait_s:.0f}s")
+        return
+    targs = {"target": name, "mode": args.get("mode", "shadow"),
+             "alt": float(args.get("alt", 12.0)),
+             "duration_s": float(args.get("duration_s", 60.0)),
+             "within_m": float(args.get("within_m", 15.0))}
+    # the USE block must reach the Trace BEFORE the call runs: the
+    # TargetLockEvent path (identified_target) timestamps the lock AT CALL
+    # TIME — emitting post-hoc (after a 60-75 s track) would associate a
+    # long-dropped contact and measure nothing (observed live: every lock
+    # 'measured_xy=None', 2026-07-22).
+    yield ("_pending", "track", targs)
+    res = await ops.track(targs["target"], mode=targs["mode"], alt=targs["alt"],
+                          duration_s=targs["duration_s"],
+                          within_m=targs["within_m"])
+    yield ("track", targs, res)
+
+
 BEHAVIORS = {
     "naive_chaser": naive_chaser,
     "lead_chaser": lead_chaser,
     "lead_intercept": lead_intercept,
     "shadow_loop": shadow_loop,
     "await_gap": await_gap,
+    "track_vis": track_vis,
 }
 
 
 class ScriptedClient:
     """Executes `script` (list of {tool, args}) against a FlightOps built lazily by
-    `ops_provider` (the shared MAVSDK System isn't connected until the harness is)."""
+    `ops_provider` (the shared MAVSDK System isn't connected until the harness is).
+    `query(prompt)` drives the whole script and yields the seam's typed events
+    (ToolCall/ToolResult pairs), exactly like BackendClient does for a live LLM."""
 
     def __init__(self, ops_provider, script: list[dict]) -> None:
         self._ops_provider = ops_provider
@@ -240,39 +300,55 @@ class ScriptedClient:
     async def __aexit__(self, *exc):
         return False
 
-    async def query(self, prompt: str) -> None:  # the pilot ignores the prose
-        pass
-
-    async def receive_response(self):
+    async def query(self, prompt: str):   # the pilot ignores the prose
         ops = await self._ops_provider()
         seq = 0
-        # fleet routing: `ops` is a FleetOps — a step's `drone:` picks the
-        # body (default 0); tools that live on the fleet itself (goto_all)
-        # run fleet-level. Behaviors bind one drone's FlightOps.
+        # fleet routing: on a FLEET ops the `drone:` key picks a body via the
+        # drone(i) METHOD; single-drone FlightOps has a `.drone` ATTRIBUTE (the
+        # MAVSDK System) — callable-guard the routing or behavior steps crash
+        # with "'System' object is not callable" (latent until M5: the
+        # dynamic-ladder behavior gates ran under the old fleet ops).
+        drone_fn = getattr(ops, "drone", None)
+        route = drone_fn if callable(drone_fn) else None
         for i, step in enumerate(self._script):
             if "behavior" in step:
                 fn = BEHAVIORS.get(step["behavior"])
                 if fn is None:
                     raise ValueError(f"pilot step {i}: unknown behavior "
                                      f"'{step['behavior']}' ({sorted(BEHAVIORS)})")
-                body = ops.drone(step.get("drone", 0)) if hasattr(ops, "drone") else ops
-                async for tool, targs, out in fn(body, step.get("args", {})):
-                    yield AssistantMessage(
-                        content=[ToolUseBlock(id=f"pilot{seq}", name=f"pilot__{tool}",
-                                              input=targs)], model="pilot")
-                    yield UserMessage(content=[ToolResultBlock(
-                        tool_use_id=f"pilot{seq}", content=str(out), is_error=False)])
+                body = route(step.get("drone", 0)) if route else ops
+                pending = None   # (id, tool) of a ToolCall emitted pre-call
+                async for item in fn(body, step.get("args", {})):
+                    # "_pending": emit the ToolCall BEFORE the tool runs so
+                    # observe-time hooks (TargetLockEvent) see true call time —
+                    # behavior triples are otherwise post-hoc by construction.
+                    if item and item[0] == "_pending":
+                        _, tool, targs = item
+                        yield ToolCall(id=f"pilot{seq}", name=f"pilot__{tool}",
+                                       input=targs, model="pilot")
+                        pending = (f"pilot{seq}", tool)
+                        seq += 1
+                        continue
+                    tool, targs, out = item
+                    if pending is not None and pending[1] == tool:
+                        yield ToolResult(tool_use_id=pending[0],
+                                         content=str(out), is_error=False)
+                        pending = None
+                        continue
+                    yield ToolCall(id=f"pilot{seq}", name=f"pilot__{tool}",
+                                   input=targs, model="pilot")
+                    yield ToolResult(tool_use_id=f"pilot{seq}",
+                                     content=str(out), is_error=False)
                     seq += 1
                 continue
             tool = step["tool"]
             args = step.get("args", {})
-            yield AssistantMessage(
-                content=[ToolUseBlock(id=f"pilot{seq}", name=f"pilot__{tool}", input=args)],
-                model="pilot")
+            yield ToolCall(id=f"pilot{seq}", name=f"pilot__{tool}", input=args,
+                           model="pilot")
             if hasattr(ops, tool):
                 target = ops
-            elif hasattr(ops, "drone"):
-                target = ops.drone(step.get("drone", 0))
+            elif route is not None:
+                target = route(step.get("drone", 0))
             else:
                 target = ops
             fn = getattr(target, tool, None)
@@ -281,8 +357,8 @@ class ScriptedClient:
             out = fn(**args)
             if hasattr(out, "__await__"):
                 out = await out
-            yield UserMessage(content=[ToolResultBlock(
-                tool_use_id=f"pilot{seq}", content=str(out), is_error=False)])
+            yield ToolResult(tool_use_id=f"pilot{seq}", content=str(out),
+                             is_error=False)
             seq += 1
 
 
@@ -291,13 +367,16 @@ def pilot_client_builder(harness, deps):
     run_evals sets `harness.pilot_script` before each run_cell; the builder reads it."""
 
     async def ops_provider():
-        from agents.flight.fleet import FleetOps
         from agents.flight.ops import FlightOps
         systems = await harness.systems_list()
-        n = len(systems)
-        return FleetOps([FlightOps(s, deps.world, deps.bridge, i, n,
-                                   gzposes=deps.gzposes)
-                         for i, s in enumerate(systems)])
+        if len(systems) != 1:
+            raise ValueError("single-drone rebuild: pilot harness expects n==1, "
+                             f"got {len(systems)}")
+        # Deps split (§3.8): the scripted pilot reads the SAME contact provider
+        # the LLM's flight tools get (flight_contacts) — never the oracle truth
+        # unless run_evals explicitly chose the truth-fed control.
+        return FlightOps(systems[0], deps.world, deps.bridge, 0, 1,
+                         contacts=deps.flight_contacts)
 
     def build(model):
         return ScriptedClient(ops_provider, getattr(harness, "pilot_script", []))

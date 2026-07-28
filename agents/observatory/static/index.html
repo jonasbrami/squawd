@@ -1,946 +1,612 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Squawd Swarm Observatory</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQUAWD-1 · Cockpit</title>
 <style>
-  :root {
-    --bg:        #0a0d0b;
-    --panel:     #0e120f;
-    --raised:    #121712;
-    --green:     #4ade80;
-    --amber:     #fbbf24;
-    --dim:       #3f6b50;
-    --ink:       #d6f0dd;
-    --alert:     #ff6b6b;
-    --hair:      #1c241d;
-    --hair-strong:#27332a;
-    --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  :root{
+    --bg:#070b18; --panel:#0e1630; --line:#1e2a52; --line-hi:#2e3f74;
+    --txt:#eef2ff; --dim:#a3aede; --faint:#6b76a8;
+    --accent:#4cc3ff; --green:#3ddc97; --amber:#ffb454; --red:#ff6b6b;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
   }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font:14px/1.5 var(--sans);
+       height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  code{font-family:var(--mono);font-size:.85em}
 
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.4;
-    -webkit-font-smoothing: antialiased;
-    overflow: hidden;
-  }
+  /* ---------- top bar ---------- */
+  header{height:52px;flex:none;display:flex;align-items:center;gap:16px;padding:0 16px;
+    background:#0a1128;border-bottom:1px solid var(--line)}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:14px;letter-spacing:.5px}
+  .logo .mark{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--accent),#2b6cff);color:#04101e;font-size:12px;font-weight:900}
+  .mode{font-family:var(--mono);font-size:12px;color:var(--dim);border:1px solid var(--line);
+    border-radius:6px;padding:4px 10px}
+  .mode.g{color:var(--green);border-color:#1d5c42;background:#3ddc9712}
+  .dots{display:flex;gap:12px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .dots span::before{content:"●";margin-right:5px}
+  .dots .g{color:var(--green)} .dots .a{color:var(--amber)} .dots .r{color:var(--red)}
+  .clock{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .btn{font-family:var(--mono);font-weight:700;font-size:13px;border-radius:8px;
+    padding:8px 16px;cursor:pointer;letter-spacing:1px;border:1px solid}
+  .estop{color:#fff;background:linear-gradient(180deg,#e04848,#a02020);border-color:#ff8888}
+  .estop:hover{filter:brightness(1.15)}
+  .estop.hit{background:linear-gradient(180deg,#7a1010,#5a0808)}
+  .land{color:var(--amber);background:#2a1f08;border-color:#6e5223}
+  .land:hover{filter:brightness(1.2)}
 
-  .tnum { font-variant-numeric: tabular-nums; }
-  .up   { text-transform: uppercase; letter-spacing: 0.16em; }
+  /* ---------- layout ---------- */
+  main{flex:1;display:grid;grid-template-columns:1fr 320px;gap:12px;padding:12px;min-height:0}
+  .rail{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .card h4{font-size:11px;font-family:var(--mono);color:var(--faint);text-transform:uppercase;
+    letter-spacing:1.5px;margin-bottom:8px}
 
-  /* ---------- shell ---------- */
-  .app {
-    display: grid;
-    grid-template-rows: auto 1fr auto;
-    height: 100vh;
-    width: 100vw;
-    padding: 10px;
-    gap: 10px;
-  }
+  /* ---------- POV tile ---------- */
+  .pov{display:grid;place-items:center;min-height:0}
+  .pov-inner{position:relative;aspect-ratio:16/9;max-width:100%;max-height:100%;
+    width:100%;border:1px solid var(--line-hi);border-radius:14px;overflow:hidden;background:#000}
+  canvas.cam,canvas.hud{position:absolute;inset:0;width:100%;height:100%}
+  canvas.hud{pointer-events:none}
+  .hud-dom{position:absolute;font-family:var(--mono);pointer-events:none}
+  .tape{top:0;left:0;right:0;height:30px;display:flex;justify-content:center;align-items:center;
+    background:linear-gradient(180deg,#000a,transparent);font-size:11px;color:var(--dim)}
+  .tape b{color:var(--txt);font-size:12px;margin:0 6px}
+  .trackbanner{top:40px;right:12px;background:#0a1128dd;border:1px solid var(--line-hi);
+    border-radius:8px;padding:6px 11px;font-size:11.5px;color:var(--dim);display:none}
+  .trackbanner b{display:block;font-size:12.5px}
+  .trackbanner.g{color:var(--green);border-color:#1d5c42}
+  .trackbanner.a{color:var(--amber);border-color:#6e5223}
+  .trackbanner.r{color:var(--red);border-color:#7a2a2a}
+  .degraded{top:40px;left:50%;transform:translateX(-50%);background:#2a0d0dee;
+    border:1px solid var(--red);border-radius:8px;padding:7px 14px;font-size:13px;
+    font-weight:700;color:var(--red);letter-spacing:1px;display:none}
+  .ladder{left:12px;top:50%;transform:translateY(-50%);width:64px;height:120px}
+  .xh{left:50%;top:50%;transform:translate(-50%,-50%);color:#ffffff90;font-size:22px}
+  .beam{left:50%;top:50%;transform:translate(-50%,-50%);border:1.5px dashed var(--faint);
+    border-radius:50%;width:9%;aspect-ratio:1;opacity:.9}
+  .beam .chip{position:absolute;top:-22px;left:50%;transform:translateX(-50%);
+    font-size:10px;background:#0a1128cc;padding:2px 7px;border-radius:4px;
+    border:1px solid var(--line);white-space:nowrap;color:var(--dim)}
+  .beam.g{border-color:var(--green)} .beam.g .chip{color:var(--green);border-color:#1d5c42}
+  .beam.a{border-color:var(--amber)} .beam.a .chip{color:var(--amber);border-color:#6e5223}
+  .beam.r{border-color:var(--red)}   .beam.r .chip{color:var(--red);border-color:#7a2a2a}
+  .strip{bottom:0;left:0;right:0;display:flex;background:linear-gradient(0deg,#000c,transparent);
+    padding:18px 14px 8px;font-size:11px;color:var(--dim)}
+  .strip div{margin-right:20px}
+  .strip b{color:var(--txt);font-size:13px;display:block}
+  .fresh{bottom:38px;left:14px;font-size:10px;color:var(--faint)}
+  .fresh.a{color:var(--amber)}
+  .novid{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);
+    font-family:var(--mono);font-size:12px;text-align:center;padding:20px}
 
-  /* ---------- header ---------- */
-  header.bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border: 1px solid var(--hair-strong);
-    background: var(--panel);
-    padding: 8px 14px;
-  }
-  .brand { display: flex; align-items: baseline; gap: 12px; }
-  .brand .mark {
-    color: var(--green);
-    font-weight: 700;
-    letter-spacing: 0.22em;
-    font-size: 16px;
-  }
-  .brand .sub {
-    color: var(--dim);
-    font-size: 11px;
-    letter-spacing: 0.16em;
-  }
-  .status {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    color: var(--dim);
-    font-size: 11px;
-    letter-spacing: 0.12em;
-  }
-  .status .live {
-    display: inline-flex; align-items: center; gap: 7px;
-    color: var(--green);
-  }
-  .status .live.down { color: var(--amber); }
-  .status .dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: var(--green);
-    box-shadow: 0 0 0 0 rgba(74,222,128,0.5);
-    animation: ping 2.4s ease-out infinite;
-  }
-  .status .live.down .dot { background: var(--amber); animation: none; }
-  .status .clock { color: var(--amber); }
-  @keyframes ping {
-    0%   { box-shadow: 0 0 0 0 rgba(74,222,128,0.45); }
-    70%  { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
-    100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
-  }
+  /* ---------- rail ---------- */
+  .map{display:grid;place-items:center}
+  .map canvas{width:220px;height:220px}
+  .clist{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow:auto}
+  .citem{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-family:var(--mono);font-size:11px}
+  .citem .id{color:var(--txt);font-weight:700}
+  .citem .row{display:flex;justify-content:space-between;color:var(--dim);margin-top:2px}
+  .pill{font-size:9.5px;padding:1px 6px;border-radius:4px;border:1px solid}
+  .pill.g{color:var(--green);border-color:#1d5c42}
+  .pill.a{color:var(--amber);border-color:#6e5223}
+  .pill.b{color:var(--accent);border-color:var(--line-hi)}
+  .sens{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-family:var(--mono);font-size:10.5px}
+  .sens div{background:#0a1128;border:1px solid var(--line);border-radius:6px;padding:6px 8px;color:var(--dim)}
+  .sens b{display:block;color:var(--txt);font-size:12px}
+  .sens .g b{color:var(--green)} .sens .r b{color:var(--red)} .sens .a b{color:var(--amber)}
 
-  /* ---------- main grid ---------- */
-  .main {
-    display: grid;
-    /* hero takes the lion's share; rail + chat are wide enough to read; the
-       scope column is moderate and the canvas itself is capped (see resizeScope)
-       so the radar never balloons on a wide monitor. */
-    grid-template-columns: minmax(0, 1.7fr) 270px minmax(360px, 0.95fr) 380px;
-    gap: 12px;
-    min-height: 0;
-  }
-
-  .panel {
-    border: 1px solid var(--hair-strong);
-    background: var(--panel);
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    /* own stacking context so the camera feed's compositing layer can't paint
-       past its panel into a neighbour (only visible during headless capture). */
-    position: relative;
-    z-index: 0;
-    isolation: isolate;
-  }
-  /* the camera column sits beneath the data panels in the stack */
-  .col-feed { z-index: 0; }
-  .rail, .scope-panel, .chat { z-index: 1; }
-  .panel > .phead {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 7px 11px;
-    border-bottom: 1px solid var(--hair);
-    color: var(--dim);
-    font-size: 11px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    flex: 0 0 auto;
-  }
-  .phead .tag { color: var(--green); }
-  .phead .tag.amber { color: var(--amber); }
-
-  /* ---------- column: hero + strip ---------- */
-  .col-feed { display: grid; grid-template-rows: 1fr auto; gap: 10px; min-height: 0; min-width: 0; }
-
-  /* HERO camera — feed is a flex child that fills the panel under the phead */
-  .hero { position: relative; overflow: hidden; }
-  .hero > .feed { flex: 1 1 auto; min-height: 0; }
-  .feed { position: relative; width: 100%; height: 100%; overflow: hidden; background: #05080a; }
-  /* live video element (canvas via WebCodecs, or <img> fallback) fills the feed */
-  .feed > #hero, .feed > .cam {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: cover; display: block; background: #05080a; z-index: 0;
-  }
-  .scan {
-    position: absolute; inset: 0; pointer-events: none; z-index: 1;
-    background:
-      repeating-linear-gradient(0deg, rgba(74,222,128,0.05) 0px, rgba(74,222,128,0.05) 1px, transparent 1px, transparent 3px);
-    mix-blend-mode: screen;
-  }
-  .tint {
-    position: absolute; inset: 0; pointer-events: none; z-index: 1;
-    background: radial-gradient(120% 90% at 50% 18%, transparent 55%, rgba(10,13,11,0.85) 100%);
-  }
-  .feed-osd {
-    position: absolute; inset: 0; pointer-events: none; z-index: 3;
-    color: var(--green);
-    font-size: 11px;
-    letter-spacing: 0.12em;
-  }
-  .feed-osd .tl { position: absolute; top: 10px; left: 12px; }
-  .feed-osd .tr { position: absolute; top: 10px; right: 12px; text-align: right; color: var(--amber); }
-  .feed-osd .bl { position: absolute; bottom: 12px; left: 12px; }
-  .feed-osd .br { position: absolute; bottom: 12px; right: 12px; text-align: right; }
-  .feed-osd .recdot { display:inline-block; width:7px;height:7px;border-radius:50%;background:var(--alert); margin-right:6px; vertical-align: baseline; }
-  .crosshair {
-    position:absolute; top:50%; left:50%; width:54px; height:54px; z-index: 2;
-    transform: translate(-50%,-50%);
-    border: 1px solid rgba(74,222,128,0.35);
-    pointer-events: none;
-  }
-  .crosshair:before, .crosshair:after {
-    content:""; position:absolute; background: rgba(74,222,128,0.45);
-  }
-  .crosshair:before { left:50%; top:-12px; bottom:-12px; width:1px; transform: translateX(-0.5px); }
-  .crosshair:after  { top:50%; left:-12px; right:-12px; height:1px; transform: translateY(-0.5px); }
-
-  .nosignal {
-    position:absolute; inset:0; display:none; z-index: 4;
-    align-items:center; justify-content:center; flex-direction:column; gap:8px;
-    background: repeating-linear-gradient(45deg, #0b0f0c 0 8px, #0e120f 8px 16px);
-    color: var(--amber);
-    letter-spacing: 0.3em; font-size: 12px;
-  }
-  .feed.nosig .nosignal { display:flex; }
-  .feed.nosig > #hero, .feed.nosig .scan, .feed.nosig .crosshair { opacity: 0; }
-
-  /* swarm strip */
-  .strip { flex: 0 0 auto; }
-  .strip .thumbs {
-    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-    gap: 8px; padding: 8px; overflow-x: auto;
-  }
-  .thumb {
-    position: relative;
-    border: 1px solid var(--hair-strong);
-    background: #05080a;
-    cursor: pointer;
-    aspect-ratio: 16/10;
-    min-width: 96px;
-    overflow: hidden;
-    padding: 0;
-    outline: none;
-  }
-  .thumb .feed { position:absolute; inset:0; }
-  .thumb .feed > .cam {
-    position:absolute; inset:0; width:100%; height:100%;
-    object-fit:cover; display:block; background:#05080a; z-index:0;
-  }
-  .thumb .tlabel {
-    position: absolute; left: 0; right: 0; bottom: 0;
-    display:flex; align-items:center; justify-content:space-between;
-    padding: 3px 6px;
-    background: linear-gradient(0deg, rgba(5,8,10,0.92), rgba(5,8,10,0));
-    font-size: 10.5px; letter-spacing: 0.08em;
-    color: var(--ink);
-    z-index: 3;
-  }
-  .thumb .sdot { width:7px; height:7px; border-radius:50%; background: var(--dim); }
-  .thumb.sel { border-color: var(--amber); }
-  .thumb.sel:after {
-    content:""; position:absolute; inset:0; border:1px solid var(--amber); pointer-events:none; z-index:4;
-  }
-  .thumb:focus-visible { border-color: var(--green); box-shadow: 0 0 0 2px rgba(74,222,128,0.5); }
-  .thumb .nsmini {
-    position:absolute; inset:0; z-index:2; display:none;
-    align-items:center; justify-content:center;
-    background: repeating-linear-gradient(45deg, #0b0f0c 0 6px, #0e120f 6px 12px);
-    color: var(--amber); font-size: 9px; letter-spacing:0.2em;
-  }
-  .thumb.nosig .nsmini { display:flex; }
-  .thumb.nosig .feed > .cam, .thumb.nosig .scan { opacity: 0; }
-
-  /* ---------- telemetry rail ---------- */
-  .rail { min-width: 0; }
-  .rail .body { overflow-y: auto; padding: 0; }
-  .rail-id {
-    display:flex; align-items:center; justify-content:space-between;
-    padding: 10px;
-    border-bottom: 1px solid var(--hair);
-  }
-  .rail-id { padding: 12px 11px; }
-  .rail-id .cs { font-size: 18px; font-weight: 700; letter-spacing: 0.1em; color: var(--green); }
-  .badge {
-    font-size: 10px; letter-spacing: 0.16em; padding: 4px 8px;
-    border: 1px solid currentColor;
-  }
-  .badge.armed { color: var(--alert); }
-  .badge.disarmed { color: var(--dim); }
-
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; }
-  .cell {
-    padding: 11px 12px;
-    border-bottom: 1px solid var(--hair);
-  }
-  .cell:nth-child(odd) { border-right: 1px solid var(--hair); }
-  .cell .k { color: var(--dim); font-size: 10.5px; letter-spacing: 0.16em; }
-  .cell .v { font-size: 20px; font-weight: 500; margin-top: 4px; letter-spacing: 0.02em; }
-  .cell .v small { font-size: 11px; color: var(--dim); letter-spacing: 0.06em; }
-  .v.green { color: var(--green); }
-  .v.amber { color: var(--amber); }
-  .v.alert { color: var(--alert); }
-
-  .battwrap { padding: 12px; border-bottom: 1px solid var(--hair); }
-  .battrow { display:flex; align-items:baseline; justify-content:space-between; }
-  .battrow .k { color: var(--dim); font-size: 10.5px; letter-spacing:0.16em; }
-  .battrow .pv { font-size: 20px; font-weight:500; }
-  .battbar { height: 7px; margin-top: 8px; background: #0a0d0b; border:1px solid var(--hair-strong); position:relative; }
-  .battbar > i { position:absolute; left:0; top:0; bottom:0; display:block; width:0; }
-
-  .note { padding: 12px; border-bottom: 1px solid var(--hair); }
-  .note:last-child { border-bottom: 0; }
-  .note .k { color: var(--dim); font-size: 10.5px; letter-spacing: 0.16em; margin-bottom: 6px; }
-  .note .t { color: var(--ink); font-size: 12.5px; line-height: 1.5; word-break: break-word; }
-  .note .t.task { color: var(--green); }
-
-  /* ---------- scope ---------- */
-  .scope-panel { min-width: 0; }
-  .scope-body { position: relative; flex: 1 1 auto; min-height: 0; padding: 8px; }
-  #scope { display:block; width:100%; height:100%; cursor: pointer; }
-  .scope-foot {
-    flex: 0 0 auto;
-    display:flex; align-items:center; justify-content:space-between;
-    border-top: 1px solid var(--hair);
-    padding: 7px 11px;
-    color: var(--dim); font-size: 10.5px; letter-spacing: 0.12em;
-  }
-  .scope-foot .legend { display:flex; gap:14px; }
-  .scope-foot .lg { display:inline-flex; align-items:center; gap:5px; }
-  .scope-foot .lg i { width:8px; height:8px; display:inline-block; }
-
-  /* ---------- chat / strips ---------- */
-  .chat { min-width: 0; }
-  .chat .feed-list {
-    flex: 1 1 auto; overflow-y: auto; padding: 8px;
-    display:flex; flex-direction:column; gap: 6px;
-  }
-  .fstrip {
-    display: grid; grid-template-columns: 92px 1fr;
-    border: 1px solid var(--hair-strong);
-    background: var(--raised);
-  }
-  .fstrip .who {
-    padding: 6px 8px;
-    border-right: 1px solid var(--hair-strong);
-    color: var(--green);
-    font-size: 10px; letter-spacing: 0.05em;
-    word-break: break-all;
-    display:flex; align-items:center;
-    background: rgba(74,222,128,0.04);
-  }
-  .fstrip .msg { padding: 6px 9px; color: var(--ink); font-size: 12.5px; line-height:1.45; word-break: break-word; }
-  .fstrip.cmd { border-color: rgba(251,191,36,0.4); }
-  .fstrip.cmd .who { color: var(--amber); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.06); }
-
-  .composer {
-    flex: 0 0 auto;
-    display: grid; grid-template-columns: 1fr auto;
-    gap: 8px;
-    padding: 8px;
-    border-top: 1px solid var(--hair);
-  }
-  .composer input {
-    background: #05080a;
-    border: 1px solid var(--hair-strong);
-    color: var(--ink);
-    font-family: var(--mono);
-    font-size: 13px;
-    padding: 10px 11px;
-    outline: none;
-    letter-spacing: 0.03em;
-    min-width: 0;
-  }
-  .composer input::placeholder { color: var(--dim); }
-  .composer input:focus-visible { border-color: var(--green); box-shadow: 0 0 0 2px rgba(74,222,128,0.4); }
-  .composer button {
-    background: rgba(74,222,128,0.08);
-    border: 1px solid var(--green);
-    color: var(--green);
-    font-family: var(--mono);
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    font-size: 12px;
-    padding: 0 20px;
-    cursor: pointer;
-    text-transform: uppercase;
-  }
-  .composer button:hover { background: rgba(74,222,128,0.16); }
-  .composer button:focus-visible { box-shadow: 0 0 0 2px rgba(74,222,128,0.5); outline: none; }
-  .composer button:active { background: rgba(74,222,128,0.24); }
-
-  /* scrollbars */
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--hair-strong); }
-  ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
-
-  @media (prefers-reduced-motion: reduce) {
-    .status .dot { animation: none; }
-  }
+  /* ---------- dock ---------- */
+  .dock{flex:none;height:118px;border-top:1px solid var(--line);background:#0a1128;
+    display:grid;grid-template-columns:1fr 320px;gap:12px;padding:10px 12px}
+  .chat{overflow:auto;font-family:var(--mono);font-size:11.5px;display:flex;
+    flex-direction:column;gap:3px;padding-right:6px}
+  .chat .u{color:var(--accent)} .chat .p{color:var(--green)}
+  .chat .e{color:var(--red)} .chat .s{color:var(--faint)}
+  .cmd{display:flex;gap:8px;align-items:flex-start}
+  .cmd input{flex:1;background:#080d20;border:1px solid var(--line);border-radius:8px;
+    color:var(--txt);font-family:var(--mono);font-size:12px;padding:9px 12px;outline:none}
+  .cmd input:focus{border-color:var(--accent)}
+  .cmd button{background:linear-gradient(135deg,var(--accent),#2b6cff);border:none;
+    color:#04101e;font-weight:800;font-family:var(--mono);border-radius:8px;
+    padding:9px 16px;cursor:pointer}
 </style>
 </head>
 <body>
-<div class="app">
 
-  <!-- HEADER -->
-  <header class="bar">
-    <div class="brand">
-      <span class="mark">SQUAWD</span>
-      <span class="sub up">Swarm Observatory · PPI Console</span>
-    </div>
-    <div class="status">
-      <span class="live" id="live"><span class="dot"></span><span class="up" id="liveline">connecting…</span></span>
-      <span class="up">RANGE 90 M</span>
-      <span class="clock tnum up" id="clock">--:--:--Z</span>
-    </div>
-  </header>
+<header>
+  <div class="logo"><span class="mark">S1</span> SQUAWD-1 <span style="color:var(--faint);font-weight:400">cockpit</span></div>
+  <span class="mode" id="mode">—</span>
+  <div class="dots">
+    <span id="dot-cam" class="r">CAM</span>
+    <span id="dot-det" class="r">DET</span>
+    <span id="dot-tof" class="">ToF</span>
+  </div>
+  <span class="clock" id="clock">SIM —</span>
+  <button class="btn land" id="btn-land">▼ LAND</button>
+  <button class="btn estop" id="btn-estop">■ ESTOP</button>
+</header>
 
-  <!-- MAIN -->
-  <div class="main">
-
-    <!-- COL 1: hero + strip -->
-    <div class="col-feed">
-      <section class="panel hero" aria-label="Primary camera POV">
-        <div class="phead">
-          <span>POV · <span class="tag" id="hero-cs">DRONE_—</span></span>
-          <span>FWD CAM</span>
-        </div>
-        <div class="feed" id="hero-feed">
-          <!-- live video element (#hero) injected by setupHero() as first child -->
-          <div class="scan"></div>
-          <div class="tint"></div>
-          <div class="crosshair"></div>
-          <div class="feed-osd">
-            <div class="tl tnum"><span class="recdot"></span>REC · <span id="osd-cs">D—</span></div>
-            <div class="tr tnum" id="osd-mode">—</div>
-            <div class="bl tnum" id="osd-alt">ALT —</div>
-            <div class="br tnum" id="osd-hdg">HDG —</div>
-          </div>
-          <div class="nosignal">▚ NO SIGNAL ▚</div>
-        </div>
-      </section>
-
-      <section class="panel strip" aria-label="Swarm camera thumbnails">
-        <div class="phead"><span>SWARM · CAM ARRAY</span><span class="tag" id="feeds-tag">— FEEDS</span></div>
-        <div class="thumbs" id="thumbs"></div>
-      </section>
-    </div>
-
-    <!-- COL 2: telemetry rail -->
-    <section class="panel rail" aria-label="Selected drone telemetry">
-      <div class="phead"><span>TELEMETRY</span><span class="tag" id="rail-tag">SEL</span></div>
-      <div class="body">
-        <div class="rail-id">
-          <span class="cs" id="rail-cs">DRONE_—</span>
-          <span class="badge disarmed" id="rail-arm">—</span>
-        </div>
-        <div class="grid2">
-          <div class="cell"><div class="k">ALT</div><div class="v green tnum" id="t-alt">—</div></div>
-          <div class="cell"><div class="k">SPD</div><div class="v tnum" id="t-spd">—</div></div>
-          <div class="cell"><div class="k">V/S</div><div class="v tnum" id="t-vs">—</div></div>
-          <div class="cell"><div class="k">HDG</div><div class="v tnum" id="t-hdg">—</div></div>
-          <div class="cell"><div class="k">MODE</div><div class="v amber" id="t-mode" style="font-size:14px;">—</div></div>
-          <div class="cell"><div class="k">POS N/E</div><div class="v tnum" id="t-pos" style="font-size:13px;">—</div></div>
-        </div>
-        <div class="battwrap">
-          <div class="battrow">
-            <span class="k">BATTERY</span>
-            <span class="pv tnum" id="t-batt">—</span>
-          </div>
-          <div class="battbar"><i id="t-battbar"></i></div>
-        </div>
-        <div class="note">
-          <div class="k">CURRENT TASK</div>
-          <div class="t task" id="t-task">—</div>
-        </div>
-        <div class="note">
-          <div class="k">LAST REPORT</div>
-          <div class="t" id="t-report">—</div>
-        </div>
+<main>
+  <!-- ============ POV ============ -->
+  <div class="pov">
+    <div class="pov-inner" id="pov">
+      <canvas class="cam" id="cam"></canvas>
+      <canvas class="hud" id="hud"></canvas>
+      <div class="novid" id="novid">waiting for video…<br><span id="novid-why"></span></div>
+      <div class="hud-dom tape">HDG <b id="t-hdg">—</b> <span id="t-card"></span></div>
+      <div class="hud-dom degraded" id="degraded"></div>
+      <div class="hud-dom trackbanner" id="trackbanner"></div>
+      <div class="hud-dom ladder" id="ladder"></div>
+      <div class="hud-dom xh">+</div>
+      <div class="hud-dom beam" id="beam"><span class="chip" id="beam-chip">ToF —</span></div>
+      <div class="hud-dom fresh" id="fresh"></div>
+      <div class="hud-dom strip">
+        <div>ALT<b id="s-alt">—</b></div>
+        <div>SPD<b id="s-spd">—</b></div>
+        <div>VS<b id="s-vs">—</b></div>
+        <div>BATT<b id="s-batt">—</b></div>
+        <div>V<b id="s-volt">—</b></div>
+        <div>ARMED<b id="s-arm">—</b></div>
       </div>
-    </section>
-
-    <!-- COL 3: SCOPE -->
-    <section class="panel scope-panel" aria-label="PPI radar scope tactical map">
-      <div class="phead"><span>PPI SCOPE · N-UP</span><span class="tag amber">SECTOR 360°</span></div>
-      <div class="scope-body"><canvas id="scope"></canvas></div>
-      <div class="scope-foot">
-        <div class="legend">
-          <span class="lg"><i style="background:var(--green)"></i>BLIP</span>
-          <span class="lg"><i style="background:var(--amber)"></i>SELECTED</span>
-          <span class="lg"><i style="background:var(--alert)"></i>LOW BATT</span>
-        </div>
-        <span class="tnum">RINGS 30 / 60 / 90 M</span>
-      </div>
-    </section>
-
-    <!-- COL 4: CHAT -->
-    <section class="panel chat" aria-label="Swarm comms and command">
-      <div class="phead"><span>COMMS · PROGRESS STRIPS</span><span class="tag" id="chat-count">0</span></div>
-      <div class="feed-list" id="chat" role="log" aria-live="polite"></div>
-      <form class="composer" id="composer">
-        <input id="cmd" type="text" autocomplete="off" placeholder="Command the swarm… e.g. 'everyone take off and spread out'" aria-label="Command input" />
-        <button type="submit">Send</button>
-      </form>
-    </section>
-
+    </div>
   </div>
 
-  <!-- FOOTER status -->
-  <footer class="bar" style="padding:5px 14px;">
-    <div class="status" style="gap:22px;">
-      <span class="up">SIM · GZ-HARMONIC</span>
-      <span class="up">LINK <span id="f-link" style="color:var(--green)">NOMINAL</span></span>
-      <span class="up">FRAME GPS-FUSED</span>
+  <!-- ============ right rail ============ -->
+  <div class="rail">
+    <div class="card map"><h4>PPI · contacts</h4><canvas id="ppi" width="220" height="220"></canvas></div>
+    <div class="card"><h4>Contacts</h4><div class="clist" id="contacts"><div class="citem" style="color:var(--faint)">none</div></div></div>
+    <div class="card"><h4>Sensors</h4>
+      <div class="sens">
+        <div id="sen-cam">CAM<b>—</b></div>
+        <div id="sen-det">DET<b>—</b></div>
+        <div id="sen-snap">SNAP Δt<b>—</b></div>
+        <div id="sen-trk">TRACKED<b>—</b></div>
+      </div>
     </div>
-    <div class="status" style="gap:22px;">
-      <span class="up tnum">ARMED <span id="f-armed" style="color:var(--alert)">—</span>/<span id="f-total">—</span></span>
-      <span class="up tnum">MEAN BATT <span id="f-batt" style="color:var(--green)">—</span></span>
-    </div>
-  </footer>
+  </div>
+</main>
 
+<div class="dock">
+  <div class="chat" id="chat"></div>
+  <div class="cmd">
+    <input id="cmd-in" placeholder="command the drone… (enter to send)" autocomplete="off">
+    <button id="cmd-send">SEND</button>
+  </div>
 </div>
 
 <script>
 "use strict";
-const $ = (s, r=document) => r.querySelector(s);
+/* SQUAWD-1 cockpit — vanilla JS, no build step.
+ * Data flow (ICD §8.2):
+ *   WS /ws_cam        -> H.264 AU via WebCodecs; per-AU [seq:u32, stamp:f64] header
+ *   WS /ws_detections -> verbatim PerceptionSnapshot v1 JSON (authoritative fusion)
+ *   GET /state (2 Hz) -> pose/attitude/mode/battery/health + server-side banner
+ *   GET /chat (1 Hz)  -> feed; POST /command; POST /estop
+ * The 0.5 s overlay match rule mirrors agents/observatory/overlay.py — keep in sync.
+ */
+const OVERLAY_MAX_AGE_S = 0.5;              // mirror of overlay.py OVERLAY_MAX_AGE_S
+const HFOV_DEG = 69.0;                      // camera SDF hfov (perception/projection.py)
+const el = (id) => document.getElementById(id);
 
-let sel = 0, built = 0, lastState = null, drones = [];
-// Deep-link: ?drone=N opens with that drone focused (clamped once the count is known).
-const _qDrone = new URLSearchParams(location.search).get("drone");
-if (_qDrone !== null && /^\d+$/.test(_qDrone)) sel = +_qDrone;
-
-/* ---------- formatting helpers (every field can be null pre-lock) ---------- */
-const csName = id => "DRONE_" + id;
-const pad = (n, w=2) => String(Math.abs(Math.round(n))).padStart(w, "0");
-const sgn = n => (n >= 0 ? "+" : "-") + pad(Math.abs(n));
-function num(v, digits, suffix="") {
-  return (v === null || v === undefined) ? "—" : v.toFixed(digits) + suffix;
-}
-// battery → severity class, folding PX4's battery-warning level in too.
-function battClass(pct, warn) {
-  if (pct === null || pct === undefined) return "";
-  if ((warn != null && warn > 1) || pct < 20) return "alert";
-  if (pct < 50) return "amber";
-  return "green";
-}
-function battColor(pct, warn) {
-  return { alert:"#ff6b6b", amber:"#fbbf24", green:"#4ade80" }[battClass(pct, warn)] || "#3f6b50";
-}
-// "#rrggbb" -> "rgba(r,g,b,a)" for translucent scope overlays.
-function rgba(hex, a) {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
-}
-function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
-
-/* ====================================================
-   LIVE VIDEO  — one WebSocket of H.264 decoded by WebCodecs onto per-tile
-   <canvas>; browsers without WebCodecs poll /frame/{id} JPEGs into <img>.
-   (Pipeline preserved from the original observatory.)
-==================================================== */
-const HAS_WEBCODECS = ("VideoDecoder" in window) && ("EncodedVideoChunk" in window)
-  && !new URLSearchParams(location.search).has("nocodec");   // ?nocodec forces the JPEG path
-const codecFor = {}, tiles = {};
-
-function setupHero() {
-  const feed = $("#hero-feed");
-  const tag = HAS_WEBCODECS ? "canvas" : "img";
-  const el = document.createElement(tag);
-  el.id = "hero";
-  feed.insertAdjacentHTML("afterbegin", "");      // ensure feed exists
-  feed.insertBefore(el, feed.firstChild);          // video sits beneath the overlays
-}
-
-// Draw a decoded VideoFrame into a <canvas>, sizing the canvas to the frame.
-function paint(canvas, frame) {
-  if (canvas.width !== frame.displayWidth) canvas.width = frame.displayWidth;
-  if (canvas.height !== frame.displayHeight) canvas.height = frame.displayHeight;
-  canvas.getContext("2d").drawImage(frame, 0, 0, canvas.width, canvas.height);
-}
-
-function ensureDecoder(i) {
-  let t = tiles[i];
-  if (t) return t;
-  const canvas = document.getElementById("cam" + i);
-  if (!canvas) return null;
-  const dec = new VideoDecoder({
-    output: frame => {
-      paint(canvas, frame);                                   // thumbnail
-      if (i === sel) { const h = document.getElementById("hero");
-        if (h && h.tagName === "CANVAS") paint(h, frame); }   // hero (selected)
-      frame.close();
-    },
-    error: e => console.warn("decoder", i, e)
-  });
-  t = { dec, configured:false, gotKey:false, ts:0 };
-  tiles[i] = t;
-  return t;
-}
-
-// ONE WebSocket carries every tile's H.264 (text {d,codec} announce, then binary
-// [drone id, flags(bit0=keyframe), ...Annex-B NALs]).
-function startWS() {
-  if (startWS._sock && startWS._sock.readyState <= 1) return;
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const sock = new WebSocket(`${proto}://${location.host}/ws`);
-  startWS._sock = sock;
-  sock.binaryType = "arraybuffer";
-  sock.onmessage = ev => {
-    if (typeof ev.data === "string") { const c = JSON.parse(ev.data); codecFor[c.d] = c.codec; return; }
-    const buf = new Uint8Array(ev.data);
-    const i = buf[0], isKey = (buf[1] & 1) === 1, data = buf.subarray(2);
-    const t = ensureDecoder(i);
-    if (!t) return;
-    if (!t.configured) {
-      if (!isKey) return;
-      try { t.dec.configure({ codec: codecFor[i] || "avc1.42C01F", optimizeForLatency:true }); t.configured = true; }
-      catch(e) { console.warn("configure", codecFor[i], e); return; }
-    }
-    if (!t.gotKey) { if (!isKey) return; t.gotKey = true; }
-    try {
-      t.dec.decode(new EncodedVideoChunk({ type: isKey ? "key" : "delta", timestamp: t.ts, data }));
-      t.ts += 83333;                                          // ~12fps in microseconds
-    } catch(e) { console.warn("decode", e); }
-  };
-  sock.onclose = () => setTimeout(startWS, 1000);
-  sock.onerror = () => sock.close();
-}
-
-// Fallback for browsers without WebCodecs: poll the latest JPEG per tile.
-function startPolling(n) {
-  if (startPolling._t) clearInterval(startPolling._t);
-  startPolling._t = setInterval(() => {
-    for (let i = 0; i < n; i++) {
-      const img = document.getElementById("cam" + i); if (!img) continue;
-      fetch("/frame/" + i, { cache:"no-store" }).then(r => r.status === 200 ? r.blob() : null).then(b => {
-        if (!b) return;
-        const url = URL.createObjectURL(b);
-        const prev = img._url; img._url = url; img.src = url;
-        if (i === sel) { const h = document.getElementById("hero"); if (h && h.tagName === "IMG") h.src = url; }
-        if (prev) URL.revokeObjectURL(prev);
-      }).catch(() => {});
-    }
-  }, 200);
-}
-
-/* ---------- swarm strip ---------- */
-function buildThumbs(n) {
-  const wrap = $("#thumbs");
-  wrap.innerHTML = "";
-  for (const k in tiles) { try { tiles[k].dec.close(); } catch(e){} delete tiles[k]; }
-  const mediaTag = HAS_WEBCODECS ? "canvas" : "img";
-  for (let i = 0; i < n; i++) {
-    const b = document.createElement("button");
-    b.className = "thumb";
-    b.dataset.id = i;
-    b.setAttribute("aria-label", csName(i) + " camera, select");
-    b.setAttribute("aria-pressed", i === sel ? "true" : "false");
-    b.innerHTML =
-      `<div class="feed"><${mediaTag} id="cam${i}" class="cam" alt="drone_${i}"></${mediaTag}><div class="scan"></div></div>` +
-      `<div class="nsmini">NO SIGNAL</div>` +
-      `<div class="tlabel"><span>D${i}</span><span class="sdot" id="sdot${i}"></span></div>`;
-    b.addEventListener("click", () => select(i));
-    wrap.appendChild(b);
-  }
-  built = n;
-  $("#feeds-tag").textContent = n + " FEED" + (n === 1 ? "" : "S");
-  if (sel >= n) sel = 0;
-  if (HAS_WEBCODECS) startWS(); else startPolling(n);
-  select(sel);
-}
-
-function select(i) {
-  sel = i;
-  document.querySelectorAll(".thumb").forEach(t => {
-    const on = +t.dataset.id === i;
-    t.classList.toggle("sel", on);
-    t.setAttribute("aria-pressed", on ? "true" : "false");
-    if (on) t.scrollIntoView({ block:"nearest", inline:"nearest" });
-  });
-  // Show the selected drone's current frame in the hero immediately.
-  const hero = document.getElementById("hero"), cam = document.getElementById("cam" + i);
-  if (hero && cam) {
-    if (hero.tagName === "CANVAS" && cam.tagName === "CANVAS" && cam.width) {
-      hero.width = cam.width; hero.height = cam.height;
-      hero.getContext("2d").drawImage(cam, 0, 0, hero.width, hero.height);
-    } else if (hero.tagName === "IMG" && cam.tagName === "IMG" && cam.src) {
-      hero.src = cam.src;
-    }
-  }
-  if (drones[i]) renderRail(drones[i]);
-  drawScope();
-}
-
-/* ---------- telemetry rail + hero OSD ---------- */
-function renderRail(d) {
-  if (!d) return;
-  $("#hero-cs").textContent = csName(d.id);
-  $("#rail-cs").textContent = csName(d.id);
-  $("#rail-tag").textContent = "D" + d.id;
-  $("#osd-cs").textContent = "D" + d.id;
-
-  const arm = $("#rail-arm");
-  if (d.armed === null || d.armed === undefined) { arm.textContent = "—"; arm.className = "badge disarmed"; }
-  else if (d.armed) { arm.textContent = "ARMED"; arm.className = "badge armed"; }
-  else { arm.textContent = "DISARMED"; arm.className = "badge disarmed"; }
-
-  $("#t-alt").innerHTML = num(d.alt, 1) + (d.alt == null ? "" : ' <small>M</small>');
-  $("#t-spd").innerHTML = num(d.speed, 1) + (d.speed == null ? "" : ' <small>M/S</small>');
-  const vs = $("#t-vs");
-  vs.innerHTML = (d.vspeed == null ? "—" : (d.vspeed >= 0 ? "+" : "") + d.vspeed.toFixed(1) + ' <small>M/S</small>');
-  vs.className = "v tnum " + (d.vspeed != null && d.vspeed < -1 ? "amber" : "");
-  $("#t-hdg").innerHTML = d.heading == null ? "—" : pad(d.heading, 3) + '<small>°</small>';
-  $("#t-mode").textContent = d.mode || "—";
-  $("#t-pos").textContent = (d.north == null ? "—" : sgn(d.north)) + " / " + (d.east == null ? "—" : sgn(d.east));
-
-  const batt = $("#t-batt");
-  batt.innerHTML = (d.batt_pct == null ? "—" : d.batt_pct + "%") +
-    (d.voltage == null ? "" : ' <small style="color:var(--dim)">' + d.voltage.toFixed(1) + 'V</small>');
-  batt.className = "pv tnum " + battClass(d.batt_pct, d.warn);
-  const bb = $("#t-battbar");
-  bb.style.width = (d.batt_pct == null ? 0 : d.batt_pct) + "%";
-  bb.style.background = battColor(d.batt_pct, d.warn);
-
-  $("#t-task").textContent = d.task || "—";
-  $("#t-report").textContent = d.report || "—";
-
-  // hero OSD
-  $("#osd-mode").textContent = d.mode || "—";
-  $("#osd-alt").textContent = "ALT " + (d.alt == null ? "—" : d.alt.toFixed(1) + " M");
-  $("#osd-hdg").textContent = "HDG " + (d.heading == null ? "—" : pad(d.heading, 3) + "°");
-
-  // no-camera placeholder for the hero
-  $("#hero-feed").classList.toggle("nosig", d.cam === false);
-}
-
-// Per-tile status dot + no-signal overlay, refreshed each poll.
-function refreshTiles() {
-  drones.forEach(d => {
-    const sdot = document.getElementById("sdot" + d.id);
-    if (sdot) sdot.style.background = d.armed ? battColor(d.batt_pct, d.warn) : "var(--dim)";
-    const thumb = document.querySelector('.thumb[data-id="' + d.id + '"]');
-    if (thumb) thumb.classList.toggle("nosig", d.cam === false);
-  });
-}
-
-/* ---------- comms · flight-progress strips ---------- */
-function renderChat(msgs) {
-  const box = $("#chat");
-  box.innerHTML = msgs.map(l => {
-    const i = l.indexOf(":");
-    const who = (i > 0 ? l.slice(0, i) : "").trim();
-    const rest = (i > 0 ? l.slice(i + 1) : l).trim();
-    const cls = /commander|^you$/i.test(who) ? "fstrip cmd" : "fstrip";
-    return `<div class="${cls}"><div class="who">${escapeHtml(who.toUpperCase())}</div>` +
-           `<div class="msg">${escapeHtml(rest)}</div></div>`;
-  }).join("");
-  $("#chat-count").textContent = msgs.length;
-  box.scrollTop = box.scrollHeight;
-}
-
-/* ---------- footer aggregates ---------- */
-function renderFooter() {
-  const armed = drones.filter(d => d.armed).length;
-  $("#f-armed").textContent = armed;
-  $("#f-total").textContent = drones.length;
-  const batts = drones.map(d => d.batt_pct).filter(v => v != null);
-  const fb = $("#f-batt");
-  if (batts.length) {
-    const mean = Math.round(batts.reduce((a, b) => a + b, 0) / batts.length);
-    fb.textContent = mean + "%";
-    fb.style.color = battColor(mean, 0);
-  } else { fb.textContent = "—"; fb.style.color = "var(--dim)"; }
-}
-
-/* ====================================================
-   PPI RADAR SCOPE  — N-up tactical map drawn from live drone positions.
-==================================================== */
-const canvas = $("#scope"), ctx = canvas.getContext("2d");
-const RANGE_M = 90;
-const FOV_RAD = 1.204;   // IMX214 onboard camera horizontal FOV (~69°), drawn as a look cone
-let dpr = 1, cw = 0, ch = 0, cxp = 0, cyp = 0, R = 0;
-let blips = [];   // {id, x, y} screen px, for click hit-testing
-
-function resizeScope() {
-  const rect = canvas.parentElement.getBoundingClientRect();
-  dpr = window.devicePixelRatio || 1;
-  cw = rect.width; ch = rect.height;
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cxp = cw / 2; cyp = ch / 2;
-  // Cap the radar so it stays a readable instrument instead of filling a wide
-  // column on big monitors; it centers in whatever space the column gives it.
-  R = Math.min(Math.min(cw, ch) / 2 - 24, 230);
-  drawScope();
-}
-// world (north,east meters) -> screen. N up (=-y), E right (=+x)
-function worldToScreen(north, east) {
-  return [cxp + (east / RANGE_M) * R, cyp - (north / RANGE_M) * R];
-}
-
-function drawScope() {
-  if (!R) return;
-  ctx.clearRect(0, 0, cw, ch);
-
-  const g = ctx.createRadialGradient(cxp, cyp, 0, cxp, cyp, R);
-  g.addColorStop(0, "rgba(74,222,128,0.05)");
-  g.addColorStop(1, "rgba(10,13,11,0)");
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(cxp, cyp, R, 0, Math.PI * 2); ctx.fill();
-
-  // range rings 30/60/90
-  ctx.font = "10.5px 'JetBrains Mono', monospace";
-  ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  [30, 60, 90].forEach(rm => {
-    const rr = (rm / RANGE_M) * R;
-    ctx.beginPath(); ctx.arc(cxp, cyp, rr, 0, Math.PI * 2);
-    ctx.strokeStyle = rm === 90 ? "rgba(63,107,80,0.9)" : "rgba(63,107,80,0.5)";
-    ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = "rgba(63,107,80,0.95)";
-    ctx.fillText(rm + "m", cxp + rr * 0.707 - 1, cyp - rr * 0.707);
-  });
-
-  // axes
-  ctx.strokeStyle = "rgba(63,107,80,0.35)"; ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(cxp - R, cyp); ctx.lineTo(cxp + R, cyp);
-  ctx.moveTo(cxp, cyp - R); ctx.lineTo(cxp, cyp + R);
-  ctx.stroke();
-
-  // bearing scale (every 5°, major every 30°)
-  for (let a = 0; a < 360; a += 5) {
-    const rad = (a - 90) * Math.PI / 180;
-    const major = a % 30 === 0;
-    const t1 = major ? R - 9 : R - 4;
-    ctx.beginPath();
-    ctx.strokeStyle = major ? "rgba(74,222,128,0.55)" : "rgba(63,107,80,0.5)";
-    ctx.lineWidth = major ? 1.2 : 0.8;
-    ctx.moveTo(cxp + Math.cos(rad) * t1, cyp + Math.sin(rad) * t1);
-    ctx.lineTo(cxp + Math.cos(rad) * R, cyp + Math.sin(rad) * R);
-    ctx.stroke();
-    if (major) {
-      ctx.fillStyle = "rgba(63,107,80,0.95)";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(String(a).padStart(3, "0"), cxp + Math.cos(rad) * (R - 17), cyp + Math.sin(rad) * (R - 17));
-    }
-  }
-
-  // compass cardinals
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillStyle = "#fbbf24"; ctx.font = "bold 12px 'JetBrains Mono', monospace";
-  ctx.fillText("N", cxp, cyp - R - 11);
-  ctx.fillStyle = "rgba(63,107,80,0.9)"; ctx.font = "10.5px 'JetBrains Mono', monospace";
-  ctx.fillText("S", cxp, cyp + R + 11);
-  ctx.textAlign = "left";  ctx.fillText("E", cxp + R + 7, cyp);
-  ctx.textAlign = "right"; ctx.fillText("W", cxp - R - 7, cyp);
-
-  blips = [];
-  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-  drones.forEach(d => drawBlip(d));
-}
-
-function drawBlip(d) {
-  if (d.north == null || d.east == null) return;     // no position fix yet
-  const [x, y] = worldToScreen(d.north, d.east);
-  const isSel = d.id === sel;
-  const low = battClass(d.batt_pct, d.warn) === "alert";
-  const color = low ? "#ff6b6b" : (isSel ? "#fbbf24" : "#4ade80");
-  blips.push({ id: d.id, x, y });
-
-  // camera field-of-view cone — where the drone's forward camera is looking.
-  // Centred on heading (yaw = camera bore), spanning the IMX214's ~69° HFOV.
-  if (d.heading != null) {
-    const c = (d.heading - 90) * Math.PI / 180;
-    const a0 = c - FOV_RAD / 2, a1 = c + FOV_RAD / 2;
-    const reach = isSel ? 34 : 28;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.arc(x, y, reach, a0, a1);
-    ctx.closePath();
-    const g = ctx.createRadialGradient(x, y, 2, x, y, reach);
-    g.addColorStop(0, rgba(color, isSel ? 0.40 : 0.28));
-    g.addColorStop(1, rgba(color, 0));
-    ctx.fillStyle = g; ctx.fill();
-    // edge rays + a faint boresight so the look direction reads at a glance
-    ctx.strokeStyle = rgba(color, isSel ? 0.7 : 0.45); ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a0) * reach, y + Math.sin(a0) * reach);
-    ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a1) * reach, y + Math.sin(a1) * reach);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(c) * reach, y + Math.sin(c) * reach);
-    ctx.strokeStyle = rgba(color, isSel ? 0.55 : 0.3); ctx.stroke();
-  }
-
-  // blip mark (filled = armed, hollow square = on pad / disarmed)
-  if (d.armed) {
-    ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2);
-    ctx.fillStyle = color; ctx.fill();
-  } else {
-    ctx.strokeStyle = "#3f6b50"; ctx.lineWidth = 1.2;
-    ctx.strokeRect(x - 3, y - 3, 6, 6);
-  }
-
-  // selection bracket
-  if (isSel) {
-    const b = 9, seg = 4;
-    ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 1.2;
-    [[-b,-b,1,1],[b,-b,-1,1],[-b,b,1,-1],[b,b,-1,-1]].forEach(([dx,dy,sx,sy]) => {
-      ctx.beginPath();
-      ctx.moveTo(x+dx, y+dy); ctx.lineTo(x+dx + sx*seg, y+dy);
-      ctx.moveTo(x+dx, y+dy); ctx.lineTo(x+dx, y+dy + sy*seg);
-      ctx.stroke();
-    });
-  }
-
-  // callsign + altitude tags
-  ctx.font = "10.5px 'JetBrains Mono', monospace";
-  ctx.fillStyle = isSel ? "#fbbf24" : (low ? "#ff6b6b" : "#d6f0dd");
-  ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.fillText("D" + d.id + (low ? " ↓" : ""), x + 7, y - 6);
-  ctx.fillStyle = "rgba(63,107,80,0.95)";
-  ctx.fillText(d.armed ? (d.alt == null ? "—" : d.alt.toFixed(0) + "m") : "PAD", x + 7, y + 5);
-}
-
-canvas.onclick = ev => {
-  const rect = canvas.getBoundingClientRect();
-  const x = ev.clientX - rect.left, y = ev.clientY - rect.top;
-  let best = null, bd = 1e9;
-  blips.forEach(m => { const dd = (m.x - x)**2 + (m.y - y)**2; if (dd < bd) { bd = dd; best = m; } });
-  if (best && bd <= 18*18) select(best.id);
+const S = {
+  state: null,          // last /state JSON
+  snap: null,           // last PerceptionSnapshot v1 (parsed)
+  lastSeq: 0,
+  lastStamp: 0,         // sim_stamp of the newest received access unit
+  auTimes: [],          // wall-clock arrival times of recent AUs (fps estimate)
+  chatNext: 0,
 };
+let decoder = null;
 
-/* ---------- clock ---------- */
-function tickClock() {
-  const d = new Date(), z = n => String(n).padStart(2, "0");
-  $("#clock").textContent = `${z(d.getUTCHours())}:${z(d.getUTCMinutes())}:${z(d.getUTCSeconds())}Z`;
+/* ---------------- video ---------------- */
+
+function isKeyAU(u8) {
+  /* Annex-B scan: a keyframe AU from this encoder carries SPS (type 7) before
+   * its IDR slice (type 5); a delta AU leads with a non-IDR slice (type 1). */
+  for (let i = 0; i + 4 < u8.length; i++) {
+    if (u8[i] === 0 && u8[i+1] === 0 && (u8[i+2] === 1 || (u8[i+2] === 0 && u8[i+3] === 1))) {
+      const hdr = (u8[i+2] === 1) ? i+3 : i+4;
+      if (hdr >= u8.length) break;
+      const t = u8[hdr] & 0x1f;
+      if (t === 7 || t === 5) return true;
+      if (t >= 1 && t <= 5) return false;
+    }
+  }
+  return false;
 }
 
-/* ---------- command composer ---------- */
-$("#composer").addEventListener("submit", async e => {
-  e.preventDefault();
-  const inp = $("#cmd"), text = inp.value.trim();
+function setupDecoder(codec) {
+  if (!("VideoDecoder" in window)) {
+    el("novid-why").textContent = "this browser has no WebCodecs VideoDecoder";
+    return;
+  }
+  if (decoder) { try { decoder.close(); } catch (e) {} }
+  decoder = new VideoDecoder({
+    output: (vf) => { drawFrame(vf); vf.close(); },
+    error: (e) => console.warn("VideoDecoder:", e),
+  });
+  decoder.configure({ codec, optimizeForLatency: true });
+}
+
+function drawFrame(vf) {
+  const c = el("cam");
+  if (c.width !== vf.displayWidth || c.height !== vf.displayHeight) {
+    c.width = vf.displayWidth; c.height = vf.displayHeight;
+  }
+  c.getContext("2d").drawImage(vf, 0, 0);
+  el("novid").style.display = "none";
+  drawHUD();
+}
+
+function connectCam() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws_cam`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => el("dot-cam").className = "a";
+  ws.onclose = () => {
+    el("dot-cam").className = "r";
+    el("novid").style.display = "grid";
+    el("novid-why").textContent = "video socket closed — reconnecting";
+    setTimeout(connectCam, 1000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") {
+      const cfg = JSON.parse(ev.data);       // {seq, sim_stamp, codec} announce
+      setupDecoder(cfg.codec);
+      return;
+    }
+    const dv = new DataView(ev.data);
+    S.lastSeq = dv.getUint32(0, false);      // [seq:u32 BE, stamp:f64 BE, AU…]
+    S.lastStamp = dv.getFloat64(4, false);
+    const au = new Uint8Array(ev.data, 12);
+    S.auTimes.push(performance.now());
+    if (S.auTimes.length > 40) S.auTimes.shift();
+    el("dot-cam").className = "g";
+    if (decoder && decoder.state === "configured") {
+      decoder.decode(new EncodedVideoChunk({
+        type: isKeyAU(au) ? "key" : "delta",
+        timestamp: Math.round(S.lastStamp * 1e6),
+        data: au,
+      }));
+    }
+  };
+}
+
+/* ---------------- detections ---------------- */
+
+function connectDet() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws_detections`);
+  ws.onopen = () => el("dot-det").className = "a";
+  ws.onclose = () => { el("dot-det").className = "r"; setTimeout(connectDet, 1000); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    try {
+      S.snap = JSON.parse(ev.data);          // verbatim PerceptionSnapshot v1
+      el("dot-det").className = "g";
+      drawHUD();
+      drawContacts();
+      drawSensors();
+    } catch (e) { /* keep last good snapshot */ }
+  };
+}
+
+/* ---------------- overlay (mirror of overlay.py) ---------------- */
+
+function overlayFresh() {
+  return !!(S.snap && S.lastStamp > 0 && S.snap.sim_stamp > 0 &&
+            Math.abs(S.lastStamp - S.snap.sim_stamp) <= OVERLAY_MAX_AGE_S);
+}
+
+function healthColor(h) {
+  if (h === "MEASURED") return "var(--green)";
+  if (h === "COASTING") return "var(--amber)";
+  return "var(--accent)";                    // ACQUIRING / bearing-only / LOST
+}
+
+function matchContact(det, contacts) {
+  /* dets carry no contact id on the wire (v1): join by class, then nearest
+   * reported confidence. Unambiguous for the sim's one-mover scenario; a
+   * same-class crowd degrades gracefully to "no contact" styling. */
+  const cands = (contacts || []).filter(c => c.cls === det.cls);
+  if (!cands.length) return null;
+  let best = cands[0], bd = Math.abs((best.conf ?? 0) - det.conf);
+  for (const c of cands) {
+    const d = Math.abs((c.conf ?? 0) - det.conf);
+    if (d < bd) { best = c; bd = d; }
+  }
+  return best;
+}
+
+function drawHUD() {
+  const hud = el("hud"), cam = el("cam");
+  if (!cam.width) return;
+  if (hud.width !== cam.width || hud.height !== cam.height) {
+    hud.width = cam.width; hud.height = cam.height;
+  }
+  const ctx = hud.getContext("2d");
+  ctx.clearRect(0, 0, hud.width, hud.height);
+
+  const snap = S.snap, fresh = overlayFresh();
+  const fn = el("fresh");
+  if (snap && !fresh) {                      // stale overlay: dropped, said so
+    const dt = Math.abs(S.lastStamp - snap.sim_stamp).toFixed(1);
+    fn.textContent = `overlay dropped — snapshot stale (Δt=${dt}s > ${OVERLAY_MAX_AGE_S}s)`;
+    fn.className = "hud-dom fresh a";
+  } else if (snap) {
+    fn.textContent = `overlay Δt=${Math.abs(S.lastStamp - snap.sim_stamp).toFixed(2)}s`;
+    fn.className = "hud-dom fresh";
+  } else {
+    fn.textContent = "no perception snapshot yet";
+    fn.className = "hud-dom fresh";
+  }
+  updateBeam(fresh ? snap : null);
+  updateTrackBanner(fresh ? snap : null);
+  if (!fresh) return;
+
+  const sx = hud.width / (snap.frame_w || hud.width);
+  const sy = hud.height / (snap.frame_h || hud.height);
+  for (const d of snap.dets || []) drawDet(ctx, d, snap, sx, sy);
+}
+
+function drawDet(ctx, d, snap, sx, sy) {
+  const c = matchContact(d, snap.contacts);
+  const color = healthColor(c ? c.health : null);
+  const [x1, y1, x2, y2] = d.xyxy.map((v, i) => v * (i % 2 ? sy : sx));
+  const designated = snap.track && snap.track.target && c && c.name === snap.track.target;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = designated ? 2.5 : 1.6;
+  ctx.setLineDash(c ? [] : [5, 4]);          // no contact view => dashed box
+  ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  ctx.setLineDash([]);
+
+  const label = `${c ? c.name : "det"} · ${d.cls} · ${(d.conf ?? 0).toFixed(2)}`;
+  ctx.font = "11px ui-monospace, Menlo, monospace";
+  const lw = ctx.measureText(label).width + 10;
+  ctx.fillStyle = "#041a10d0";
+  ctx.fillRect(x1, Math.max(0, y1 - 18), lw, 16);
+  ctx.fillStyle = color;
+  ctx.fillText(label, x1 + 5, Math.max(11, y1 - 6));
+
+  /* range readout + src chip + range_conf bar (design §3.7: absence of a
+   * valid range reads RANGE UNAVAILABLE, never empty space) */
+  let rng, conf = 0;
+  if (c && c.range_m != null) {
+    rng = `${c.range_m.toFixed(0)} m · ${c.range_src || "?"}`;
+    conf = Math.max(0, Math.min(1, c.range_conf ?? 0));
+  } else {
+    rng = "RANGE UNAVAILABLE";
+  }
+  const rw = ctx.measureText(rng).width + 10;
+  ctx.fillStyle = "#0a1128d0";
+  ctx.fillRect(x1, y2 + 2, Math.max(rw, 46), 22);
+  ctx.fillStyle = "var(--txt)";
+  ctx.fillText(rng, x1 + 5, y2 + 16);
+  ctx.fillStyle = "#18224a";
+  ctx.fillRect(x1 + 5, y2 + 18, Math.max(rw, 46) - 10, 3);
+  ctx.fillStyle = color;
+  ctx.fillRect(x1 + 5, y2 + 18, (Math.max(rw, 46) - 10) * conf, 3);
+}
+
+/* ---------------- beam + track + ladder (DOM) ---------------- */
+
+function beamClass(status) {
+  if (!status || status === "IDLE") return "";
+  if (status === "LOCKED" || status === "ASSOCIATED") return "g";
+  if (status === "SEARCHING" || status === "ACQUIRING" || status === "DESIGNATED") return "a";
+  return "r";                                // NO-RETURN / EDGE-MIX / OUT-OF-ENVELOPE / slips
+}
+
+function updateBeam(snap) {
+  const st = snap && snap.beam ? (snap.beam.status || "IDLE") : null;
+  el("beam").className = "hud-dom beam " + (snap ? beamClass(st) : "");
+  el("beam-chip").textContent = snap ? `ToF ${st || "—"}` : "ToF —";
+  const rng = snap && snap.beam && snap.beam.range_m;
+  el("dot-tof").className = beamClass(st) || "";
+  el("dot-tof").textContent = rng ? `ToF ${rng.toFixed(0)}m` : "ToF";
+}
+
+function updateTrackBanner(snap) {
+  const t = snap && snap.track;
+  const b = el("trackbanner");
+  if (!t || !t.state || t.state === "IDLE") { b.style.display = "none"; return; }
+  const cls = (t.state === "WORLD_TRACKED" || t.state === "RANGE_LOCKED") ? "g"
+            : (t.state === "LOST") ? "r" : "a";
+  b.className = "hud-dom trackbanner " + cls;
+  b.style.display = "block";
+  const gap = t.gap_m != null ? ` · gap ${t.gap_m.toFixed(1)} m` : "";
+  b.innerHTML = `<b>${t.state}</b>${t.target || "—"}${gap}`;
+}
+
+const CARDINALS = ["N","NE","E","SE","S","SW","W","NW"];
+
+function drawLadder() {
+  /* mini pitch/roll ladder: 3 bars (±10°, 0) shifting with pitch, the whole
+   * widget rolling with the airframe (attitude explains beam-off-target). */
+  const st = S.state || {};
+  const roll = st.roll ?? 0, pitch = st.pitch ?? 0;
+  const px = Math.max(-40, Math.min(40, pitch * 2));       // 2 px/deg, clamped
+  let rows = "";
+  for (const deg of [10, 0, -10]) {
+    const y = 60 + px - deg * 2;
+    rows += `<div style="position:absolute;top:${y}px;left:8px;width:48px;
+      border-top:1px solid ${deg === 0 ? "var(--amber)" : "var(--faint)"};
+      font-size:9px;color:var(--faint)">${deg ? deg + "°" : ""}</div>`;
+  }
+  el("ladder").innerHTML =
+    `<div style="position:absolute;inset:0;transform:rotate(${-roll}deg)">${rows}</div>`;
+}
+
+/* ---------------- /state ---------------- */
+
+async function pollState() {
+  try {
+    const r = await fetch("/state");
+    S.state = await r.json();
+  } catch (e) { return; }
+  const st = S.state, f = (v, u = "") => v == null ? "—" : `${v}${u}`;
+  const m = el("mode");
+  m.textContent = st.mode || "—";
+  m.className = "mode" + (st.armed ? " g" : "");
+  el("t-hdg").textContent = f(st.heading, "°");
+  el("t-card").textContent = st.heading == null ? "" :
+    CARDINALS[Math.round(st.heading / 45) % 8];
+  el("s-alt").textContent = f(st.alt, " m");
+  el("s-spd").textContent = f(st.speed, " m/s");
+  el("s-vs").textContent = f(st.vspeed, " m/s");
+  el("s-batt").textContent = st.batt_pct == null ? "—" : st.batt_pct + " %";
+  el("s-volt").textContent = f(st.voltage, " V");
+  el("s-arm").textContent = st.armed == null ? "—" : (st.armed ? "YES" : "no");
+  const dg = el("degraded");
+  if (st.banner) { dg.textContent = st.banner; dg.style.display = "block"; }
+  else dg.style.display = "none";
+  drawLadder();
+  drawSensors();
+}
+
+function drawSensors() {
+  const now = performance.now();
+  S.auTimes = S.auTimes.filter(t => now - t < 2000);
+  const fps = (S.auTimes.length / 2).toFixed(0);
+  el("sen-cam").innerHTML = `CAM<b>${S.lastSeq ? fps + " fps · #" + S.lastSeq : "—"}</b>`;
+  el("sen-cam").className = S.lastSeq ? "g" : "r";
+  const det = S.snap && S.snap.detector;
+  el("sen-det").innerHTML = `DET<b>${det ? (det.healthy ? det.latency_ms + " ms" : "DOWN") : "—"}</b>`;
+  el("sen-det").className = det ? (det.healthy ? "g" : "r") : "";
+  const dt = (S.snap && S.lastStamp) ? Math.abs(S.lastStamp - S.snap.sim_stamp) : null;
+  el("sen-snap").innerHTML = `SNAP Δt<b>${dt == null ? "—" : dt.toFixed(2) + " s"}</b>`;
+  el("sen-snap").className = dt == null ? "" : (overlayFresh() ? "g" : "a");
+  const n = S.snap && S.snap.contacts ? S.snap.contacts.length : 0;
+  el("sen-trk").innerHTML = `TRACKED<b>${S.snap ? n : "—"}</b>`;
+}
+
+/* ---------------- contacts card ---------------- */
+
+function drawContacts() {
+  const list = (S.snap && S.snap.contacts) || [];
+  const box = el("contacts");
+  if (!list.length) {
+    box.innerHTML = `<div class="citem" style="color:var(--faint)">none</div>`;
+    return;
+  }
+  box.innerHTML = list.map(c => {
+    const pc = c.health === "MEASURED" ? "g" : c.health === "COASTING" ? "a" : "b";
+    const rng = c.range_m != null ? `${c.range_m.toFixed(1)} m · ${c.range_src}` : "no range";
+    return `<div class="citem"><span class="id">${c.name}</span>
+      <span class="pill ${pc}">${c.health || "?"}</span>
+      <div class="row"><span>${rng}</span><span>conf ${(c.conf ?? 0).toFixed(2)}</span></div></div>`;
+  }).join("");
+}
+
+/* ---------------- PPI map ---------------- */
+
+function drawPPI() {
+  const cv = el("ppi"), ctx = cv.getContext("2d");
+  const C = 110, R = 100;
+  ctx.clearRect(0, 0, 220, 220);
+  ctx.strokeStyle = "#1e2a52"; ctx.fillStyle = "#6b76a8";
+  ctx.font = "9px ui-monospace, Menlo, monospace";
+  for (const rm of [10, 20, 30]) {
+    ctx.beginPath(); ctx.arc(C, C, R * rm / 35, 0, 7); ctx.stroke();
+    ctx.fillText(rm + "m", C + 2, C - R * rm / 35 + 9);
+  }
+  const hdg = (S.state && S.state.heading) || 0;
+  /* FOV cone: up = own heading (0=N, +CW); camera HFOV from the SDF */
+  ctx.fillStyle = "#4cc3ff14";
+  ctx.beginPath(); ctx.moveTo(C, C);
+  ctx.arc(C, C, R, (-90 - HFOV_DEG / 2) * Math.PI / 180, (-90 + HFOV_DEG / 2) * Math.PI / 180);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "#a3aede";
+  ctx.beginPath(); ctx.moveTo(C, C); ctx.lineTo(C, C - R); ctx.stroke();   // heading tick
+  ctx.beginPath(); ctx.arc(C, C, 3, 0, 7); ctx.stroke();                  // own ship
+
+  for (const c of (S.snap && S.snap.contacts) || []) {
+    if (c.bearing_deg == null) continue;
+    /* bearing_deg is world-frame from-drone (0=N,+CW); rotate into heading-up */
+    const rel = (c.bearing_deg - hdg) * Math.PI / 180;
+    const ranged = c.range_m != null;
+    const rr = ranged ? Math.min(R, R * c.range_m / 35) : R - 4;
+    const x = C + rr * Math.sin(rel), y = C - rr * Math.cos(rel);
+    const col = c.health === "MEASURED" ? "#3ddc97" : c.health === "COASTING" ? "#ffb454" : "#4cc3ff";
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, 7);
+    ranged ? ctx.fill() : ctx.stroke();        // bearing-only: hollow blip at the edge
+    const designated = S.snap.track && S.snap.track.target === c.name;
+    if (designated) { ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.stroke(); }
+  }
+}
+
+/* ---------------- chat + command + estop ---------------- */
+
+function chatLine(text) {
+  const d = document.createElement("div");
+  d.className = text.startsWith("you:") ? "u" : text.startsWith("pilot:") ? "p"
+              : text.startsWith("estop:") ? "e" : "s";
+  d.textContent = text;
+  return d;
+}
+
+async function pollChat() {
+  try {
+    const r = await fetch(`/chat?since=${S.chatNext}`);
+    const j = await r.json();
+    const box = el("chat");
+    for (const line of j.lines) box.appendChild(chatLine(line));
+    S.chatNext = j.next;
+    box.scrollTop = box.scrollHeight;
+  } catch (e) { /* next poll retries with the same cursor */ }
+}
+
+async function sendCommand() {
+  const inp = el("cmd-in"), text = inp.value.trim();
   if (!text) return;
   inp.value = "";
-  await fetch("/command", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ text }) });
-});
+  await fetch("/command", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  pollChat();
+}
 
-/* ---------- /state poll ---------- */
-async function poll() {
-  const live = $("#live"), line = $("#liveline");
+async function estop(action, btn) {
+  btn.disabled = true;
   try {
-    const s = await (await fetch("/state")).json();
-    lastState = s; drones = s.drones;
-    if (s.n !== built) buildThumbs(s.n);
-    refreshTiles();
-    renderRail(drones[sel]);
-    renderChat(s.chat);
-    renderFooter();
-    drawScope();
-    live.classList.remove("down");
-    $("#f-link").textContent = "NOMINAL"; $("#f-link").style.color = "var(--green)";
-    line.textContent = `${s.n} DRONES · ${s.chat.length} MSG · LIVE`;
-  } catch(e) {
-    live.classList.add("down");
-    line.textContent = "RECONNECTING…";
-    $("#f-link").textContent = "LOST"; $("#f-link").style.color = "var(--amber)";
+    await fetch("/estop", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    btn.classList.add("hit");
+    setTimeout(() => btn.classList.remove("hit"), 1500);
+  } finally {
+    btn.disabled = false;
+    pollChat();
   }
 }
 
-/* ---------- init ---------- */
-setupHero();
-resizeScope();
-window.addEventListener("resize", resizeScope);
-tickClock(); setInterval(tickClock, 1000);
-setInterval(poll, 500); poll();
+/* ---------------- clock + boot ---------------- */
+
+function tickClock() {
+  el("clock").textContent = S.lastStamp ? `SIM ${S.lastStamp.toFixed(1)}s` : "SIM —";
+}
+
+el("cmd-send").onclick = sendCommand;
+el("cmd-in").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCommand(); });
+el("btn-estop").onclick = (e) => estop("hold", e.target);
+el("btn-land").onclick = (e) => estop("land", e.target);
+
+connectCam();
+connectDet();
+setInterval(pollState, 500);   pollState();
+setInterval(pollChat, 1000);   pollChat();
+setInterval(drawPPI, 250);
+setInterval(tickClock, 250);
+setInterval(drawSensors, 500);
 </script>
 </body>
 </html>

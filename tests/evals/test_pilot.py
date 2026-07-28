@@ -1,5 +1,5 @@
 """The scripted reference pilot must drive the same Trace/oracle path as a real
-agent: real SDK messages out, tools executed in order against FlightOps."""
+agent: the seam's typed events out, tools executed in order against FlightOps."""
 import asyncio
 
 from evals.pilot import ScriptedClient
@@ -24,11 +24,10 @@ def _run(client):
     async def go():
         tr = Trace()
         async with client:
-            await client.query("ignored")
             t = 0.0
-            async for msg in client.receive_response():
+            async for ev in client.query("ignored"):
                 t += 1.0
-                tr.observe(msg, t)
+                tr.observe(ev, t)
         return tr
     return asyncio.run(go())
 
@@ -220,7 +219,7 @@ def test_scripted_client_executes_behavior_steps():
             {"tool": "hover", "args": {"seconds": 1}},
             {"behavior": "naive_chaser", "args": {"mover": "mov_x", "rounds": 2}},
         ])
-        return [m async for m in client.receive_response()]
+        return [m async for m in client.query("ignored")]
 
     msgs = asyncio.run(run())
     # 1 static step + 2 behavior-yielded calls = 3 (tool_use, result) pairs
@@ -229,44 +228,166 @@ def test_scripted_client_executes_behavior_steps():
     assert ops.calls[1][0] == "goto"
 
 
-# ---- fleet-aware routing ----
 
-def test_scripted_client_routes_steps_by_drone_field():
+
+# ---- scripted perception path (M5, design §3.8) ----
+
+class FakeContactProvider:
+    """Poses appear after `delay` polls (the detector needs a few frames)."""
+
+    def __init__(self, poses, delay=0):
+        self._poses = poses
+        self._delay = delay
+        self.polls = 0
+
+    def poses(self):
+        self.polls += 1
+        return self._poses if self.polls > self._delay else {}
+
+    def sim_time(self):
+        return 1.0
+
+    def velocities(self):
+        return {}
+
+
+class TrackVisOps:
+    def __init__(self, provider):
+        self.contacts = provider
+        self.calls = []
+
+    async def hover(self, seconds=0.0):
+        self.calls.append(("hover", seconds))
+        return "held"
+
+    async def track(self, target="", mode="shadow", alt=12.0, duration_s=60.0,
+                    within_m=15.0):
+        self.calls.append(("track", target, mode, alt, duration_s, within_m))
+        return f"tracking {target}"
+
+
+def test_track_vis_waits_for_contact_then_locks_first_of_class():
     import asyncio
-    from agents.flight.fleet import FleetOps
+    from evals.pilot import track_vis
+
+    provider = FakeContactProvider({"vis_target_0": (10.0, 0.0, 1.0)}, delay=2)
+    ops = TrackVisOps(provider)
+    steps = asyncio.run(
+        _drain(track_vis(ops, {"cls": "target", "mode": "shadow", "alt": 3,
+                               "duration_s": 60, "within_m": 15, "wait_s": 10})))
+    # two hover polls while the detector warms up, then the lock+track call
+    assert ops.calls[:2] == [("hover", 1.0), ("hover", 1.0)]
+    assert ops.calls[2] == ("track", "vis_target_0", "shadow", 3.0, 60.0, 15.0)
+    assert steps[-1][0] == "track" and steps[-1][1]["target"] == "vis_target_0"
+
+
+def test_track_vis_times_out_without_locking_when_class_absent():
+    import asyncio
+    from evals.pilot import track_vis
+
+    # only a decoy class is ever visible -> the true class never locks
+    provider = FakeContactProvider({"vis_decoy_0": (10.0, 0.0, 1.0)})
+    ops = TrackVisOps(provider)
+    steps = asyncio.run(
+        _drain(track_vis(ops, {"cls": "target", "wait_s": 2})))
+    assert all(c[0] == "hover" for c in ops.calls)
+    assert "no vis_target_* contact" in steps[-1][2]
+
+
+def test_scripted_client_behavior_binds_ops_with_drone_ATTRIBUTE():
+    """Regression (found live at the M5 perceive gate): single-drone FlightOps
+    has a `.drone` ATTRIBUTE (the MAVSDK System), not a drone(i) method — the
+    fleet-routing heuristic must bind behavior steps to the ops itself instead
+    of calling the System ('System' object is not callable)."""
+    import asyncio
     from evals.pilot import ScriptedClient
 
-    class MiniOps:
-        def __init__(self, i):
-            self.i = i
-            self.calls = []
+    class OpsWithDroneAttr(BehaviorOps):
+        drone = object()          # non-callable attribute, FlightOps-style
 
-        async def take_off(self, altitude=10.0):
-            self.calls.append(("take_off", altitude))
-            return f"drone_{self.i} airborne"
-
-        async def goto(self, target="", east=None, north=None, up=None,
-                       heading="travel", wait=True):
-            self.calls.append(("goto", east, north))
-            return f"drone_{self.i} arrived"
-
-    a, b = MiniOps(0), MiniOps(1)
-    fleet = FleetOps([a, b])
+    gz = FakeGz([(10, 0), (20, 0)])
+    ops = OpsWithDroneAttr(gz)
 
     async def provider():
-        return fleet
+        return ops
 
     async def run():
         client = ScriptedClient(provider, [
-            {"tool": "take_off", "args": {"altitude": 12}},              # default d0
-            {"tool": "take_off", "drone": 1, "args": {"altitude": 12}},
-            {"tool": "goto_all", "args": {"moves": [
-                {"drone": 0, "east": 10, "north": 0, "up": 12},
-                {"drone": 1, "east": -10, "north": 0, "up": 12}]}},
+            {"behavior": "naive_chaser", "args": {"mover": "mov_x", "rounds": 2}},
         ])
-        return [m async for m in client.receive_response()]
+        return [m async for m in client.query("ignored")]
 
     msgs = asyncio.run(run())
-    assert len(msgs) == 6                     # 3 steps -> 3 (use, result) pairs
-    assert a.calls[0] == ("take_off", 12) and b.calls[0] == ("take_off", 12)
-    assert a.calls[1] == ("goto", 10, 0) and b.calls[1] == ("goto", -10, 0)
+    assert len(msgs) == 4                    # 2 x (tool_use, result), no crash
+    assert [c[0] for c in ops.calls] == ["goto", "goto"]
+
+
+def test_track_vis_max_range_waits_for_trustworthy_lock():
+    """A positioned contact whose range estimate exceeds max_range_m must NOT
+    be locked (shallow-angle projections seed the EKF >25m off and the
+    TargetLockEvent gate rightly rejects them) — track_vis waits for a close
+    sighting instead."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from evals.pilot import track_vis
+
+    class RangedProvider(FakeContactProvider):
+        def __init__(self, ranges):
+            super().__init__({"vis_target_0": (10.0, 0.0, 1.0)})
+            self._ranges = list(ranges)
+
+        def all_views(self):
+            r = self._ranges.pop(0) if len(self._ranges) > 1 else self._ranges[0]
+            return [SimpleNamespace(name="vis_target_0", range_m=r)]
+
+    # 70m (reject), 60m (reject), 40m (accept at the 45m cap)
+    ops = TrackVisOps(RangedProvider([70.0, 60.0, 40.0]))
+    steps = asyncio.run(_drain(track_vis(
+        ops, {"cls": "target", "wait_s": 10, "poll_s": 1, "max_range_m": 45,
+              "alt": 3, "duration_s": 60, "within_m": 15})))
+    assert ops.calls[:2] == [("hover", 1.0), ("hover", 1.0)]   # two rejected polls
+    assert ops.calls[2][0] == "track" and ops.calls[2][1] == "vis_target_0"
+
+    # never in range -> timeout, no lock
+    ops2 = TrackVisOps(RangedProvider([80.0]))
+    steps2 = asyncio.run(_drain(track_vis(
+        ops2, {"cls": "target", "wait_s": 2, "max_range_m": 45})))
+    assert all(c[0] == "hover" for c in ops2.calls)
+    assert "no vis_target_* contact" in steps2[-1][2]
+
+
+def test_scripted_client_pending_emits_tool_call_before_execution():
+    """The _pending protocol (TargetLockEvent call-time contract): track_vis's
+    track ToolCall must be emitted BEFORE ops.track runs and pair with the
+    result on the SAME id — no duplicate call event."""
+    import asyncio
+    from agents.flight.backend import ToolCall, ToolResult
+    from evals.pilot import ScriptedClient
+
+    started = []
+
+    class SlowTrackOps(TrackVisOps):
+        async def track(self, target="", **kw):
+            started.append(target)          # marker: call begins NOW
+            await asyncio.sleep(0.01)
+            return "tracked"
+
+    provider = FakeContactProvider({"vis_target_0": (10.0, 0.0, 1.0)})
+    ops = SlowTrackOps(provider)
+
+    async def run():
+        client = ScriptedClient(lambda: asyncio.sleep(0, result=ops), [
+            {"behavior": "track_vis",
+             "args": {"cls": "target", "wait_s": 1, "alt": 3, "duration_s": 0.01}},
+        ])
+        return [m async for m in client.query("ignored")]
+
+    msgs = asyncio.run(run())
+    calls = [m for m in msgs if isinstance(m, ToolCall) and m.name == "pilot__track"]
+    results = [m for m in msgs if isinstance(m, ToolResult)]
+    assert len(calls) == 1                              # pending USE, not duplicated
+    assert results and results[0].tool_use_id == calls[0].id
+    # the ToolCall precedes any result — i.e. observe time == call time
+    kinds = ["call" if isinstance(m, ToolCall) else "result" for m in msgs]
+    assert kinds.index("call") < len(kinds) - 1 and started == ["vis_target_0"]

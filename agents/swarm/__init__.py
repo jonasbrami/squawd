@@ -1,5 +1,7 @@
-"""Swarm agents: the Commander hub + the per-drone agents (a distributed hub)."""
-from agents.swarm.commander import CommanderAgent, make_commander
+"""The swarm package is being dismantled in the single-drone rebuild: only
+DroneAgent survives for now (the eval FleetHarness reuses its connected System);
+agents/pilot/ is the new single-drone agent. Commander + assembler are gone."""
+
 from agents.swarm.drone import DroneAgent
 
-__all__ = ["CommanderAgent", "make_commander", "DroneAgent"]
+__all__ = ["DroneAgent"]

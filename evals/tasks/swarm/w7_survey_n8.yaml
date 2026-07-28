@@ -49,14 +49,27 @@ pilot:
   - {tool: set_speed, drone: 5, args: {speed: 10}}
   - {tool: set_speed, drone: 6, args: {speed: 10}}
   - {tool: set_speed, drone: 7, args: {speed: 10}}
-  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: -25, up: 20},
-                                    {drone: 1, east: 62, north: 67, up: 18},
-                                    {drone: 2, east: -30, north: 105, up: 22},
+  # Fan-out is split into THREE waves, drone 0 FIRST. Two measured traps:
+  # (a) simultaneous departures put drones 5/6 (3m apart, 15.4° bearing
+  # gap) at ~5.3m when they exit the 20m pad exemption (measured 5.3/7.7m,
+  # margin 6) — so departures alternate by bearing: odd drones (pairwise
+  # gaps >=49°), then evens (gaps >=60°); worst non-exempt intra-wave
+  # separation computes >=13m. (b) drone 6's corridor (bearing 260°) runs
+  # nearly down the pad column: at 20m out — exemption just lapsed — it
+  # passes 3.8m (2D) from drone 0 SITTING on the origin pad (measured
+  # 3.7m; a ~0.35s window, hence flickering 5.3m/7.7m readings). Drone 0
+  # therefore departs FIRST through empty airspace east (its corridor
+  # clears every pad by >20m, and it can't cross drone 7's SE transit —
+  # the old 5.6m trap — because they never fly at the same time; parked
+  # at E100 N-25 it is >=72m from every later corridor).
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 100, north: -25, up: 20}]}}
+  - {tool: goto_all, args: {moves: [{drone: 1, east: 62, north: 67, up: 18},
                                     {drone: 3, east: -62, north: 67, up: 16},
-                                    {drone: 4, east: -100, north: -25, up: 24},
                                     {drone: 5, east: -62, north: -117, up: 14},
-                                    {drone: 6, east: -30, north: -155, up: 26},
                                     {drone: 7, east: 62, north: -117, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 2, east: -30, north: 105, up: 22},
+                                    {drone: 4, east: -100, north: -25, up: 24},
+                                    {drone: 6, east: -30, north: -155, up: 26}]}}
   - {tool: goto_all, args: {moves: [{drone: 0, east: 160, north: -25, up: 20},
                                     {drone: 1, east: 122, north: 67, up: 18},
                                     {drone: 2, east: 30, north: 105, up: 22},

@@ -53,9 +53,11 @@ def test_cli_layer_flag_default_and_choices():
     args = ap.parse_args(["--tasks", "x.yaml"])
     assert args.layer == "spec"
 
-    args = ap.parse_args(["--tasks", "x.yaml", "--layer", "commander"])
-    assert args.layer == "commander"
-
+    # dropped layers are rejected at the CLI, not just at the runner gate
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--tasks", "x.yaml", "--layer", "commander"])
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--tasks", "x.yaml", "--layer", "operator"])
     with pytest.raises(SystemExit):
         ap.parse_args(["--tasks", "x.yaml", "--layer", "bogus"])
 

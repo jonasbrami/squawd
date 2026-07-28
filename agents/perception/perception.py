@@ -57,7 +57,8 @@ def yaw_deg_to(east_from: float, north_from: float, east_to: float, north_to: fl
 
 
 def scan_text(world, bridge, i: int, n_drones: int, k: int = 8,
-              mover_poses: dict | None = None) -> str:
+              mover_poses: dict | None = None,
+              bearing_only: list | None = None) -> str:
     """Nearest k buildings + other drones, with distance and bearing RELATIVE to
     where the drone faces, flagging what's in the camera's view.
 
@@ -100,6 +101,10 @@ def scan_text(world, bridge, i: int, n_drones: int, k: int = 8,
         tag = " [IN VIEW]" if inview else ""
         parts.append(f"contact {name} {dist:.0f}m {word}{tag} "
                      f"(at E{cx:.0f} N{cy:.0f}, alt {cz:.0f}m)")
+    for name in sorted(bearing_only or []):
+        # Vision contacts seen but not yet ranged: honest "alt unk" — never
+        # a fabricated position (M3a scan contract).
+        parts.append(f"contact {name} bearing only, alt unk")
     for j in range(n_drones):
         if j == i:
             continue

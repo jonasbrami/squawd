@@ -3,20 +3,20 @@
 Reads each drone's onboard RGB frame straight off gz-transport (system gz, no
 ros_gz) and encodes to JPEG on demand. Both consumers go through here:
 - the observatory wants raw JPEG bytes for its MJPEG/WebSocket tiles;
-- a drone agent's `look` tool wants a downscaled base64 JPEG for the VLM.
+- the detector wants the atomic Frame snapshot (C1) for inference.
 
-Each stored frame carries a monotonically increasing seq so a streaming
-consumer can send/encode only when a NEW frame has arrived (idle drones cost
-nothing).
+Each stored frame carries a monotonically increasing seq AND the gz header's
+sim stamp, so a streaming consumer can send/encode only when a NEW frame has
+arrived (idle drones cost nothing) and vision can join frames to sim time.
 """
-import base64
 import io
 import os
-import threading
 
 from gz.transport13 import Node as GzNode
 from gz.msgs10.image_pb2 import Image as GzImage
 from PIL import Image as PILImage
+
+from agents.core.contact import Frame, LatestFrame
 
 # World name must match the generated world (make_city_world.py names it 'city'
 # and PX4 runs with PX4_GZ_WORLD=city). Override with GZ_WORLD if you change it.
@@ -45,49 +45,51 @@ class GzCameras:
         topic = CAM_TOPIC if world is None else (
             f"/world/{world}/model/x500_depth_{{i}}/link/OakD-Lite/base_link/sensor/IMX214/image")
         self._node = GzNode()
-        self._lock = threading.Lock()
-        self._frames: dict[int, tuple] = {}     # i -> (seq, w, h, raw_rgb_bytes)
+        self._frames: dict[int, LatestFrame] = {}
         self._cbs = []                           # keep callbacks alive for gz
         for i in range(n):
+            self._frames[i] = LatestFrame()
             cb = self._make_cb(i)
             self._cbs.append(cb)
             self._node.subscribe(GzImage, topic.format(i=i), cb)
 
     def _make_cb(self, i: int):
+        holder = self._frames[i]
+
         def cb(msg):
-            with self._lock:
-                prev = self._frames.get(i)
-                seq = (prev[0] + 1) if prev else 1
-                self._frames[i] = (seq, msg.width, msg.height, bytes(msg.data))
+            stamp = msg.header.stamp.sec + msg.header.stamp.nsec * 1e-9
+            holder.set(stamp, msg.width, msg.height, bytes(msg.data))
         return cb
 
     def seq(self, i: int) -> int:
         """Frame counter for drone i (0 if none yet); changes when a new frame arrives."""
-        with self._lock:
-            f = self._frames.get(i)
-        return f[0] if f else 0
+        return self._frames[i].seq()
 
     def has(self, i: int) -> bool:
         return self.seq(i) > 0
 
+    def snapshot(self, i: int) -> Frame | None:
+        """THE consumer API (C1): one atomic (seq, sim_stamp, w, h, rgb) view —
+        fields never mixed across generations. Detector, VideoHub, accuracy
+        tooling all use this."""
+        return self._frames[i].get()
+
     def raw(self, i: int) -> tuple[int, int, bytes] | None:
-        """Latest raw (width, height, rgb_bytes) for drone i, or None. The
-        observatory's H.264 encoder needs raw RGB; the VLM still uses jpeg()."""
-        with self._lock:
-            f = self._frames.get(i)
-        if not f:
-            return None
-        _, w, h, data = f
-        return (w, h, data)
+        """Legacy accessor: latest raw (width, height, rgb_bytes) or None."""
+        f = self._frames[i].get()
+        return None if f is None else (f.width, f.height, f.rgb)
+
+    def stamp(self, i: int) -> float:
+        """Sim-time (s) of the latest frame, 0.0 before any."""
+        f = self._frames[i].get()
+        return f.sim_stamp if f else 0.0
 
     def jpeg(self, i: int, quality: int = 55, max_px: int | None = None) -> bytes | None:
-        with self._lock:
-            f = self._frames.get(i)
-        if not f:
+        f = self._frames[i].get()
+        if f is None:
             return None
-        _, w, h, data = f
-        return _encode_jpeg(w, h, data, quality, max_px)
+        return _encode_jpeg(f.width, f.height, f.rgb, quality, max_px)
 
-    def jpeg_b64(self, i: int, quality: int = 50, max_px: int = 768) -> str | None:
-        raw = self.jpeg(i, quality=quality, max_px=max_px)
-        return None if raw is None else base64.b64encode(raw).decode("ascii")
+    # jpeg_b64 was deleted (ICD v2): its only consumer was the `look` tool,
+    # removed in design v4.2. jpeg() stays for off-line accuracy tooling;
+    # the cockpit streams H.264 only (ICD §8.2 — no JPEG fallback endpoint).

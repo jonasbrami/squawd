@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <model name='x500_depth'>
+    <include merge='true'>
+      <uri>x500</uri>
+    </include>
+    <include merge='true'>
+      <uri>model://OakD-Lite</uri>
+      <pose>.12 .03 .242 0 0 0</pose>
+    </include>
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>OakD-Lite/base_link</child>
+      <pose relative_to="base_link">.12 .03 .242 0 0 0</pose>
+    </joint>
+
+    <!-- forward single-point ToF (design §3.10): 3x3 gpu_lidar ray bundle,
+         reduced to one canonical RangeSample by GzRangeProvider (min-reduce,
+         intra-bundle spread -> EDGE_MIX). The "PX4 destabilization" observed
+         with this sensor was confounded (Land-mode arming lock + cross-world
+         EKF2_MAG_DECL poisoning — root-caused 2026-07-21); the sensor itself
+         does not feed the EKF (GZBridge has no lidar ingestion code). -->
+    <link name="range_link">
+      <pose>.12 .03 .242 0 0 0</pose>
+      <inertial>
+        <mass>0.005</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+        </inertia>
+      </inertial>
+      <sensor name="lidar" type="gpu_lidar">
+        <update_rate>100</update_rate>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>3</samples>
+              <resolution>1</resolution>
+              <min_angle>-0.00435</min_angle>
+              <max_angle>0.00435</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>1</samples>
+              <resolution>1</resolution>
+              <min_angle>0</min_angle>
+              <max_angle>0</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.2</min>
+            <max>100.0</max>
+            <resolution>0.01</resolution>
+          </range>
+        </lidar>
+        <alwaysOn>true</alwaysOn>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="RangeJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>range_link</child>
+      <pose relative_to="base_link">.12 .03 .242 0 0 0</pose>
+    </joint>
+  </model>
+</sdf>

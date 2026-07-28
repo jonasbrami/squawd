@@ -103,6 +103,14 @@ elif [ "$PX4_GZ_WORLD" = "dynamic" ]; then
   fi
   export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:+$GZ_SIM_SYSTEM_PLUGIN_PATH:}/workspace/sim/plugins"
   export MOVERS_JSON="/workspace/PX4-Autopilot/$WORLDS/dynamic_boxes.json"
+elif [ "$PX4_GZ_WORLD" = "perceive" ]; then
+  # Perceive ladder (M5): true orange rover + visually distinct ground decoys,
+  # same mover plugin mechanics as the dynamic world.
+  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_perceive_world.py ]; then
+    python3 /workspace/sim/worlds/make_perceive_world.py "$WORLDS/default.sdf" "$WORLDS/perceive.sdf" || true
+  fi
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:+$GZ_SIM_SYSTEM_PLUGIN_PATH:}/workspace/sim/plugins"
+  export MOVERS_JSON="/workspace/PX4-Autopilot/$WORLDS/perceive_boxes.json"
 elif [ "$PX4_GZ_WORLD" = "baylands" ]; then
   # baylands.sdf <include>s two Gazebo Fuel models (terrain + Coast Water). Cache
   # them once (needs internet on the first run; mount /root/.gz/fuel to persist).
@@ -118,7 +126,7 @@ MODEL=${PX4_MODEL:-gz_x500_depth}
 
 # PX4_GZ_STANDALONE needs the model/world resource path so it can spawn into the
 # already-running gz server (below).
-export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH}:/workspace/PX4-Autopilot/$WORLDS/../models:/workspace/PX4-Autopilot/$WORLDS"
+export GZ_SIM_RESOURCE_PATH="/workspace/sim/models:${GZ_SIM_RESOURCE_PATH}:/workspace/PX4-Autopilot/$WORLDS/../models:/workspace/PX4-Autopilot/$WORLDS"
 
 # Patch the OakD-Lite camera (idempotent) so each drone gets a UNIQUE, low-res
 # camera topic: drop the shared `<topic>camera</topic>` override (-> gz scopes the
@@ -151,9 +159,30 @@ done
 MicroXRCEAgent udp4 -p 8888 >/tmp/xrce.log 2>&1 &
 sleep 2
 
+# PX4's sitl launcher creates its working dir NON-recursively and dies when
+# rootfs is absent (observed: "Error creating directory .../rootfs/0").
+mkdir -p build/px4_sitl_default/rootfs
+
+# Boot PX4 with FACTORY state. The rootfs persists parameters.bson/dataman/
+# eeprom across container rebuilds (host bind-mount), and PX4 auto-saves its
+# learned EKF2_MAG_DECL at disarm — a declination learned in one world
+# (baylands CA ≈ +12.8°) poisons boots in another (dynamic/city Zurich ≈
+# +2.5°): mag innovations flap across the arming gate and arming is denied
+# (root-caused 2026-07-21; wiped state + hold→arm→takeoff restored flight).
+for i in $(seq 0 $((N-1))); do
+  rm -f "build/px4_sitl_default/rootfs/$i/parameters.bson" \
+        "build/px4_sitl_default/rootfs/$i/parameters_backup.bson" \
+        "build/px4_sitl_default/rootfs/$i/dataman"
+  rm -rf "build/px4_sitl_default/rootfs/$i/eeprom"
+done
+
 for i in $(seq 0 $((N-1))); do
   y=$((i * 3))
+  # SIM_GZ_EN_LIDAR=0: PX4's gz_bridge must NOT ingest the composite's forward
+  # ToF beam as a distance_sensor — a horizontal beam feeding the EKF
+  # destabilizes it (observed: ~700m physical drift + arming denial, fable-MAJOR-3).
   PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4001 PX4_SIM_MODEL="${MODEL}" \
+    SIM_GZ_EN_LIDAR=0 \
     PX4_GZ_MODEL_POSE="0,${y},0.5" PX4_UXRCE_DDS_NS="px4_${i}" \
     ./build/px4_sitl_default/bin/px4 -i "${i}" -d >"/tmp/px4_${i}.log" 2>&1 &
   sleep 3                                  # stagger model spawns into the live gz

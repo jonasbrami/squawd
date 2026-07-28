@@ -60,17 +60,30 @@ def _result_text(logs, body):
 
 
 class FlightOps:
-    def __init__(self, drone, world, bridge, i: int, n: int, gzposes=None) -> None:
+    def __init__(self, drone, world, bridge, i: int, n: int, contacts=None,
+                 envelope=None, gzposes=None) -> None:
         self.drone = drone
         self.world = world
         self.bridge = bridge
         self.i = i
         self.n = n
-        self.gzposes = gzposes       # live mover positions (dynamic worlds), or None
+        # O1: `contacts` is any mover-contact provider (poses/sim_time and
+        # friends — VisionContacts in the pilot, GzPoses in eval tooling);
+        # the gzposes kwarg survives as the pre-M3a back-compat name.
+        self.contacts = contacts if contacts is not None else gzposes
+        self.envelope = envelope
         self.name = f"drone_{i}"
         self._speed = 5.0            # last commanded cruise speed (PX4 default)
 
-    # ---- helpers ----
+    @property
+    def gzposes(self):
+        """Back-compat alias (pre-M3a name) — the contact provider."""
+        return self.contacts
+
+    @gzposes.setter
+    def gzposes(self, v):
+        self.contacts = v
+
     def _alt(self):
         p = self.bridge.latest(f"/px4_{self.i}/fmu/out/vehicle_local_position")
         return None if p is None else -p.z
@@ -118,10 +131,216 @@ class FlightOps:
                     float(north if north is not None else (me[1] if me else 0.0)))
         return None
 
-    # ---- primitives ----
+    def _readopt_contact(self, name: str, last, vel=(0.0, 0.0), dt_s=0.0):
+        """Name-churn adoption (M3a): when the named contact drops but a
+        positioned same-class contact exists near the last estimate PREDICTED
+        FORWARD (the frozen-position gate dies after gate_m/v = 1.4 s on this
+        mover, well inside the lost window — fable-Q3), adopt it — the pursuit
+        follows the OBJECT across the EKF's ephemeral-id rebirths. Ambiguity
+        (two candidates in gate) adopts neither (hold/reacquire, not a wrong
+        identity). Returns (new_name, pos) or None."""
+        if self.contacts is None or last is None:
+            return None
+        cls = name.split("_")[1] if "_" in name else None
+        # the gate radius comes from the provider's own config when it has one
+        # (the vision EKF knows its rebirth scale); 5 m default when it doesn't.
+        prov = getattr(self.contacts, "cfg", None) or getattr(self.contacts, "config", None)
+        gate = getattr(prov, "gate_m", 5.0)
+        pe, pn = last[0] + vel[0] * dt_s, last[1] + vel[1] * dt_s
+        matches = []
+        for cand, pos in self.contacts.poses().items():
+            if cls is None or cand.startswith(f"vis_{cls}_") or cand == name:
+                d = math.hypot(pos[0] - pe, pos[1] - pn)
+                if d <= gate:
+                    matches.append((d, cand, pos))
+        if len(matches) != 1:
+            return None
+        return (matches[0][1], matches[0][2])
+    async def _acquire(self, name: str, alt: float, budget_s: float = 45.0):
+        """O6 acquisition (§3.10): designate the bearing-only contact, then
+        yaw onto the measured bearing and bias altitude toward its elevation
+        (co-altitude so the forward beam intersects the target), holding for
+        the first beam lock with bounded patience. Returns the ACQUIRED
+        altitude (carried into the pursuit — the baro/GPS-height drift keeps
+        moving after lock) on RANGE_LOCKED/WORLD_TRACKED, None on budget
+        exhaustion — never a silent ghost-chase."""
+        import time as _t
+        designate = getattr(self.contacts, "designate", None)
+        if not callable(designate):
+            return None
+        try:
+            designate(name)
+        except Exception:
+            return None
+        obs_fn = getattr(self.contacts, "observation", None)
+        ts_fn = getattr(self.contacts, "track_state", None)
+
+        def _locked() -> bool:
+            """Success means a ToF-LOCKED state — never a bare pose (a geom-
+            born or predicted pose is not an acquisition, codex-R3)."""
+            if not callable(ts_fn):
+                return name in self.contacts.poses()
+            return ts_fn(name) in ("RANGE_LOCKED", "WORLD_TRACKED")
+
+        t0 = _t.monotonic()
+        try:
+            from mavsdk.offboard import PositionNedYaw, VelocityNedYaw
+            me0 = self.world.drone_state(self.bridge, self.i)
+            lp = self.bridge.latest(f"/px4_{self.i}/fmu/out/vehicle_local_position")
+            off_n, off_e, off_d = lp.x - me0[1], lp.y - me0[0], lp.z + me0[2]
+            # pre-start stream MUST hold the CURRENT heading: a yaw=0.0 init
+            # slams the nose to north when offboard engages and the box is
+            # out of frame before the servo loop's first command (v9.1).
+            yaw0 = math.degrees(me0[3]) % 360
+            await self.drone.offboard.set_position_velocity_ned(
+                PositionNedYaw(me0[1] + off_n, me0[0] + off_e, off_d - alt,
+                               yaw0),
+                VelocityNedYaw(0.0, 0.0, 0.0, yaw0))
+            for _ in range(3):
+                await asyncio.sleep(0.1)
+                await self.drone.offboard.set_position_velocity_ned(
+                    PositionNedYaw(me0[1] + off_n, me0[0] + off_e, off_d - alt,
+                                   yaw0),
+                    VelocityNedYaw(0.0, 0.0, 0.0, yaw0))
+            try:
+                await self.drone.offboard.start()
+            except Exception:
+                pass
+            ax_prev, ax_t, ax_rate = None, 0.0, 0.0
+            last_seen = _t.monotonic()
+            alt0 = alt            # proportional servo's reference (no windup)
+            while _t.monotonic() - t0 < budget_s:
+                if _locked():
+                    return alt
+                obs = obs_fn(name) if callable(obs_fn) else None
+                me = self.world.drone_state(self.bridge, self.i)
+                if me is None:
+                    await asyncio.sleep(0.5)
+                    continue
+                b = getattr(obs, "bearing_deg", None)
+                # the DTO field is elevation_deg (codex-R3: the servo read
+                # `elev_deg` — a nonexistent field — and never fired live)
+                e = getattr(obs, "elevation_deg", None)
+                # offboard BEARING-HOMING (M3b): image-servo the yaw to null the
+                # det's pixel angle (immune to the EKF yaw/declination offset
+                # that broke heading-based aim) AND advance along the beam in
+                # a SEGMENTED creep-and-listen (a bearing-only contact has no
+                # range yet — the beam IS the acquisition): LISTEN first (the
+                # beam may lock from the rendezvous standoff), then creep 3 s,
+                # listen again; after N creep segments without a lock, HOLD —
+                # a monotonic creep drives into the target (observed live:
+                # min gap 0.6 m, LOST at t+5s, v8.1).
+                # foot_px must be FRESH: it persists on the track through
+                # COASTING, so an un-gated fp makes the blind branch
+                # unreachable and aims off a ghost (codex-R3).
+                fp_raw = getattr(obs, "foot_px", None)
+                fp = (fp_raw if fp_raw is not None
+                      and getattr(obs, "age_s", 99.0) < 0.5 else None)
+                lp = self.bridge.latest(
+                    f"/px4_{self.i}/fmu/out/vehicle_local_position")
+                if lp is None:
+                    # a telemetry hiccup must not crash the acquisition
+                    # (fable-R3): both branches below dereference lp
+                    await asyncio.sleep(0.2)
+                    continue
+                own_sp = math.hypot(getattr(lp, "vx", 0.0),
+                                    getattr(lp, "vy", 0.0))
+                ctx = getattr(self.contacts, "set_beam_context", None)
+                if callable(ctx):
+                    # the FLIGHT layer owns the envelope context, with the
+                    # vehicle's measured speed (codex-R3: the pursuit fed the
+                    # TARGET's speed and the eval collector raced it)
+                    ctx(mode="shadow", own_speed_mps=own_sp)
+                if fp is not None and me is not None:
+                    last_seen = _t.monotonic()
+                    from agents.perception.projection import (
+                        pixel_to_angles, vfov_deg)
+                    ax, _ay = pixel_to_angles(fp[0], fp[1], 640, 360)
+                    # bearing-rate FEEDFORWARD (M3b v8.4): an orbiting box
+                    # drags a proportional-only servo ~10 deg behind — past
+                    # the envelope's off-boresight gate, so the one VALID
+                    # beam sample gets declined. Lead the command with the
+                    # EMA'd pixel-bearing rate (clamped) so the box HOLDS at
+                    # boresight through the orbit.
+                    now_t = _t.monotonic()
+                    if ax_prev is not None and now_t > ax_t:
+                        rate = (ax - ax_prev) / (now_t - ax_t)
+                        ax_rate = 0.7 * ax_rate + 0.3 * rate
+                    ax_prev, ax_t = ax, now_t
+                    # gain 0.2 s / ±0.1 rad clamp: the lead feeds the yaw's
+                    # own motion back into the rate estimate — a bigger
+                    # clamp lets the loop ring the box around boresight
+                    lead = max(-0.1, min(0.1, ax_rate * 0.2))
+                    cmd_yaw = (math.degrees(me[3]) + math.degrees(ax)
+                               + math.degrees(lead)) % 360
+                    off_n, off_e, off_d = lp.x - me[1], lp.y - me[0], lp.z + me[2]
+                    LISTEN_S, CREEP_S, MAX_CREEPS = 4.0, 3.0, 4
+                    el = _t.monotonic() - t0
+                    cycle = el % (LISTEN_S + CREEP_S)
+                    creeps_done = int(el // (LISTEN_S + CREEP_S))
+                    do_creep = cycle >= LISTEN_S and creeps_done < MAX_CREEPS
+                    b_rad = math.radians(cmd_yaw)
+                    vn, ve = (2.0 * math.cos(b_rad), 2.0 * math.sin(b_rad)) \
+                        if do_creep else (0.0, 0.0)
+                    await self.drone.offboard.set_position_velocity_ned(
+                        PositionNedYaw(me[1] + off_n, me[0] + off_e,
+                                       off_d - alt, cmd_yaw),
+                        VelocityNedYaw(vn, ve, 0.0, cmd_yaw))
+                elif b is not None:
+                    # BLIND RECOVERY (M3b v8.5): the det left the frame — a
+                    # frozen yaw deadlocks (the orbit carries the box away
+                    # and the camera never re-sees it). Aim by the track's
+                    # last bearing; sweep ±60° around it at 0.5 Hz — wide
+                    # enough to catch a ~20 deg/s orbiter, fast enough to
+                    # re-detect inside lost_s (2 s).
+                    blind = _t.monotonic() - last_seen
+                    sweep = (60.0 * math.sin(2.0 * math.pi * 0.5 * blind)
+                             if blind > 0.3 else 0.0)
+                    cmd_yaw = (float(b) + sweep) % 360
+                    off_n, off_e, off_d = lp.x - me[1], lp.y - me[0], lp.z + me[2]
+                    await self.drone.offboard.set_position_velocity_ned(
+                        PositionNedYaw(me[1] + off_n, me[0] + off_e,
+                                       off_d - alt, cmd_yaw),
+                        VelocityNedYaw(0.0, 0.0, 0.0, cmd_yaw))
+                if e is not None and fp is not None:
+                    # co-altitude servo on the box's VERTICAL CENTRE — the
+                    # footpoint/base is erosion-biased ~+1.7° (v11: the servo
+                    # equilibrated ~1 m HIGH, beam over the box top); the
+                    # sunlit top edge is clean, so centre = base + half the
+                    # angular height is robust. Drive the centre to boresight
+                    # (camera = box centre). PROPORTIONAL, no integrator
+                    # (v10: the accumulator wound +2.5 m past the box).
+                    xyxy = getattr(obs, "bbox_xyxy", None)
+                    if xyxy is not None:
+                        fy = (360.0 / 2.0) / math.tan(
+                            math.radians(vfov_deg(640, 360)) / 2.0)
+                        half_ang = math.degrees(
+                            math.atan(((xyxy[3] - xyxy[1]) / 2.0) / fy))
+                        e_c = float(e) + half_ang
+                    else:
+                        e_c = float(e) + 3.4    # footpoint fallback (~mid-box)
+                    alt = max(0.5, alt0 + 0.35 * e_c)
+                await asyncio.sleep(0.1)
+        finally:
+            try:
+                await asyncio.shield(self.drone.offboard.stop())
+            except Exception:
+                try:
+                    await self.drone.action.hold()
+                except Exception:
+                    pass
+            clear = getattr(self.contacts, "clear_designation", None)
+            if callable(clear) and name not in self.contacts.poses():
+                try:
+                    clear()
+                except Exception:
+                    pass
+        return alt if _locked() else None
+
+
     async def take_off(self, altitude=10.0) -> str:
         target = float(altitude)
-        await self.drone.action.arm()
+        await self._arm_robust()
         await self.drone.action.set_takeoff_altitude(target)
         await self.drone.action.takeoff()
         for _ in range(20):                      # gate on reaching altitude (safety)
@@ -131,6 +350,24 @@ class FlightOps:
                 break
         a = self._alt()
         return f"{self.name} airborne at {a:.0f}m" if a else f"{self.name} airborne"
+
+    async def _arm_robust(self, attempts: int = 3) -> None:
+        """Arm via Hold first. PX4's Land nav_state has mode_req_prevent_arming:
+        after any land() the bare arm() is denied ("cannot takeoff in current
+        mode") until the intention is switched away from Land. SITL preflight
+        transients (GPS drift flaps) also deny single arm attempts, so retry a
+        few times — never bypassing the checks, just re-asking."""
+        from mavsdk.action import ActionError
+        last = None
+        for _ in range(attempts):
+            try:
+                await self.drone.action.hold()
+                await self.drone.action.arm()
+                return
+            except ActionError as e:
+                last = e
+                await asyncio.sleep(1.5)
+        raise last
 
     async def fly(self, north=0.0, east=0.0, up=0.0, wait=True) -> str:
         north, east, up = float(north), float(east), float(up)
@@ -227,9 +464,23 @@ class FlightOps:
         self._speed = max(v, 0.5)               # scales the arrival timeout
         return f"{self.name} speed {v:.1f} m/s"
 
+    async def tune_pursuit_params(self) -> None:
+        """Vision-pursuit tuning (fable-Q4): MPC_TILTMAX_AIR is the ONLY hard
+        cap on pitch excursions reachable by offboard setpoints (PX4's jerk
+        limits bypass offboard entirely — issue #18033); 12° caps horizontal
+        accel at ~2.1 m/s², inside the level camera's FOV budget. And
+        MPC_XY_VEL_MAX is the true absolute cap on v_ff + P-term correction
+        (MAVSDK's velocity feedforward is NOT a constraint). Best effort —
+        param failures are tolerated (degraded pursuit, not a crash)."""
+        for name, val in [("MPC_TILTMAX_AIR", 12.0), ("MPC_XY_VEL_MAX", 6.0)]:
+            try:
+                await self.drone.param.set_param_float(name, val)
+            except Exception:
+                pass
+
     async def track(self, target="", mode="shadow", alt=12.0, duration_s=60.0,
                     within_m=15.0, speed=12.0, standoff_east=0.0,
-                    standoff_north=0.0) -> str:
+                    standoff_north=0.0, acquire_budget_s: float = 45.0) -> str:
         """Real-time pursuit of a gz mover: 10 Hz offboard streaming of
         position + velocity-feedforward setpoints (PX4's cascade is the PD
         law — see agents/flight/track.py). Blocks until duration_s (capped)
@@ -242,13 +493,43 @@ class FlightOps:
 
         from agents.flight import track as trk
 
-        if self.gzposes is None:
-            raise ValueError("track needs a dynamic world (no mover feed)")
+        if self.contacts is None:
+            raise ValueError("track needs a contact provider (no mover feed)")
         name = str(target or "").strip()
-        poses = self.gzposes.poses()
+        poses = self.contacts.poses()
         if name not in poses:
-            known = ", ".join(sorted(poses)) or "none seen yet"
-            raise ValueError(f"unknown moving contact {name!r} (visible: {known})")
+            # O4/O6: a BEARING-ONLY contact (a detection the EKF tracks but no
+            # ToF beam has ranged yet) is not an error — designate it and run
+            # the acquisition servo (§3.10): yaw onto the bearing, bias
+            # altitude toward its elevation, wait for the first beam lock.
+            # Only a name never seen in ANY form is a hard error.
+            views = getattr(self.contacts, "all_views", None)
+            bearing_only = []
+            if callable(views):
+                try:
+                    bearing_only = [v.name for v in views()
+                                    if getattr(v, "position_src", None)
+                                    in (None, "none")]
+                except Exception:
+                    bearing_only = []
+            if name in bearing_only:
+                acq_alt = await self._acquire(name, alt, budget_s=acquire_budget_s)
+                if acq_alt is None:
+                    return f"{self.name} could NOT acquire {name}: no beam lock within the acquisition budget — the contact stays bearing-only; reposition and retry"
+                # the pursuit runs at the ACQUIRED altitude — the elevation
+                # servo moved it while winning the lock (codex-R3).
+                alt = acq_alt
+                poses = self.contacts.poses()
+                if name not in poses:
+                    return f"{self.name} {name} beam-locked but has no position yet — acquire again or hold"
+            # unknown entirely — list what IS visible (positioned contacts
+            # plus the bearing-only ones) so the model retries a real name.
+            else:
+                known = (", ".join(sorted(poses) + [f"{b} (bearing only)"
+                                                   for b in bearing_only])
+                         or "none seen yet")
+                raise ValueError(f"unknown moving contact {name!r} (visible: "
+                                 f"{known})")
         mode = str(mode or "shadow").strip().lower()
         if mode not in ("shadow", "intercept"):
             raise ValueError("mode must be 'shadow' or 'intercept'")
@@ -273,38 +554,224 @@ class FlightOps:
         tp = poses[name]
         yaw = math.degrees(math.atan2(tp[0] - me[0], tp[1] - me[1]))
         pos, vel = _sp(me[0], me[1], alt, 0.0, 0.0, yaw)
-        for _ in range(5):                       # prime the stream before start()
-            await self.drone.offboard.set_position_velocity_ned(pos, vel)
-            await asyncio.sleep(0.05)
-        try:
-            await self.drone.offboard.start()
-        except OffboardError as e:
-            raise ValueError(f"offboard start refused: {e._result.result} — "
-                             "are you airborne?") from e
+        started = False
+        last_err = None
+        for _attempt in range(4):
+            for _ in range(5):                   # prime the stream before start()
+                await self.drone.offboard.set_position_velocity_ned(pos, vel)
+                await asyncio.sleep(0.05)
+            try:
+                await self.drone.offboard.start()
+                started = True
+                break
+            except OffboardError as e:
+                # PX4 can refuse the first start(s) while the offboard
+                # handshake settles — re-prime the stream and retry.
+                last_err = e
+                await asyncio.sleep(0.3)
+        if not started:
+            raise ValueError(f"offboard start refused: {last_err._result.result} — are you airborne?"
+                             ) from last_err
 
         est = trk.TargetEstimator()
         log = trk.TrackLog(within)
         wall0 = _time.monotonic()
         hit = None
+        lost_since = None
+        lost_wall = None
+        lost_txt = None
+        tp0 = tp
+        v0 = (0.0, 0.0)
+        t_last_seen = sim_now0 = self.contacts.sim_time()
+        _shp = (me[0], me[1], 0.0, 0.0)
+        prov = getattr(self.contacts, "cfg", None) or getattr(self.contacts, "config", None)
+        lost_s = getattr(prov, "lost_s", 2.0)
         try:
             while _time.monotonic() - wall0 < dur:
-                tp = self.gzposes.poses().get(name)
+                tp = self.contacts.poses().get(name)
                 me = self.world.world_xy(self.bridge, self.i)
-                if tp is None or me is None:
+                sim_now = self.contacts.sim_time()
+                if tp is not None:
+                    t_last_seen = sim_now
+                if tp is None:
+                    # M3a name-churn: the EKF rebirths contacts under new
+                    # ephemeral ids — before declaring a loss, try to adopt a
+                    # same-class candidate near the predicted-forward last
+                    # estimate (the OBJECT outlives its ids).
+                    adopted = self._readopt_contact(
+                        name, tp0, vel=v0, dt_s=sim_now - t_last_seen)
+                    if adopted is not None:
+                        name, tp = adopted
+                        self._last_track_name = name
+                    if tp is None:
+                        # really gone: hold position (the stream NEVER stops
+                        # mid-call) and give the provider lost_s to return.
+                        if lost_since is None:
+                            lost_since, lost_wall = sim_now, _time.monotonic()
+                        if (sim_now - lost_since > lost_s
+                                or _time.monotonic() - lost_wall > lost_s):
+                            lost_txt = (f"LOST: {name} dropped from contacts for >"
+                                        f"{lost_s:.1f}s at t+{_time.monotonic() - wall0:.0f}"
+                                        f"s — holding (min gap "
+                                        f"{log.min_gap:.1f}m)")
+                            break
+                        hold_yaw = yaw
+                        pos, vel = _sp(me[0] if me else tp0[0],
+                                       me[1] if me else tp0[1],
+                                       alt, 0.0, 0.0, hold_yaw)
+                        await self.drone.offboard.set_position_velocity_ned(pos, vel)
+                        await asyncio.sleep(1.0 / trk.CTRL_HZ)
+                        continue
+                    lost_since = None
+                lost_since = None
+                tp0 = tp
+                if me is None:
                     await asyncio.sleep(1.0 / trk.CTRL_HZ)
                     continue
-                est.update(self.gzposes.sim_time(), tp[0], tp[1])
+                # O3 velocity dispatch: take the provider's filtered velocity
+                # when it has one (no re-differentiation lag); GzPoses has
+                # none ({}), so the EMA finite-difference stays the fallback.
+                vels = getattr(self.contacts, "velocities", None)
+                vmap = vels() if callable(vels) else {}
+                if name in vmap:
+                    ve, vn = vmap[name]
+                    # sanity-clamp the feed: a wild filter velocity would pull
+                    # the lead point kilometres away — 6 m/s caps every mover.
+                    vv = math.hypot(ve, vn)
+                    if vv > 6.0:
+                        ve, vn = ve * 6.0 / vv, vn * 6.0 / vv
+                    est.feed_direct(ve, vn)
+                    v0 = (ve, vn)
+                else:
+                    est.update(sim_now, tp[0], tp[1])
+                    v0 = (est.ve, est.vn)
+                # COASTING: for a ToF-fed (co-altitude) contact, the position
+                # ghosts during a fusion drought — HOLDING the stale point
+                # lets the real target walk away (v18-v21: lock, then the gap
+                # grows to 27-75 m and fusion never resumes). Re-close toward
+                # the measured bearing at a creep (the beam IS the
+                # acquisition — restore the close geometry where it re-locks,
+                # the SM's COASTING -> ACQUIRING leg). For geom contacts the
+                # proven M3a behavior is unchanged: hold the shaped point and
+                # keep the nose on the measured bearing — the stream NEVER
+                # stops mid-call (O2).
+                health_fn = getattr(self.contacts, "health", None)
+                health = health_fn(name) if callable(health_fn) else "MEASURED"
+                if health == "COASTING":
+                    obs_fn = getattr(self.contacts, "observation", None)
+                    obs = obs_fn(name) if callable(obs_fn) else None
+                    b = getattr(obs, "bearing_deg", None)
+                    coast_yaw = b if b is not None else yaw
+                    src = getattr(obs, "range_src", None) if obs else None
+                    if src == "tof" and b is not None:
+                        b_rad = math.radians(coast_yaw)
+                        pos, vel = _sp(_shp[0], _shp[1], alt,
+                                       2.0 * math.cos(b_rad),
+                                       2.0 * math.sin(b_rad), coast_yaw)
+                    else:
+                        pos, vel = _sp(_shp[0], _shp[1], alt, 0.0, 0.0,
+                                       coast_yaw)
+                    await self.drone.offboard.set_position_velocity_ned(pos, vel)
+                    await asyncio.sleep(1.0 / trk.CTRL_HZ)
+                    continue
                 gap = math.hypot(tp[0] - me[0], tp[1] - me[1])
                 log.sample(_time.monotonic() - wall0, gap)
                 if mode == "intercept" and gap <= within:
                     hit = (_time.monotonic() - wall0, gap)
                     break
                 ref_e, ref_n, ff_ve, ff_vn = trk.control_ref(
-                    mode, me[0], me[1], tp[0], tp[1], est, speed, so_e, so_n)
+                    mode, me[0], me[1], tp[0], tp[1], est,
+                    min(speed, 0.5 + 1.5 * (_time.monotonic() - wall0)),
+                    so_e, so_n)
+                # shaped-velocity servo: control_ref gives the REFERENCE, but
+                # raw reference jumps saturate PX4's tilt cap and oscillate —
+                # instead servo a virtual point (_shp) toward the reference
+                # with a P on the position error plus target-velocity
+                # feedforward, speed-capped and accel-limited per tick, and
+                # stream THAT. The 0.5 + 1.5t ramp above softens the initial
+                # dash so the first seconds don't slam the tilt envelope.
+                KP, AMAX = 0.7, 1.0 / trk.CTRL_HZ
+                err_e, err_n = ref_e - me[0], ref_n - me[1]
+                if est.ready:
+                    v_e, v_n = est.ve + KP * err_e, est.vn + KP * err_n
+                else:
+                    v_e, v_n = KP * err_e, KP * err_n
+                sp = math.hypot(v_e, v_n)
+                if sp > speed:
+                    v_e, v_n = v_e * speed / sp, v_n * speed / sp
+                dv = math.hypot(v_e - _shp[2], v_n - _shp[3])
+                if dv > AMAX and dv > 1e-9:
+                    f = AMAX / dv
+                    v_e, v_n = _shp[2] + (v_e - _shp[2]) * f, _shp[3] + (v_n - _shp[3]) * f
+                _shp = (_shp[0] + v_e / trk.CTRL_HZ,
+                        _shp[1] + v_n / trk.CTRL_HZ, v_e, v_n)
+                # keep-out bubble: never aim the streamed point INSIDE 7 m of
+                # the mover — an airborne target at co-altitude is a collision
+                # course. Inside the bubble, hold the reference on its surface
+                # along the shaped-point direction and let the gap close
+                # tangentially instead of through the target.
+                rx, ry = _shp[0] - tp[0], _shp[1] - tp[1]
+                rr = math.hypot(rx, ry)
+                if 1e-9 < rr < 7.0:
+                    ref_e = tp[0] + rx / rr * 7.0
+                    ref_n = tp[1] + ry / rr * 7.0
+                else:
+                    ref_e, ref_n = _shp[0], _shp[1]
+                ff_ve, ff_vn = v_e, v_n
                 ref_u = trk.clamp_ref_alt(self.world, ref_e, ref_n, alt)
-                yaw = math.degrees(math.atan2(tp[0] - me[0], tp[1] - me[1]))
+                obs_fn = getattr(self.contacts, "observation", None)
+                obs = obs_fn(name) if callable(obs_fn) else None
+                # altitude profile: for a ToF-LOCKED contact the ground-mover
+                # floor (2.3 m) would park the beam >1 m above the box and
+                # starve the very fusion feeding the pursuit (v19: gz_z
+                # climbed out of the 0.6-1.8 m band mid-shadow, fusion died,
+                # the estimate ghosted to 30-75 m). Hold co-altitude with the
+                # live elevation servo instead — box centre to boresight,
+                # proportional, bounded ±1 m around the acquired alt; for
+                # non-ToF contacts the original profile is unchanged.
+                obs_src = getattr(obs, "range_src", None) if obs else None
+                e2 = getattr(obs, "elevation_deg", None) if obs else None
+                xy2 = getattr(obs, "bbox_xyxy", None) if obs else None
+                if obs_src == "tof" and e2 is not None and xy2 is not None:
+                    from agents.perception.projection import vfov_deg
+                    fy2 = (360.0 / 2.0) / math.tan(
+                        math.radians(vfov_deg(640, 360)) / 2.0)
+                    half2 = math.degrees(
+                        math.atan(((xy2[3] - xy2[1]) / 2.0) / fy2))
+                    e_c = float(e2) + half2
+                    alt_ref = max(0.5, min(alt + 1.0, alt + 0.35 * e_c))
+                else:
+                    # ease DOWN toward co-altitude as the gap closes: 2.3 m
+                    # floor, scaling with the gap, never above the commanded
+                    # alt. clamp_ref_alt's building rule still wins (min).
+                    alt_ref = min(alt, max(2.3, 0.18 * gap + 1.1))
+                ref_u = min(ref_u, alt_ref)
+                # yaw: prefer the measured camera bearing (image truth —
+                # immune to the EKF's yaw/declination offset) so the nose and
+                # the beam track what the detector actually sees; fall back to
+                # a 0.4 s velocity lead of the estimated position otherwise.
+                yaw = None
+                mb = getattr(obs, "bearing_deg", None)  # obs read above (alt)
+                if mb is not None:
+                    yaw = float(mb)
+                else:
+                    ly = tp
+                    if est.ready:
+                        ly = (tp[0] + est.ve * 0.4, tp[1] + est.vn * 0.4)
+                    yaw = math.degrees(math.atan2(ly[0] - me[0], ly[1] - me[1]))
                 pos, vel = _sp(ref_e, ref_n, ref_u, ff_ve, ff_vn, yaw)
                 await self.drone.offboard.set_position_velocity_ned(pos, vel)
+                # the FLIGHT layer owns the envelope context, fed the VEHICLE's
+                # measured speed (codex-R3: this carried the TARGET's estimate
+                # — a wrong gate input that also raced the eval collector).
+                lp = self.bridge.latest(
+                    f"/px4_{self.i}/fmu/out/vehicle_local_position")
+                own_sp = (math.hypot(getattr(lp, "vx", 0.0),
+                                     getattr(lp, "vy", 0.0))
+                          if lp else 0.0)
+                ctx = getattr(self.contacts, "set_beam_context", None)
+                if callable(ctx):
+                    ctx(mode=mode, own_speed_mps=own_sp)
                 await asyncio.sleep(1.0 / trk.CTRL_HZ)
         finally:
             # leave offboard cleanly even on cancellation; Hold keeps position
@@ -317,6 +784,8 @@ class FlightOps:
                     pass
 
         t_total = _time.monotonic() - wall0
+        if lost_txt is not None:
+            return f"{self.name} {lost_txt}"
         v = (f"target v≈{est.speed():.1f} m/s ({est.ve:+.1f}E {est.vn:+.1f}N)"
              if est.ready else "target velocity not established")
         if mode == "intercept":
@@ -342,7 +811,23 @@ class FlightOps:
         pos = await anext(self.drone.telemetry.position())
         await self.drone.action.goto_location(pos.latitude_deg, pos.longitude_deg,
                                               pos.absolute_altitude_m, yaw)
-        return f"{self.name} turning to face {tgt} (heading {yaw:.0f}deg)"
+        # O5: WAIT for the heading to land (≤6°, 100 × 0.1 s = 10 s cap) — a
+        # post-face detect then gets a settled, on-target frame.
+        err_last = None
+        stream = self.drone.telemetry.heading()
+        for _ in range(100):
+            await asyncio.sleep(0.1)
+            try:
+                cur = await asyncio.wait_for(anext(stream), 1.0)
+                err = abs((yaw - cur.heading_deg + 180.0) % 360.0 - 180.0)
+                err_last = err
+                if err <= 6.0:
+                    return f"{self.name} facing {tgt} (heading {yaw:.0f}deg)"
+            except Exception:
+                break
+        tail = (f", still {err_last:.0f}deg off after 10s"
+                if err_last is not None else "")
+        return f"{self.name} turning to face {tgt} (heading {yaw:.0f}deg{tail})"
 
     async def land(self) -> str:
         await self.drone.action.land()
@@ -353,10 +838,47 @@ class FlightOps:
                 break
         return f"{self.name} landed"
 
+    async def emergency_hold(self) -> str:
+        """Public, idempotent estop surface (ICD §5.4): hold position NOW.
+        Safe to call while another tool is in flight; pauses an uploaded
+        mission first so nothing resumes autonomously."""
+        try:
+            await self.drone.mission.pause_mission()
+        except Exception:
+            pass
+        try:
+            await self.drone.action.hold()
+            return f"{self.name} HOLDING (estop)"
+        except Exception as e:
+            return f"{self.name} hold failed: {e}"
+
+    async def emergency_land(self) -> str:
+        """Public, idempotent estop surface: land in place NOW."""
+        try:
+            await self.drone.mission.pause_mission()
+        except Exception:
+            pass
+        try:
+            await self.drone.action.land()
+            return f"{self.name} LANDING (estop)"
+        except Exception as e:
+            return f"{self.name} estop-land failed: {e}"
+
     def scan(self) -> str:
-        movers = self.gzposes.poses() if self.gzposes is not None else None
+        movers = self.contacts.poses() if self.contacts is not None else None
+        bearing_only = []
+        if self.contacts is not None:
+            views = getattr(self.contacts, "all_views", None)
+            if callable(views):
+                try:
+                    bearing_only = [v.name for v in views()
+                                    if getattr(v, "position_src", None)
+                                    in (None, "none")]
+                except Exception:
+                    bearing_only = []
         return perception.scan_text(self.world, self.bridge, self.i, self.n,
-                                    mover_poses=movers)
+                                    mover_poses=movers,
+                                    bearing_only=bearing_only)
 
     async def _halt(self) -> None:
         """Stop the vehicle after a cancelled/timed-out mission: cancelling the

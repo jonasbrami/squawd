@@ -101,3 +101,24 @@ def test_step_budget_check_matches_budget_everywhere():
         for chk in t.oracle:
             if chk["check"] == "within_step_budget":
                 assert int(chk["max_steps"]) == t.budget.max_steps, p
+
+
+def test_perceive_tasks_load_with_dual_gates_and_identity_check():
+    """Perceive ladder (M5): true target + visually distinct decoys in the
+    perceive world; every rung grades the IDENTIFICATION act (TargetLockEvent
+    path) plus a mover shadow, and carries both pilot baselines."""
+    import glob
+    from evals.spec import load_task
+
+    paths = sorted(glob.glob("evals/tasks/perceive/*.yaml"))
+    assert len(paths) == 2   # p1_identify + p2_crossing (2026-07-22)
+    for p in paths:
+        t = load_task(p)
+        assert t.setup.world == "perceive", f"{p} must use the perceive world"
+        assert t.setup.n_drones == 1 and t.suite == "perceive"
+        assert t.pilot, f"{p} needs a must-PASS pilot"
+        assert t.null_pilot, f"{p} needs a must-FAIL null_pilot"
+        id_checks = [c for c in t.oracle if c["check"] == "identified_target"]
+        assert id_checks and id_checks[0].get("truth") == "mov_true", p
+        assert any(c["check"] == "dwell_moving" and c.get("mover") == "mov_true"
+                   for c in t.oracle), p

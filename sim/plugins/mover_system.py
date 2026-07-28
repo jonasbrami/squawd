@@ -71,6 +71,7 @@ class MoverSystem:
         self._t0 = None
         self._anchor_req = False
         self._steps = 0
+        self._vz = 0.0
         self._node = None   # kept alive: gz subscription dies with the Node
 
     def configure(self, entity, sdf, ecm, event_mgr):
@@ -108,9 +109,18 @@ class MoverSystem:
             trel = 0.0
             self._snap(ecm, *pos_xy(self._spec["traj"], 0.0))
         vx, vy = vel_xy(self._spec["traj"], trel)
-        self._link.set_linear_velocity(ecm, Vector3d(vx, vy, 0.0))
-        self._link.set_angular_velocity(ecm, Vector3d(0.0, 0.0, 0.0))
+        # z-hold (fable-R2-1): vz was 0 and the kinematic mover's z DRIFTED up
+        # to SNAP_M between 1 s drift checks — a ~1 m z error is a ~4–5 m
+        # support-plane projection error at the gate's geometry (the "EKF lag"
+        # chased for days). Proportional velocity-drive correction (PX4-safe,
+        # same channel as vx/vy — no pose commands).
         self._steps += 1
+        if self._steps % 10 == 0:
+            pose = self._link.world_pose(ecm)
+            if pose is not None:
+                self._vz = max(-1.0, min(1.0, -1.0 * (pose.pos().z() - self._z)))
+        self._link.set_linear_velocity(ecm, Vector3d(vx, vy, self._vz))
+        self._link.set_angular_velocity(ecm, Vector3d(0.0, 0.0, 0.0))
         if self._steps % DRIFT_CHECK_STEPS == 0:
             pose = self._link.world_pose(ecm)
             if pose is not None:

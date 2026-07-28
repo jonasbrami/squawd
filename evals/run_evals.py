@@ -1,4 +1,5 @@
-"""Agent task-eval orchestrator (single_drone, operator, and commander layers).
+"""Agent task-eval orchestrator (single_drone layer only — operator/commander
+layers were dropped in the single-drone rebuild, design §3.9).
 
 For each (task x model-assignment x repeat) cell: soft-reset the world, run the drone
 agent on the task under its budget, grade the sampled WorldTrack, append a row to
@@ -139,7 +140,49 @@ async def main(args) -> None:
         gz_world = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
         gzposes = GzPoses(gz_world, [m["name"] for m in world.movers])
     bridge.start()
-    deps = Deps(world=world, bridge=bridge, cameras=cameras, gzposes=gzposes)
+    # Deps split (design §3.8, Codex-Mj11): gzposes is the ORACLE TRUTH — it
+    # feeds the sampler/oracle only. The flight path gets flight_contacts:
+    # --feed truth (default) explicitly chooses the truth-fed control (the
+    # classic ladder); --feed vision builds the real perception stack and hands
+    # the flight tools the VisionContacts the detector feeds — the same
+    # detect→lock→track path the production pilot runs.
+    flight_contacts = gzposes
+    detector = None
+    px4_recorder = None
+    pipeline = None
+    if args.feed == "vision":
+        from agents.core.telemetry import Px4StateRecorder
+        from agents.vision.contacts import VisionContacts
+        clock = gzposes
+        if clock is None:
+            from agents.core.gzposes import GzPoses
+            clock = GzPoses(
+                os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD")
+                or "dynamic", [])          # physics-rate clock only (pilot pattern)
+        px4_recorder = Px4StateRecorder(bridge, world, i=0,
+                                        sim_time_ref=clock.sim_time)
+        px4_recorder.start()
+        from agents.vision.backends import ColorBlobBackend, OnnxBackend
+        from agents.vision.detector import Detector
+        backend = (ColorBlobBackend() if args.backend == "blob" else
+                   OnnxBackend("/workspace/models/mover-nano-seg-v1.onnx",
+                               "/workspace/models/mover-nano-seg-v1.json"))
+        detector = Detector(cameras, backend, i=0, hz=10.0, conf=0.25)
+        detector.start()
+        flight_contacts = VisionContacts(world)
+        flight_contacts.attach_detector(detector)   # designate() lock seam
+        # THE PUMP: without VisionPipeline nothing feeds detector results into
+        # the contacts — track_vis polls an empty provider forever (found live
+        # at the M5 perceive gate: 15 hover polls, zero vis_* contacts).
+        from agents.vision.pipeline import VisionPipeline
+        pipeline = VisionPipeline(detector, contacts=flight_contacts,
+                                  bridge=bridge)
+        pipeline.start()
+        print(f"feed=vision backend={args.backend}: flight tools read "
+              "VisionContacts", flush=True)
+    deps = Deps(world=world, bridge=bridge, cameras=cameras,
+                oracle_truth=gzposes, flight_contacts=flight_contacts,
+                detector=detector)
     recorder = None
     if getattr(args, "record", None):
         from evals.filming import FrameDump
@@ -195,7 +238,15 @@ async def main(args) -> None:
             from evals.report import aggregate_transcripts, render_tools
             with open(os.path.join(out_dir, "TOOLS.md"), "w") as f:
                 f.write(render_tools(aggregate_transcripts(trows)))
+            # Primitive statistics (§13 item 7, observational only)
+            from evals.report import primitive_stats, render_primitive_stats
+            with open(os.path.join(out_dir, "PRIMITIVES.md"), "w") as f:
+                f.write(render_primitive_stats(primitive_stats(trows, rows)))
     finally:
+        if pipeline is not None:
+            pipeline.stop()
+        if detector is not None:
+            detector.stop()
         if recorder is not None:
             print(recorder.stop(), flush=True)
         bridge.shutdown()
@@ -210,15 +261,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", default=None, help="output dir (default evals/out/<ts>)")
     ap.add_argument("--seed", type=int, default=0,
                     help="cell-order shuffle seed (logged; resume-safe)")
-    ap.add_argument("--layer", default="spec", choices=["spec", "operator", "commander"],
-                    help="override every task's target_layer for this run (default "
-                         "'spec': honor each task YAML's own target_layer)")
+    ap.add_argument("--layer", default="spec", choices=["spec"],
+                    help="kept for CLI compat; only 'spec' survives the rebuild")
     ap.add_argument("--pilot", action="store_true",
                     help="fly each task's declared ideal script with NO LLM (trap "
                          "gate): a task the pilot can't pass is a harness bug")
     ap.add_argument("--record", default=None,
                     help="dump POV + cinecam JPEG frames to this dir while cells "
                          "run (film containers only — needs a render backend)")
+    ap.add_argument("--feed", default="truth", choices=["truth", "vision"],
+                    help="flight-contact source: 'truth' = explicit ground-truth "
+                         "control (classic ladder); 'vision' = Detector -> "
+                         "VisionContacts, the production perception path "
+                         "(perceive tasks, camera-fed A/B)")
+    ap.add_argument("--backend", default="blob", choices=["blob", "onnx"],
+                    help="detector backend for --feed vision")
     return ap
 
 

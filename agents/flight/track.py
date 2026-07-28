@@ -43,6 +43,13 @@ class TargetEstimator:
             self.ready = True
         self._last = (t, e, n)
 
+    def feed_direct(self, ve: float, vn: float) -> None:
+        """O3: accept a velocity from the contact provider's own filter (the
+        VisionContacts CV-EKF), bypassing the finite-difference EMA entirely.
+        With GzPoses (velocities()=={}) the EMA path stays the fallback."""
+        self.ve, self.vn = float(ve), float(vn)
+        self.ready = True
+
     def speed(self) -> float:
         return math.hypot(self.ve, self.vn)
 
