@@ -14,7 +14,7 @@ InferenceResult's frame stamp — never wall clock.
 """
 import math
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -55,6 +55,24 @@ class TrackerConfig:
     sigma_tof_m: float = 0.15            # ToF measurement noise (in-envelope)
     sigma_bearing_deg: float = 1.5
     accel_max_mps2: float = 4.0          # process-model white-accel clamp
+    assoc_keys: dict = field(default_factory=dict)
+                                       # class -> association key (W3 codex
+                                       # §1: COCO {car,truck,bus} -> "vehicle"
+                                       # — the gates compare KEYS, never the
+                                       # display class; birth class/naming
+                                       # unchanged). Empty = strict per-class
+                                       # (the mover contract, byte-identical).
+    # codex R7: bounded corner-maneuver mode for the designated track of ONE
+    # superclass (the CV-EKF's 90°-corner ghost, w3-run6). maneuver_key None
+    # = OFF — every knob below is then inert and the mover path stays
+    # byte-identical; the COCO profile sets maneuver_key="vehicle".
+    maneuver_key: "str | None" = None  # assoc key eligible for maneuver mode
+    maneuver_gate_m: float = 8.0       # armed admission radius (NN widen)
+    maneuver_trigger_m: float = 1.0    # |cross_m| lateral-innovation trigger
+    maneuver_trigger_hits: int = 2     # consecutive sign-consistent hits to arm
+    maneuver_window_s: float = 2.0     # hard reset timeout once armed
+    maneuver_accel_mps2: float = 20.0  # armed process-noise accel
+    maneuver_nis_scale: float = 4.0    # armed NIS = nis_scale * nis_max
 
 
 class CvEkf:
@@ -63,8 +81,10 @@ class CvEkf:
     Measurement models: XY = full 2D position; RANGE = 1D along a known world
     bearing from `origin` (set_origin before the call); BEARING = 1D angle with
     the range held at the predicted value. Every update returns the NIS and is
-    APPLIED ONLY when NIS <= nis_max — a rejected measurement never touches the
-    state. Process noise is white acceleration clamped at accel_max_mps2."""
+    APPLIED ONLY when NIS <= nis_max (or a per-update override — codex R7's
+    armed maneuver window) — a rejected measurement never touches the state.
+    Process noise is white acceleration clamped at accel_max_mps2 (q_scale
+    able per predict, 1.0 by default)."""
 
     def __init__(self, e: float, n: float, *, ve: float = 0.0, vn: float = 0.0,
                  sigma_pos_m: float = 2.0, sigma_vel_mps: float = 6.0,
@@ -79,25 +99,28 @@ class CvEkf:
     def set_origin(self, e: float, n: float) -> None:
         self._origin = (float(e), float(n))
 
-    def predict(self, dt: float) -> None:
+    def predict(self, dt: float, q_scale: float = 1.0) -> None:
         dt = min(max(float(dt), 1e-3), 1.0)
         F = np.array([[1.0, 0.0, dt, 0.0], [0.0, 1.0, 0.0, dt],
                       [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
         d2, d3 = dt * dt, dt * dt * dt
-        Q = self._q * np.array(
+        Q = (self._q * float(q_scale)) * np.array(
             [[d3 / 3, 0.0, d2 / 2, 0.0], [0.0, d3 / 3, 0.0, d2 / 2],
              [d2 / 2, 0.0, dt, 0.0], [0.0, d2 / 2, 0.0, dt]])
         self.x = F @ self.x
         self.P = F @ self.P @ F.T + Q
 
-    def _apply(self, y, H, R):
-        """One gated linear update (Joseph form). y innovation, H (k,4), R (k,k)."""
+    def _apply(self, y, H, R, nis_max=None):
+        """One gated linear update (Joseph form). y innovation, H (k,4), R (k,k).
+        nis_max overrides the gate for this update only (codex R7's armed
+        maneuver window); None = the tracker's contractual nis_max."""
+        cap = self.nis_max if nis_max is None else float(nis_max)
         H = np.atleast_2d(H)
         R = np.atleast_2d(R)
         S = H @ self.P @ H.T + R
         y = np.atleast_1d(np.asarray(y, dtype=float))
         nis = float(y @ np.linalg.solve(S, y))
-        if nis > self.nis_max:
+        if nis > cap:
             return nis                            # REJECTED: state untouched
         K = np.linalg.solve(S.T, (self.P @ H.T).T).T
         self.x = self.x + K @ y
@@ -106,10 +129,12 @@ class CvEkf:
         self.P = 0.5 * (self.P + self.P.T)
         return nis
 
-    def update_xy(self, e: float, n: float, sigma_m: float) -> float:
+    def update_xy(self, e: float, n: float, sigma_m: float,
+                  nis_max: "float | None" = None) -> float:
         H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
         z = np.array([e, n]) - self.x[:2]
-        return self._apply(z, H, np.eye(2) * float(sigma_m) ** 2)
+        return self._apply(z, H, np.eye(2) * float(sigma_m) ** 2,
+                           nis_max=nis_max)
 
     def update_range(self, rng: float, bearing_deg: float,
                      sigma_m: float) -> float:
@@ -157,7 +182,9 @@ class _Track:
     __slots__ = ("name", "cls", "conf", "ekf", "src", "pending_src",
                  "pending_n", "z", "support_z", "bearing_deg", "elev_deg",
                  "origin", "range_m", "range_conf", "t_seen", "t_meas",
-                 "t_state", "foot_px", "det_index", "xyxy")
+                 "t_state", "foot_px", "det_index", "xyxy",
+                 "man_armed_t", "man_normal", "man_trig_n", "man_trig_sign",
+                 "man_trig_t")
 
     def __init__(self, name, cls):
         self.name, self.cls = name, cls
@@ -178,6 +205,12 @@ class _Track:
         self.foot_px = None
         self.det_index = None
         self.xyxy = None
+        # codex R7 corner-maneuver mode (inert while cfg.maneuver_key is None)
+        self.man_armed_t = None           # sim t the window was armed, or None
+        self.man_normal = 0               # normal-gate hits since arming
+        self.man_trig_n = 0               # consecutive sign-consistent triggers
+        self.man_trig_sign = 0.0
+        self.man_trig_t = 0.0             # sim t of the last trigger hit
 
 
 class _Candidate:
@@ -207,9 +240,15 @@ class VisionContacts:
     def __init__(self, world, rangefinder=None, i: int = 0,
                  config: "TrackerConfig | None" = None,
                  beam: "BeamAssociator | None" = None,
-                 slip_n: int = 3) -> None:
+                 slip_n: int = 3, admit_classes=None) -> None:
         self._world = world
         self._rangefinder = rangefinder
+        # W2 (design §4): trackable-contact admission allowlist — detections
+        # of a non-admitted class still publish in the snapshot's dets (the
+        # overlay draws everything >= conf) but never become measurements,
+        # candidates, or tracks. None admits all (legacy default).
+        self._admit = frozenset(admit_classes) if admit_classes is not None \
+            else None
         # M3b: the beam associator owns ToF association (§6.6); default-built
         # whenever a rangefinder is present. slip_n = consecutive non-ASSOCIATED
         # outcomes that drop a locked beam to COASTING (documented default 3).
@@ -247,7 +286,13 @@ class VisionContacts:
             att = self._call("attitude_at", t)
             for tr in self._tracks.values():
                 if tr.ekf is not None and t > tr.t_state:
-                    tr.ekf.predict(t - tr.t_state)
+                    # codex R7: an armed maneuver window runs the high-Q CV
+                    # mode — (20/4)² = 25 — so the velocity can rotate
+                    # through the corner instead of ghosting straight on
+                    q_scale = ((self.cfg.maneuver_accel_mps2
+                                / self.cfg.maneuver_nis_scale) ** 2
+                               if self._maneuver_armed(tr, t) else 1.0)
+                    tr.ekf.predict(t - tr.t_state, q_scale=q_scale)
                     tr.t_state = t
             meas = self._measure(result, pose, att)
             self._feed_tof(t, result, pose, att)
@@ -325,6 +370,8 @@ class VisionContacts:
         for k, d in enumerate(result.detections):
             if hit_idx is not None and k == hit_idx:
                 continue                          # consumed as the designated hit
+            if self._admit is not None and d.cls not in self._admit:
+                continue                          # admission allowlist (§4)
             supp = self._support_z_for(d)
             m = self._project_px(d.cls, d.conf, d.footpoint[0], d.footpoint[1],
                                  result.frame, pose, att, k, supp)
@@ -381,6 +428,13 @@ class VisionContacts:
         return 0.6 if d.cls == "target" else 0.0
 
     # ---- gating primitives ----
+
+    def _assoc_key(self, cls):
+        """The association identity of a class (W3 codex §1): the superclass
+        map collapses COCO's car/truck/bus flap to ONE key, so a reclass
+        keeps the contact id; unmapped classes — and the empty mover default
+        — compare AS THEMSELVES (the mover gates stay byte-identical)."""
+        return self.cfg.assoc_keys.get(cls, cls)
 
     def _sigma_for(self, kind):
         return {"geom": self.cfg.sigma_geom_m, "tof": self.cfg.sigma_tof_m,
@@ -440,8 +494,96 @@ class VisionContacts:
 
     # ---- association ----
 
+    # codex R7 (w3-run6's corner ghost): a bounded maneuver mode for the
+    # DESIGNATED maneuver-key track. Arm on trigger_hits consecutive
+    # sign-consistent lateral innovations from the UNIQUE same-superclass
+    # geom hit within maneuver_gate_m/12°; while armed, Q inflates (in
+    # update()) and the unique qualifier is admitted through the widened
+    # distance/NIS gates; reset after 3 normal-gate hits or window_s.
+
+    def _maneuver_track(self):
+        """The designated track when it is the maneuver-key superclass; None
+        keeps the whole maneuver machinery out of the way (mover default)."""
+        if self.cfg.maneuver_key is None or self._designated is None:
+            return None
+        tr = self._tracks.get(self._designated)
+        if tr is None or tr.ekf is None \
+                or self._assoc_key(tr.cls) != self.cfg.maneuver_key:
+            return None
+        return tr
+
+    def _maneuver_armed(self, tr, t):
+        """True while the track's maneuver window runs; the hard window_s
+        timeout disarms on the spot."""
+        if tr.man_armed_t is None:
+            return False
+        if t - tr.man_armed_t > self.cfg.maneuver_window_s:
+            tr.man_armed_t, tr.man_normal = None, 0
+            return False
+        return True
+
+    def _maneuver_qualifies(self, tr, m):
+        """The trigger/recapture qualifier: a same-superclass GEOM hit within
+        maneuver_gate_m of the prediction and within 12° of the last accepted
+        image bearing (bearing-continuity against a fan switch)."""
+        if m.kind != "geom" \
+                or self._assoc_key(m.cls) != self._assoc_key(tr.cls):
+            return False
+        if math.hypot(m.e - tr.ekf.x[0], m.n - tr.ekf.x[1]) \
+                > self.cfg.maneuver_gate_m:
+            return False
+        if tr.bearing_deg is None:
+            return False
+        return abs(_wrap_deg(m.bearing_deg - tr.bearing_deg)) <= 12.0
+
+    def _maneuver_trigger(self, t, meas):
+        """Arming half (codex R7 §2): arm after maneuver_trigger_hits
+        CONSECUTIVE frames, ≤0.35 s apart, whose unique qualifying hit shows
+        |cross_m| >= maneuver_trigger_m with the same nonzero sign — the
+        sideways departure from CV (a turn), not along-track range noise.
+        cross_m = (ve*rn − vn*re) / max(|v|, 1)."""
+        tr = self._maneuver_track()
+        if tr is None or self._maneuver_armed(tr, t):
+            return
+        qual = [m for m in meas
+                if m is not None and self._maneuver_qualifies(tr, m)]
+        if len(qual) != 1:
+            tr.man_trig_n = 0      # absence/ambiguity: strict consecutiveness
+            return
+        m = qual[0]
+        re_, rn = m.e - tr.ekf.x[0], m.n - tr.ekf.x[1]
+        ve, vn = tr.ekf.x[2], tr.ekf.x[3]
+        cross = (ve * rn - vn * re_) / max(math.hypot(ve, vn), 1.0)
+        if abs(cross) < self.cfg.maneuver_trigger_m:
+            tr.man_trig_n = 0
+            return
+        sign = 1.0 if cross > 0 else -1.0
+        if tr.man_trig_n and sign == tr.man_trig_sign \
+                and t - tr.man_trig_t <= 0.35:
+            tr.man_trig_n += 1
+        else:
+            tr.man_trig_n, tr.man_trig_sign = 1, sign
+        tr.man_trig_t = t
+        if tr.man_trig_n >= self.cfg.maneuver_trigger_hits:
+            tr.man_armed_t, tr.man_normal = t, 0
+            tr.man_trig_n = 0
+
     def _associate(self, t, meas):
         cfg = self.cfg
+        self._maneuver_trigger(t, meas)
+        # corner recapture (codex R7 §3): while armed, reserve the UNIQUE
+        # trigger-qualified measurement for the designated track — admitted
+        # through distance<=maneuver_gate_m and the armed NIS widen in
+        # _apply_to_track. Two+ qualifying vehicles: recover NEITHER (the
+        # three-car swap risk dominates availability) — explicit no-op.
+        man_tr = self._maneuver_track()
+        reserved = None
+        if man_tr is not None and self._maneuver_armed(man_tr, t):
+            qual = [mi for mi, m in enumerate(meas)
+                    if m is not None and m.designated_for is None
+                    and self._maneuver_qualifies(man_tr, m)]
+            if len(qual) == 1:
+                reserved = qual[0]
         pairs = []
         for mi, m in enumerate(meas):
             if m.designated_for is not None and m.designated_for in self._tracks:
@@ -453,10 +595,13 @@ class VisionContacts:
                     meas[mi] = None
                 continue
             for name, tr in self._tracks.items():
-                if m.cls != tr.cls:
+                if self._assoc_key(m.cls) != self._assoc_key(tr.cls):
                     continue
+                if mi == reserved and tr is not man_tr:
+                    continue             # reserved for the designated track
                 d = self._gate_dist(tr, m)
-                if d is not None and d <= cfg.gate_m:
+                gate = cfg.maneuver_gate_m if mi == reserved else cfg.gate_m
+                if d is not None and d <= gate:
                     pairs.append((d, mi, name))
         pairs.sort(key=lambda p: p[0])
         used_t, used_m = set(), set()
@@ -494,8 +639,17 @@ class VisionContacts:
                 tr.z, tr.support_z = m.z, m.support_z
             else:
                 sigma = self._peek_sigma(tr, m.kind)
-                nis = tr.ekf.update_xy(m.e, m.n, sigma)
-                if nis > self.cfg.nis_max:
+                # codex R7: an armed maneuver window widens THIS track's NIS
+                # gate (nis_scale x) — the corner recapture's second half;
+                # it covers the designated force-associated path too (that
+                # path bypasses the NN distance gate and is NIS-gated alone)
+                armed = self._maneuver_armed(tr, t)
+                cap = self.cfg.nis_max * (self.cfg.maneuver_nis_scale
+                                          if armed else 1.0)
+                d_in = (math.hypot(m.e - tr.ekf.x[0], m.n - tr.ekf.x[1])
+                        if armed else None)
+                nis = tr.ekf.update_xy(m.e, m.n, sigma, nis_max=cap)
+                if nis > cap:
                     # bearing fallback (fable-Q3-2): a geom hit the range gate
                     # rejects still carries a good ANGLE — apply it as a
                     # bearing update so the detector firing every frame can
@@ -514,6 +668,15 @@ class VisionContacts:
                     tr.xyxy = getattr(m, "xyxy", None)
                     tr.t_seen = t
                     return True
+                if armed and nis <= self.cfg.nis_max \
+                        and (m.designated_for is not None
+                             or d_in <= self.cfg.gate_m):
+                    # codex R7 reset half: three NORMAL-gate hits = the filter
+                    # re-converged after the turn — disarm back to the proven
+                    # straight-line filter (a widened-only hit doesn't count)
+                    tr.man_normal += 1
+                    if tr.man_normal >= 3:
+                        tr.man_armed_t, tr.man_normal = None, 0
                 self._commit_source(tr, m.kind)
                 tr.z, tr.support_z = m.z, m.support_z
                 # fuse the bbox-height range too (second, independent channel —
@@ -537,7 +700,8 @@ class VisionContacts:
         ref = math.degrees(math.atan2(self.cfg.gate_m, _BEARING_GATE_REF_M))
         best, best_d = None, math.inf
         for c in self._candidates:
-            if c.cls != m.cls or c.t_last == t:
+            if self._assoc_key(c.cls) != self._assoc_key(m.cls) \
+                    or c.t_last == t:
                 continue
             if c.e is not None and m.e is not None:
                 d = math.hypot(m.e - c.e, m.n - c.n)
@@ -583,7 +747,8 @@ class VisionContacts:
         # gate on the cross-range corridor to the PREDICTED position.
         best, second = None, None
         for name, (cls, ekf, z, supp, t_state, t_drop) in self._graveyard.items():
-            if cls != m.cls or t - t_drop > self.cfg.rebind_window_s:
+            if self._assoc_key(cls) != self._assoc_key(m.cls) \
+                    or t - t_drop > self.cfg.rebind_window_s:
                 continue
             # predict the dead EKF to the match time BEFORE gating (fable-Q3-5):
             # a 3.5 m/s mover exits the 5 m gate in ~1.4 s against the frozen

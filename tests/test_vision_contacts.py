@@ -1,7 +1,8 @@
 """Vision contacts (ICD §6.4/§6.5): CvEkf gates, birth/rebind/NIS rules,
 bearing-only semantics, source-change confirmation, coast/lost on SIM time,
-designate seam, deep-copy readers. Synthetic InferenceResults over a fake
-World (fixed pose/attitude) — drone at (0, 0, 12) heading north throughout."""
+designate seam, deep-copy readers, the designated-vehicle corner-maneuver
+mode (codex R7). Synthetic InferenceResults over a fake World (fixed
+pose/attitude) — drone at (0, 0, 12) heading north throughout."""
 import dataclasses
 import math
 
@@ -35,7 +36,7 @@ def _px(ax, ay):
     return (W / 2 + fx * math.tan(ax), H / 2 + fy * math.tan(ay))
 
 
-def det_geom(cls, e, n, conf=0.9):
+def det_geom(cls, e, n, conf=0.9, alt=ALT):
     """Detection whose footpoint the projection composition (ray_support_range
     -> contact_world, the v1 slant-range convention of projection.py) maps to
     world (e, n) on the mover's base plane (z=0.6 for "target", z=0 else):
@@ -44,7 +45,7 @@ def det_geom(cls, e, n, conf=0.9):
     sup = 0.6 if cls == "target" else 0.0
     g = math.hypot(e, n)
     ax = math.atan2(e, n)
-    ay = math.asin(min((ALT - sup) / g, 1.0))
+    ay = math.asin(min((alt - sup) / g, 1.0))
     u, v = _px(ax, ay)
     return Detection(cls, conf, (u - 3.0, v - 6.0, u + 3.0, v))
 
@@ -86,6 +87,14 @@ def test_tracker_config_defaults_are_the_contract():
     assert (c.coast_s, c.lost_s, c.rebind_window_s) == (1.0, 2.0, 2.0)
     assert (c.sigma_geom_m, c.sigma_tof_m, c.sigma_bearing_deg) == (2.0, 0.15, 1.5)
     assert c.accel_max_mps2 == 4.0
+    # codex R7 corner-maneuver mode: DISABLED by default (maneuver_key None)
+    # — the mover 2-class path is byte-identical; the knobs below are the
+    # contract the COCO profile activates with maneuver_key="vehicle"
+    assert c.maneuver_key is None
+    assert (c.maneuver_gate_m, c.maneuver_trigger_m,
+            c.maneuver_trigger_hits) == (8.0, 1.0, 2)
+    assert (c.maneuver_window_s, c.maneuver_accel_mps2,
+            c.maneuver_nis_scale) == (2.0, 20.0, 4.0)
     with pytest.raises(dataclasses.FrozenInstanceError):
         c.gate_m = 9.0
 
@@ -551,3 +560,453 @@ def test_support_plane_geom_rejected_below_min_drop():
     assert len(views) == 1
     assert views[0].position_src == "none"       # bearing-only, no ghost
     assert vc.poses() == {}
+
+
+# ---- W2: admission allowlist + two-hit confirm (design 2026-07-28 §4) ----
+
+def test_two_hit_confirm_gates_trackable_contacts():
+    """One sighting is a candidate, not a contact; the second consecutive
+    gated hit births it (TrackerConfig.birth_hits=2)."""
+    vc = VisionContacts(FakeWorld(), admit_classes=("car",))
+    vc.update(result(T0, [det_geom("car", 0.0, 40.0)]))
+    assert vc.all_views() == []                    # first sighting: no contact
+    vc.update(result(T0 + DT, [det_geom("car", 0.0, 40.0)]))
+    views = vc.all_views()
+    assert len(views) == 1 and views[0].name == "vis_car_0"
+
+
+def test_allowlist_never_admits_static_classes():
+    """The §4 dynamic-class allowlist: a static class (the W0.1 "chair"
+    look-down artifact) never becomes a contact, however often seen; an
+    admitted class births normally."""
+    vc = VisionContacts(FakeWorld(), admit_classes=("car", "person"))
+    for k in range(4):
+        vc.update(result(T0 + k * DT, [det_geom("chair", 0.0, 40.0)]))
+    assert vc.all_views() == []
+    name = birth_geom(vc, cls="car")
+    assert name == "vis_car_0"
+
+
+def test_no_allowlist_admits_every_class():
+    """Legacy default (admit_classes=None): no filtering — the M0→M6 mover
+    path and direct constructions keep their pre-W2 behavior."""
+    vc = VisionContacts(FakeWorld())
+    name = birth_geom(vc, cls="chair")
+    assert name == "vis_chair_0"
+
+
+# ---- W3 (codex §1/§2): COCO superclass association keys + 5 s grace ----
+
+COCO_CFG = TrackerConfig(lost_s=5.0, rebind_window_s=5.0,
+                         assoc_keys={"car": "vehicle", "truck": "vehicle",
+                                     "bus": "vehicle"})
+
+
+def test_coco_vehicle_class_flap_keeps_one_contact_id():
+    """The W3 demo-world churn, fixed: with the COCO superclass map a
+    car<->truck flap on ONE physical vehicle keeps ONE contact id — through
+    the candidate confirm AND the live association — and the contact keeps
+    the BIRTH class/name (vis_car_0, never vis_truck_*)."""
+    vc = make_vc(config=COCO_CFG)
+    vc.update(result(T0, [det_geom("car", 0.0, 40.0)]))
+    vc.update(result(T0 + DT, [det_geom("truck", 0.2, 40.1)]))  # flap pre-birth
+    views = vc.all_views()
+    assert len(views) == 1 and views[0].name == "vis_car_0"    # birth class wins
+    t = T0 + DT
+    for _ in range(3):                                          # flap while live
+        t += DT
+        vc.update(result(t, [det_geom("truck", 0.3, 40.2)]))
+    views = vc.all_views()
+    assert len(views) == 1
+    assert views[0].name == "vis_car_0" and views[0].cls == "car"
+    assert vc.health("vis_car_0") == "MEASURED"
+
+
+def test_default_mover_classes_remain_distinct():
+    """The empty-map default is the mover contract, byte-identical: class
+    gates stay STRICT — co-located target + obstacle dets never cross-feed a
+    candidate or a track (two contacts, per-class names)."""
+    vc = make_vc()
+    for k in range(2):
+        vc.update(result(T0 + k * DT, [det_geom("target", 0.0, 40.0),
+                                       det_geom("obstacle", 0.1, 40.1)]))
+    assert sorted(vc.poses()) == ["vis_obstacle_0", "vis_target_0"]
+
+
+def test_coco_profile_survives_four_second_flicker_then_drops_after_five():
+    """The COCO 5 s grace (codex §2): a 4 s detection gap leaves the contact
+    alive (COASTING, still posed); past 5 s it drops to the graveyard as
+    before. The mover default (2.0) is pinned by
+    test_tracker_config_defaults_are_the_contract above."""
+    vc = make_vc(config=COCO_CFG)
+    name = birth_geom(vc, 0.0, 40.0, cls="car")           # last seen T0 + DT
+    t = starve(vc, T0 + DT, T0 + 21 * DT)                 # age 4.0 s
+    assert name in vc.poses()
+    assert vc.health(name) == "COASTING"
+    t = starve(vc, t, T0 + 27 * DT)                       # age 5.2 s > lost_s
+    assert vc.poses() == {}
+    assert vc.health(name) == "LOST"
+
+
+def test_coco_rebind_across_vehicle_classes_resumes_the_name():
+    """The second half of the live churn: the car track drops after the 5 s
+    grace and the SAME object re-detected as a TRUCK inside the 5 s rebind
+    window resumes vis_car_0 (the graveyard gate compares association keys)
+    instead of birthing a fresh id."""
+    vc = make_vc(config=COCO_CFG)
+    birth_geom(vc, 0.0, 40.0, cls="car")
+    t = starve(vc, T0 + DT, T0 + 27 * DT)                 # dropped at age 5.2 s
+    assert vc.poses() == {}
+    t += 4 * DT                                           # 0.8 s after the drop
+    vc.update(result(t, [det_geom("truck", 1.0, 41.0)]))
+    vc.update(result(t + DT, [det_geom("truck", 1.0, 41.0)]))
+    assert "vis_car_0" in vc.poses()                      # lineage resumed
+    assert "vis_truck_0" not in vc.poses()
+    e, n, _ = vc.poses()["vis_car_0"]
+    assert e == pytest.approx(1.0, abs=0.75)
+    assert n == pytest.approx(41.0, abs=0.75)
+
+
+# ---- codex R7: designated-vehicle corner-maneuver mode (w3-run6) ----
+
+COCO_MAN_CFG = TrackerConfig(lost_s=5.0, rebind_window_s=5.0,
+                             assoc_keys={"car": "vehicle", "truck": "vehicle",
+                                         "bus": "vehicle"},
+                             maneuver_key="vehicle")
+
+
+def east_mover(vc, t0=T0, n=12, e0=8.0, n0=44.0):
+    """Birth + converge a DESIGNATED 4 m/s eastbound car track (the corner
+    scenarios' starting point); returns (name, t_of_last_frame)."""
+    t = t0
+    for k in range(n):
+        t = t0 + k * DT
+        vc.update(result(t, [det_geom("car", e0 + 4.0 * (t - t0), n0)]))
+    (name,) = vc.poses()
+    vc.designate(name)
+    return name, t
+
+
+def corner_north(vc, name, t, frames):
+    """Feed a 90 deg east->north waypoint corner from (current e, 44) at
+    4 m/s; returns the corner's e."""
+    e = 8.0 + 4.0 * (t - T0)
+    for k in range(1, frames + 1):
+        vc.update(result(t + k * DT,
+                         [det_geom("car", e, 44.0 + 4.0 * k * DT)]))
+    return e
+
+
+def test_ekf_predict_q_scale_scales_process_noise_not_state():
+    """The codex-R7 predict hook: q_scale multiplies ONLY the Q injection —
+    1.0 by default (the byte-identical mover path), 25 = (20/4)^2 armed."""
+    a = CvEkf(0.0, 40.0, ve=4.0)
+    b = CvEkf(0.0, 40.0, ve=4.0)
+    a.predict(0.2)                                # default: exactly 1
+    b.predict(0.2, q_scale=25.0)
+    assert (a.x == b.x).all()                     # state propagation untouched
+    shared = 0.2 ** 2 * 36.0                      # F P F^T: dt^2 * sigma_vel^2
+    dp_a = a.P[0, 0] - 4.0                        # minus sigma_pos^2 init
+    dp_b = b.P[0, 0] - 4.0
+    assert dp_b - shared == pytest.approx(25.0 * (dp_a - shared))
+
+
+def test_maneuver_trigger_arms_on_sign_consistent_lateral_innovations():
+    """The arming half (R7 §2): two consecutive frames, <=0.35 s apart, whose
+    UNIQUE same-superclass geom hit departs SIDEWAYS from the CV prediction
+    (|cross_m| >= 1 m, same nonzero sign) — a turn, not range noise."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    assert tr.man_armed_t is None
+    e = corner_north(vc, name, t, 2)
+    assert tr.man_armed_t is None                 # one qualifying frame only
+    vc.update(result(t + 3 * DT, [det_geom("car", e, 44.0 + 4.0 * 3 * DT)]))
+    assert tr.man_armed_t == pytest.approx(t + 3 * DT)   # armed on the 2nd hit
+    assert vc.health(name) == "MEASURED"
+
+
+def test_maneuver_trigger_stays_disarmed_on_alternating_signs():
+    """Sign consistency: lateral innovations alternating +/-/+ restart the
+    streak every frame — no arming (a jittering box is not a turn)."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    e = 8.0 + 4.0 * (t - T0)
+    jogs = [(e - 0.8, 45.6), (e + 0.4, 43.6), (e - 0.6, 46.4)]
+    for k, (je, jn) in enumerate(jogs, start=1):
+        vc.update(result(t + k * DT, [det_geom("car", je, jn)]))
+    assert tr.man_armed_t is None
+    assert tr.man_trig_n == 1                     # streak never passed one
+
+
+def test_maneuver_trigger_stays_disarmed_on_ambiguous_pair():
+    """Two qualifying vehicle hits in the frame = ambiguity: an explicit
+    no-op (the three-car swap risk dominates) — the streak resets."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    e = 8.0 + 4.0 * (t - T0)
+    for k in range(1, 3):
+        vc.update(result(t + k * DT,
+                         [det_geom("car", e - 0.8, 44.0 + 4.0 * k * DT),
+                          det_geom("truck", e + 0.6, 44.3 + 4.0 * k * DT)]))
+    assert tr.man_armed_t is None
+    assert tr.man_trig_n == 0
+
+
+def test_corner_recapture_accepts_unique_car_to_truck_measurement():
+    """The recapture half (R7 §3): while armed, the UNIQUE trigger-qualified
+    hit — here a car->truck flap 6 m off the prediction, past the 5 m NN
+    gate — is reserved for the designated track and admitted through
+    distance<=8 m; the contact keeps its birth id/class and NO candidate or
+    new id is born from the consumed measurement. The default profile
+    (maneuver_key None) rejects the same hit to the candidate pool."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    e = corner_north(vc, name, t, 3)              # arms on the 3rd frame
+    assert tr.man_armed_t is not None
+    pe, pn, _ = vc.poses()[name]
+    ve, vn = vc.velocities()[name]
+    px, py = pe + ve * DT, pn + vn * DT           # next prediction
+    tk = t + 4 * DT
+    d = math.hypot(-1.0, 6.0)
+    assert 5.0 < d <= 8.0                         # past NN gate, inside maneuver
+    vc.update(result(tk, [det_geom("truck", px - 1.0, py + 6.0)]))
+    assert tr.t_meas == pytest.approx(tk)         # fused through the widen
+    assert sorted(vc.poses()) == [name]
+    assert vc.observation(name).cls == "car"      # birth class/id kept
+    assert vc._candidates == []                   # consumed: no new id born
+    # same play, default profile: maneuver never arms, the 6 m hit is refused
+    vc2 = make_vc()
+    name2, t2 = east_mover(vc2)
+    corner_north(vc2, name2, t2, 3)
+    tr2 = vc2._tracks[name2]
+    assert tr2.man_armed_t is None
+    pe, pn, _ = vc2.poses()[name2]
+    ve, vn = vc2.velocities()[name2]
+    px2, py2 = pe + ve * DT, pn + vn * DT
+    t_meas2 = tr2.t_meas
+    vc2.update(result(t2 + 4 * DT, [det_geom("truck", px2 - 1.0, py2 + 6.0)]))
+    assert tr2.t_meas == pytest.approx(t_meas2)   # rejected: nothing fused
+    assert len(vc2._candidates) == 1              # feeds the candidate pool
+
+
+def test_corner_recapture_refuses_two_plausible_vehicles():
+    """Two qualifying vehicles while armed: recover NEITHER (R7 §3) — both
+    stay out of the designated track (no fusion this frame) and flow to the
+    candidate pool; the window stays armed (ambiguity is not a reset)."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    corner_north(vc, name, t, 3)                  # armed
+    pe, pn, _ = vc.poses()[name]
+    ve, vn = vc.velocities()[name]
+    px, py = pe + ve * DT, pn + vn * DT
+    tk = t + 4 * DT
+    t_seen, t_meas = tr.t_seen, tr.t_meas
+    vc.update(result(tk, [det_geom("truck", px - 1.0, py + 6.2),
+                          det_geom("car", px + 0.5, py + 6.6)]))
+    assert tr.t_seen == pytest.approx(t_seen)     # neither admitted...
+    assert tr.t_meas == pytest.approx(t_meas)
+    assert len(vc.all_views()) == 1               # ...no new id born...
+    assert len(vc._candidates) == 2               # ...both parked as candidates
+    assert tr.man_armed_t is not None             # window still running
+
+
+def test_armed_window_admits_designated_hit_through_widened_nis():
+    """The widen covers the designated force-associated path (R7 §3): that
+    path bypasses the NN distance gate and is NIS-gated ALONE, so the armed
+    cap is nis_scale x nis_max. A designated hit 10 m off the prediction
+    (NIS ~17: above 9.21, below 4x9.21) fuses ONLY while armed; unarmed, the
+    same hit is geom-rejected (bearing fallback keeps the angle, no range)."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    corner_north(vc, name, t, 3)                  # armed
+    pe, pn, _ = vc.poses()[name]
+    ve, vn = vc.velocities()[name]
+    px, py = pe + ve * DT, pn + vn * DT
+    me, mn = px, py + 10.0
+    g = math.hypot(me, mn)
+    hit = AssociationHit(None, None,
+                         _px(math.atan2(me, mn), math.asin(ALT / g)),
+                         0.8, None)
+    tk = t + 4 * DT
+    vc.update(result(tk, [], hit=hit))
+    assert tr.t_meas == pytest.approx(tk)         # widened NIS admitted it
+    assert vc.poses()[name][1] > py + 3.0         # fused toward the hit
+    # same hit, window NOT armed (one corner frame only): geom-rejected
+    vc2 = make_vc(config=COCO_MAN_CFG)
+    name2, t2 = east_mover(vc2)
+    corner_north(vc2, name2, t2, 1)
+    tr2 = vc2._tracks[name2]
+    assert tr2.man_armed_t is None
+    pe, pn, _ = vc2.poses()[name2]
+    ve, vn = vc2.velocities()[name2]
+    px2, py2 = pe + ve * DT, pn + vn * DT
+    me2, mn2 = px2, py2 + 10.0
+    g2 = math.hypot(me2, mn2)
+    hit2 = AssociationHit(None, None,
+                          _px(math.atan2(me2, mn2), math.asin(ALT / g2)),
+                          0.8, None)
+    t_meas2 = tr2.t_meas
+    vc2.update(result(t2 + 2 * DT, [], hit=hit2))
+    assert tr2.t_meas == pytest.approx(t_meas2)   # no range fused
+    assert vc2.poses()[name2][1] < mn2 - 5.0      # ghost did not jump
+
+
+def test_maneuver_q_resets_after_three_nominal_hits():
+    """The reset half (R7 §2): three NORMAL-gate accepted hits = the filter
+    re-converged after the turn — disarm to the proven straight-line filter;
+    from then on a 6 m hit is past the (restored) 5 m gate again."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    e = corner_north(vc, name, t, 3)
+    assert tr.man_armed_t == pytest.approx(t + 3 * DT)
+    assert tr.man_normal == 1                     # the arming frame's own hit
+    vc.update(result(t + 4 * DT, [det_geom("car", e, 44.0 + 4.0 * 4 * DT)]))
+    assert tr.man_armed_t is not None and tr.man_normal == 2
+    vc.update(result(t + 5 * DT, [det_geom("car", e, 44.0 + 4.0 * 5 * DT)]))
+    assert tr.man_armed_t is None                 # third normal hit: disarmed
+    pe, pn, _ = vc.poses()[name]
+    ve, vn = vc.velocities()[name]
+    px, py = pe + ve * DT, pn + vn * DT
+    t_seen = tr.t_seen
+    vc.update(result(t + 6 * DT, [det_geom("car", px, py + 6.0)]))
+    assert tr.t_seen == pytest.approx(t_seen)     # normal gates resumed
+    assert len(vc._candidates) == 1
+
+
+def test_maneuver_window_expires_after_two_seconds():
+    """The hard timeout (R7 §2): window_s without re-convergence disarms on
+    its own — a late 6 m qualifier is then refused like any other outlier."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    tr = vc._tracks[name]
+    corner_north(vc, name, t, 3)
+    armed_t = tr.man_armed_t
+    t2 = starve(vc, t + 3 * DT, armed_t + 1.8)
+    assert tr.man_armed_t is not None             # window still running
+    t2 = starve(vc, t2, armed_t + 2.2)
+    assert tr.man_armed_t is None                 # hard timeout fired
+    pe, pn, _ = vc.poses()[name]
+    ve, vn = vc.velocities()[name]
+    px, py = pe + ve * DT, pn + vn * DT
+    t_seen = tr.t_seen
+    vc.update(result(t2 + DT, [det_geom("car", px - 1.0, py + 6.0)]))
+    assert tr.t_seen == pytest.approx(t_seen)     # refused: window shut
+    assert len(vc._candidates) == 1
+
+
+def _wrap(d):
+    return (d + 180.0) % 360.0 - 180.0
+
+
+def test_armed_maneuver_rotates_velocity_through_the_turn():
+    """The payoff (R7 §2/§3): fed through the armed window, the turned
+    measurements rotate the CV velocity ~90 deg (eastbound -> northbound at
+    4 m/s) instead of ghosting straight on — the heading change is the point."""
+    vc = make_vc(config=COCO_MAN_CFG)
+    name, t = east_mover(vc)
+    ve0, vn0 = vc.velocities()[name]
+    assert ve0 > 3.5 and abs(vn0) < 0.5           # eastbound
+    corner_north(vc, name, t, 12)                 # corner + the north leg
+    ve1, vn1 = vc.velocities()[name]
+    assert vn1 > 3.0 and abs(ve1) < 1.0           # rotated to northbound
+    h0 = math.degrees(math.atan2(ve0, vn0))
+    h1 = math.degrees(math.atan2(ve1, vn1))
+    assert abs(_wrap(h1 - h0)) > 60.0
+
+
+# The corner end-to-end at fixture level (R7 §6's sub-gate shape). LowWorld
+# (3 m) puts the lap at demo ranges; the far leg's (18, 26) corner region
+# trips the projection's own 6 deg depression honesty lever (g > 28.6 m ->
+# bearing-only) — the same ground-plane degradation the demo's receding
+# boxes produced (w3-run6 §3), which is what makes the corner FATAL for the
+# default profile here: with continuous geom the CV-EKF + bearing fallback
+# re-captures any single corner at fixture level (verified).
+LAP_CORNERS = ((8.0, 16.0), (18.0, 16.0), (18.0, 26.0), (8.0, 26.0))
+
+
+def lap_points(t0=T0, legs=5, speed=4.0):
+    """Waypoints of the square lap at constant speed with instantaneous 90
+    deg corners (the demo mover's waypoint model): (t, e, n) every DT."""
+    pts = []
+    t = t0
+    for k in range(legs):
+        (e0, n0), (e1, n1) = (LAP_CORNERS[k % 4], LAP_CORNERS[(k + 1) % 4])
+        de, dn = e1 - e0, n1 - n0
+        steps = max(int(round(math.hypot(de, dn) / (speed * DT))), 1)
+        for s in range(steps):
+            f = s / steps
+            pts.append((t, e0 + f * de, n0 + f * dn))
+            t += DT
+    return pts
+
+
+def lap_corner_frames(pts):
+    """Frame indices where the heading changes (the four corners)."""
+    out = []
+    for i in range(2, len(pts)):
+        d0 = (round(pts[i - 1][1] - pts[i - 2][1], 9),
+              round(pts[i - 1][2] - pts[i - 2][2], 9))
+        d1 = (round(pts[i][1] - pts[i - 1][1], 9),
+              round(pts[i][2] - pts[i - 1][2], 9))
+        if d1 != d0:
+            out.append(i)
+    return out
+
+
+def test_coco_designated_track_survives_four_right_angle_corners_with_one_id():
+    """R7's corner sub-gate at fixture level: the 4 m/s cornering mover
+    keeps ONE contact id on the COCO profile through all four 90 deg corners
+    — never LOST, no second id born — with MEASURED recovery within 2 s of
+    each corner (the maneuver window's widen + Q inflation carry the track
+    through the degraded far corner)."""
+    pts = lap_points()
+    corners = lap_corner_frames(pts)
+    assert len(corners) == 4
+    vc = VisionContacts(LowWorld(), config=COCO_MAN_CFG)
+    name0 = None
+    health_at = {}
+    for i, (t, e, n) in enumerate(pts):
+        vc.update(result(t, [det_geom("car", e, n, alt=3.0)]))
+        if i == 1:
+            (name0,) = vc.poses()
+            vc.designate(name0)
+        if name0 is None:
+            continue
+        health_at[i] = vc.health(name0)
+        assert health_at[i] != "LOST"             # one contiguous engagement
+        assert sorted(vc.poses()) == [name0]      # same id, no re-lock birth
+        assert len(vc.all_views()) == 1
+    for i_c in corners:
+        i_chk = min(i_c + 10, len(pts) - 1)       # 2.0 s after the corner
+        assert health_at[i_chk] == "MEASURED"
+    assert vc.velocities()[name0][0] == pytest.approx(4.0, abs=0.75)
+
+
+def test_default_profile_ghosts_off_the_far_corner_and_loses_the_mover():
+    """The w3-run6 failure, replayed on the SAME lap with the default
+    (maneuverless) TrackerConfig — documents the demo-path scope of the fix:
+    the CV ghost through the degraded far corner rejects the turned
+    measurements, the 2 s grace expires, and the mover resurfaces under a
+    NEW id."""
+    pts = lap_points()
+    vc = VisionContacts(LowWorld())               # contractual defaults
+    name0 = None
+    lost_frame = None
+    for i, (t, e, n) in enumerate(pts):
+        vc.update(result(t, [det_geom("car", e, n, alt=3.0)]))
+        if i == 1:
+            (name0,) = vc.poses()
+            vc.designate(name0)
+        if name0 is not None and lost_frame is None \
+                and vc.health(name0) == "LOST":
+            lost_frame = i
+    assert lost_frame is not None                 # the corner ghost killed it
+    assert name0 not in vc.poses()                # no same-id recovery...
+    assert len(vc.poses()) == 1                   # ...a NEW id tracks the mover

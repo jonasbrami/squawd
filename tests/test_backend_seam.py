@@ -15,7 +15,7 @@ import pytest
 from agents.flight import FlightOps, make_pilot_options
 from agents.flight.backend import (BackendClient, Result, Text, ToolCall,
                                    ToolResult, agent_env, is_kimi_tier,
-                                   kimi_recipe, normalize)
+                                   is_quota_error, kimi_recipe, normalize)
 
 
 # ---------- ① seam emits typed events ----------
@@ -89,6 +89,103 @@ async def test_backend_client_streams_typed_events_from_fake_sdk():
     assert fake.prompt == "take off to 12m"
     assert [type(e) for e in evs] == [Text, ToolCall, ToolResult, Result]
     assert evs[-1].usage["output_tokens"] == 300
+
+
+# ---------- §5.5 quota instrumentation ----------
+
+def test_quota_error_classification():
+    assert is_quota_error('API Error: 429 {"error": {"type": "rate_limit_error"}}')
+    assert is_quota_error("error_during_execution: quota exhausted")
+    assert is_quota_error("429 Too Many Requests")
+    assert not is_quota_error("Failed to authenticate. API Error: 401")
+    assert not is_quota_error("airborne at 12m")
+    assert not is_quota_error(None) and not is_quota_error("")
+
+
+async def test_result_event_carries_exact_requests_timings_and_usage():
+    """§5.5: the seam stamps the run's Result with the exact inference count
+    (assistant turns), ttfa/gap_p50/wall measured at the seam, and passes the
+    Kimi-shaped usage dict (M0: input/output + cache fields) through whole."""
+    usage = {"input_tokens": 602, "output_tokens": 211,
+             "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+             "service_tier": "standard"}
+    from claude_agent_sdk import ResultMessage
+    msgs = _sdk_messages()[:-1] + [
+        ResultMessage(subtype="success", duration_ms=1000, duration_api_ms=800,
+                      is_error=False, num_turns=2, session_id="s",
+                      total_cost_usd=None, usage=usage)]
+    async with BackendClient(sdk_client=_FakeSDKClient(msgs)) as client:
+        evs = [ev async for ev in client.query("q")]
+    res = evs[-1]
+    assert res.usage == usage               # input/output/cache verbatim
+    assert res.num_turns == 2               # fallback proxy preserved
+    assert res.inference_requests == 2      # exact: two assistant turns
+    assert res.is_error is False and res.quota_errors == 0
+    assert res.ttfa_s is not None and res.ttfa_s >= 0
+    assert res.gap_p50_s is not None and res.gap_p50_s >= 0
+    assert res.wall_ms is not None and res.wall_ms >= 0
+    assert client.queries == 1
+    assert client.inference_requests == 2 and client.quota_errors == 0
+
+
+async def test_usage_absent_records_null_explicitly():
+    from claude_agent_sdk import ResultMessage
+    msgs = [ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1,
+                          is_error=False, num_turns=1, session_id="s",
+                          total_cost_usd=None, usage=None)]
+    async with BackendClient(sdk_client=_FakeSDKClient(msgs)) as client:
+        evs = [ev async for ev in client.query("q")]
+    assert evs[-1].usage is None            # recorded as null, not fabricated
+    assert evs[-1].inference_requests == 0  # exact count independent of usage
+
+
+async def test_quota_error_stream_is_classified_and_counted():
+    """A 429/quota rejection surfaced as assistant text + an error Result is
+    classified and counted on BOTH the Result event and the client."""
+    from claude_agent_sdk import (AssistantMessage, ResultMessage, TextBlock)
+    msgs = [
+        AssistantMessage(content=[TextBlock(
+            text='API Error: 429 {"error": {"type": "rate_limit_error", '
+                 '"message": "quota exhausted"}}')], model="<synthetic>"),
+        ResultMessage(subtype="error_during_execution", duration_ms=100,
+                      duration_api_ms=50, is_error=True, num_turns=1,
+                      session_id="s", total_cost_usd=None, usage=None),
+    ]
+    async with BackendClient(sdk_client=_FakeSDKClient(msgs)) as client:
+        evs = [ev async for ev in client.query("q")]
+    res = evs[-1]
+    assert isinstance(res, Result)
+    assert res.is_error is True
+    assert res.quota_errors == 1            # the 429 assistant turn, once
+    assert res.inference_requests == 1
+    assert client.quota_errors == 1
+
+
+class _RaisingSDKClient(_FakeSDKClient):
+    async def receive_response(self):
+        raise RuntimeError("HTTP 429: quota exhausted")
+        yield                                     # pragma: no cover
+
+
+async def test_quota_exception_mid_stream_is_counted_and_reraised():
+    """A quota failure that KILLS the stream (no Result event at all) is still
+    classified on the client's counter before propagating."""
+    async with BackendClient(sdk_client=_RaisingSDKClient([])) as client:
+        with pytest.raises(RuntimeError, match="429"):
+            _ = [ev async for ev in client.query("q")]
+    assert client.quota_errors == 1
+
+
+async def test_non_quota_exception_is_not_counted():
+    class Boom(_FakeSDKClient):
+        async def receive_response(self):
+            raise ConnectionError("socket closed")
+            yield                                 # pragma: no cover
+
+    async with BackendClient(sdk_client=Boom([])) as client:
+        with pytest.raises(ConnectionError):
+            _ = [ev async for ev in client.query("q")]
+    assert client.quota_errors == 0
 
 
 # ---------- ② cli_path honored / REQUIRED on the Kimi tier ----------

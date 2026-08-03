@@ -19,6 +19,24 @@ def vfov_deg(img_w: int, img_h: int, hfov_deg: float = HFOV_DEG) -> float:
         math.tan(math.radians(hfov_deg) / 2.0) * img_h / img_w))
 
 
+CAM_MOUNT_M = 0.242      # x500_depth SDF: OakD-Lite fixed level at +0.242 m
+AIM_Z_M = 0.5            # aim at the centre of a 1 m ground target
+BOTTOM_MARGIN_DEG = 3.0  # keep the aim point this far above the frame floor
+
+
+def min_pursuit_range_m(hold_alt_m: float) -> float:
+    """Radial floor (m) for a level-camera pursuit holding `hold_alt_m`: the
+    horizontal range at which the AIM_Z_M aim point sits at the frame floor
+    minus BOTTOM_MARGIN_DEG (half-vfov 21.136deg from the 640x360 / 69deg
+    camera contract). Closer in, the target drops out of frame and the
+    pursuit LOST-breaks inside its own blind cone (W3 codex R2,
+    docs/benchmarks/w3-rerun.md). Floored at the 8 m keep-out margin:
+    9/12/15/18/20/24 m at hold altitudes 3/4/5/6/6.5/8 m."""
+    dep = math.radians(vfov_deg(640, 360) / 2.0 - BOTTOM_MARGIN_DEG)
+    return max(8, math.ceil((hold_alt_m + CAM_MOUNT_M - AIM_Z_M)
+                            / math.tan(dep)))
+
+
 def pixel_to_angles(u: float, v: float, img_w: int, img_h: int,
                     hfov_deg: float = HFOV_DEG) -> tuple[float, float]:
     """(angle_x, angle_y) RADIANS of a pixel: 0 = boresight, +x = right,

@@ -84,3 +84,44 @@ def test_detector_down_beats_range_unavailable():
                         "gap_m": None},
                  contacts=contacts)
     assert overlay.hud_banner(snap) == overlay.SENSING_DEGRADED
+
+
+# ---- click hit-test (W0.3: crowd-safe, server-side, bbox authoritative) ----
+
+def _contacts(*named_boxes):
+    return [{"name": n, "cls": "car", "bbox_xyxy": b} for n, b in named_boxes]
+
+
+def test_hit_test_single_containing_box_wins():
+    s = _snap(contacts=_contacts(("vis_car_0", [10, 10, 50, 50]),
+                                 ("vis_car_1", [100, 100, 150, 150])))
+    r = overlay.hit_test(s, 30.0, 30.0, frame_stamp=100.2)
+    assert r == {"contact": "vis_car_0", "bbox_xyxy": [10, 10, 50, 50]}
+    r = overlay.hit_test(s, 50.0, 50.0, frame_stamp=100.0)   # edge inclusive
+    assert r["contact"] == "vis_car_0"
+
+
+def test_hit_test_overlapping_crowd_is_ambiguous_never_guessed():
+    s = _snap(contacts=_contacts(("vis_car_0", [10, 10, 60, 60]),
+                                 ("vis_car_1", [20, 20, 70, 70]),
+                                 ("vis_car_2", [200, 200, 250, 250])))
+    r = overlay.hit_test(s, 30.0, 30.0, frame_stamp=100.0)
+    assert r == {"contact": None, "reason": "ambiguous"}
+
+
+def test_hit_test_no_containing_box_is_a_miss():
+    s = _snap(contacts=_contacts(("vis_car_0", [10, 10, 50, 50]),
+                                 ("vis_coasting_0", None)))  # no bbox: never hit
+    assert overlay.hit_test(s, 300.0, 300.0, frame_stamp=100.0) == \
+        {"contact": None, "reason": "miss"}
+    assert overlay.hit_test(s, 30.0, 30.0, frame_stamp=100.0)["contact"] == \
+        "vis_car_0"
+
+
+def test_hit_test_stale_snapshot_is_rejected():
+    s = _snap(100.0, contacts=_contacts(("vis_car_0", [10, 10, 50, 50])))
+    assert overlay.hit_test(s, 30.0, 30.0, frame_stamp=100.6) == \
+        {"contact": None, "reason": "stale"}
+    assert overlay.hit_test(s, 30.0, 30.0, frame_stamp=None)["reason"] == "stale"
+    assert overlay.hit_test(None, 30.0, 30.0, frame_stamp=100.0)["reason"] == \
+        "stale"

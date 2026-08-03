@@ -111,6 +111,7 @@ class OnnxBackend:
                  device: str = "cpu") -> None:
         self.model_path, self.manifest_path, self.device = model_path, manifest_path, device
         self._session = None
+        self._classes: tuple = ()        # manifest "classes" table, when present
 
     def _verify(self) -> dict:
         try:
@@ -137,6 +138,10 @@ class OnnxBackend:
         except Exception as e:
             raise BackendError(f"onnx load failed: {e}")
         self._layout = manifest.get("output", {}).get("layout", "1x84x8400")
+        # class names come from the manifest's "classes" table when it ships
+        # one (coco-nano-seg-v1's 80 COCO names); the mover manifest lacks it
+        # and _decode_seg falls back to its 2-class default
+        self._classes = tuple(manifest.get("classes") or ())
         # the exported graph fixes the input size (416 for the latency budget)
         self._input_size = int(self._session.get_inputs()[0].shape[-1])
 
@@ -146,7 +151,7 @@ class OnnxBackend:
         inp, scale, pad = _letterbox(frame, size=self._input_size)
         outs = self._session.run(None, {"images": inp})
         return _decode_seg(outs, conf, scale, pad, frame.width, frame.height,
-                           self._input_size)
+                           self._input_size, names=self._classes)
 
 
 # ---- seg decode helpers (pure numpy — unit-tested without onnxruntime) ----
@@ -191,9 +196,11 @@ def _nms(boxes: "np.ndarray", scores: "np.ndarray", iou: float = 0.45):
 
 
 def _decode_seg(outs, conf: float, scale: float, pad: tuple,
-                fw: int, fh: int, net_size: int = 640) -> list[Detection]:
+                fw: int, fh: int, net_size: int = 640,
+                names: tuple = ()) -> list[Detection]:
     """YOLO-seg outputs -> Detections. outs[0]: (1, 4+nc+32, A) det head;
-    outs[1]: (1, 32, mh, mw) mask protos. Class-aware NMS."""
+    outs[1]: (1, 32, mh, mw) mask protos. Class-aware NMS. `names` is the
+    manifest's class table (empty -> the mover model's 2-class default)."""
     import numpy as np
     det, protos = outs[0][0], outs[1][0]          # (C, A), (32, mh, mw)
     n_ch = det.shape[0]
@@ -218,7 +225,7 @@ def _decode_seg(outs, conf: float, scale: float, pad: tuple,
     y2 = (boxes_cxcywh[:, 1] + boxes_cxcywh[:, 3] / 2 - pad[1]) / scale
     boxes = np.stack([x1, y1, x2, y2], 1)
     dets = []
-    names = ("target", "obstacle")             # mover-nano-seg-v1 classes
+    names = names or ("target", "obstacle")  # mover-nano-seg-v1 classes
     for c in np.unique(cls_id):
         idx = np.where(cls_id == c)[0]
         for i in _nms(boxes[idx], scores[idx]):

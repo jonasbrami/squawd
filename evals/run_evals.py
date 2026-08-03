@@ -182,7 +182,7 @@ async def main(args) -> None:
               "VisionContacts", flush=True)
     deps = Deps(world=world, bridge=bridge, cameras=cameras,
                 oracle_truth=gzposes, flight_contacts=flight_contacts,
-                detector=detector)
+                detector=detector, pipeline=pipeline)
     recorder = None
     if getattr(args, "record", None):
         from evals.filming import FrameDump

@@ -17,9 +17,12 @@ _STALE_S = 2.0
 
 class Detector:
     def __init__(self, cameras, backend, *, i: int = 0, hz: float = 5.0,
-                 conf: float = 0.45) -> None:
+                 conf: float = 0.45, tracker: str = "none") -> None:
         self._cameras, self._backend, self._i = cameras, backend, i
         self._hz, self._conf = hz, conf
+        # the designated-pursuit tracker (§6.8); "auto" has no resolver yet —
+        # none is the intended default (trackers/__init__.py)
+        self._active_tracker_name = "none" if tracker == "auto" else tracker
         self._state = INIT
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
@@ -85,7 +88,7 @@ class Detector:
                     return None
                 self._cond.wait(timeout=min(remaining, 0.5))
 
-    # ---- tracking mode + designated pursuit (dormant until M3a) ----
+    # ---- tracking mode + designated pursuit (§6.8) ----
     def configure_tracking(self, mode: TrackingMode) -> int:
         """Set ONCE at assembly (thread-safe). needs_track_ids=True runs
         backend.infer_tracked() for EVERY frame (always-on, like the lab).
@@ -176,4 +179,4 @@ class Detector:
 
     def _tracker_name(self) -> str:
         with self._lock:
-            return getattr(self, "_active_tracker_name", "none")
+            return self._active_tracker_name

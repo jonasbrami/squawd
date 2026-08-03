@@ -33,13 +33,20 @@ def _err(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
-def _handler(name, registry, fn):
+def _handler(name, registry, fn, guard=None):
     """Registration + the ICD §9 error mapping, IN ORDER (CancelledError is
-    BaseException — caught first, never by `except Exception`)."""
+    BaseException — caught first, never by `except Exception`). The W3a
+    `guard` (arbiter.guard_llm) runs BEFORE register(): while the operator
+    lease or the estop holds, the tool is rejected OPERATOR_ACTIVE and never
+    touches the slot. The clear is generation-guarded so a preempted tool's
+    finally can never steal a newer owner's slot (the W0.4 race)."""
     async def h(args):
-        if registry is not None:
-            registry.register(asyncio.current_task())
+        gen = None
         try:
+            if guard is not None:
+                guard(name)
+            if registry is not None:
+                gen = registry.register(asyncio.current_task())
             return await fn(args)
         except asyncio.CancelledError:
             return _err(f"ESTOPPED: operator halted {name}")
@@ -51,8 +58,8 @@ def _handler(name, registry, fn):
             traceback.print_exc()
             return _err(f"INTERNAL: {type(e).__name__}: {e}")
         finally:
-            if registry is not None:
-                registry.clear()
+            if gen is not None:                 # only the slot's owner clears
+                registry.clear(gen)
     return h
 
 
@@ -113,10 +120,11 @@ PILOT_SYSTEM_PROMPT = (
 )
 
 
-def _pilot_server(ops: FlightOps, detect_text, report, registry):
-    """The 12 M1 tools (13 with `detect`) bound to one FlightOps."""
+def _pilot_server(ops: FlightOps, detect_text, report, registry, guard=None):
+    """The 12 M1 tools (13 with `detect`) bound to one FlightOps. `guard` is
+    the W3a arbiter's guard_llm — see _handler."""
     name = "drone_0"
-    T = lambda n, fn: _handler(n, registry, fn)
+    T = lambda n, fn: _handler(n, registry, fn, guard)
 
     async def _take_off(args):
         alt = float(args.get("altitude", 10.0))
@@ -168,9 +176,16 @@ def _pilot_server(ops: FlightOps, detect_text, report, registry):
         return _err(text) if err else _ok(text)
 
     async def _track(args):
+        alt = args.get("alt")
+        if alt is not None and ops.envelope:
+            # M6 commitment safeguard: an EXPLICIT pursuit altitude is
+            # envelope-checked at the boundary (same soft pre-check as
+            # take_off/set_speed); an omitted alt passes None through —
+            # FlightOps.track then holds the CURRENT altitude.
+            envmod.check_track(ops.envelope, float(alt))
         return _ok(await ops.track(
             args.get("target", ""), args.get("mode", "shadow"),
-            args.get("alt", 12.0), args.get("duration_s", 60.0),
+            alt, args.get("duration_s", 60.0),
             args.get("within_m", 15.0), args.get("speed", 12.0),
             args.get("standoff_east", 0.0), args.get("standoff_north", 0.0)))
 
@@ -238,7 +253,9 @@ def _pilot_server(ops: FlightOps, detect_text, report, registry):
              "repeatedly first — for a fleeing or deadline target, take off and "
              "track IMMEDIATELY. Blocks up to duration_s (max 120s) and reports "
              "min/mean gap, best contiguous dwell within within_m, and the "
-             "target's measured velocity. You must be airborne first (take_off).",
+             "target's measured velocity. You must be airborne first (take_off). "
+             "alt defaults to your CURRENT altitude — pass it only for a "
+             "deliberate altitude change (the safety ceiling still applies).",
              _schema({"target": _S, "mode": _S, "alt": _N, "duration_s": _N,
                       "within_m": _N, "speed": _N, "standoff_east": _N,
                       "standoff_north": _N}, ["target"]))(T("track", _track)),
@@ -261,10 +278,12 @@ def _pilot_server(ops: FlightOps, detect_text, report, registry):
 
 def make_pilot_options(ops: FlightOps, *, detect_text=None, report, registry=None,
                        env=None, model=None, cli_path=None,
-                       extra_prompt=None) -> ClaudeAgentOptions:
+                       extra_prompt=None, guard=None) -> ClaudeAgentOptions:
     """ICD §5.5: bind THE ONE FlightOps (shared with the estop arbiter).
     extra_prompt: a validated strategy snippet appended to the system prompt
     (evals A/B cells only — activation requires measured lift, §13 item 6).
+    guard: the W3a CommandArbiter's guard_llm — every tool call is rejected
+    OPERATOR_ACTIVE while the operator lease/estop holds.
 
     Kimi tier (design §5.2, R5): the SDK's bundled CLI ignores
     ANTHROPIC_BASE_URL (#677), so `cli_path=shutil.which("claude")` is
@@ -280,7 +299,7 @@ def make_pilot_options(ops: FlightOps, *, detect_text=None, report, registry=Non
                 "agent would silently hit Anthropic instead of "
                 "api.kimi.com/coding. Install the CLI (npm i -g "
                 "@anthropic-ai/claude-code) or pass cli_path explicitly.")
-    server, allowed = _pilot_server(ops, detect_text, report, registry)
+    server, allowed = _pilot_server(ops, detect_text, report, registry, guard)
     prompt = PILOT_SYSTEM_PROMPT + (f"\n\n{extra_prompt}" if extra_prompt else "")
     return ClaudeAgentOptions(
         mcp_servers={"pilot": server},

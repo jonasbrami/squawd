@@ -252,3 +252,165 @@ def test_ws_detections_relays_latest_then_updates_verbatim():
             text = json.dumps(updated)
             br.set_latest("/pilot/detections", text)    # next publication
             assert ws.receive_text() == text            # verbatim, byte for byte
+
+
+def test_ws_detections_relays_det_masks_verbatim():
+    """W2 (design §4): a snapshot whose dets carry mask RLE relays byte for
+    byte — the overlay's mask drawing reads exactly what the pilot sent."""
+    snap = json.loads(SNAP)
+    snap["dets"] = [{"cls": "car", "conf": 0.7, "xyxy": [10, 20, 60, 80],
+                     "tid": None,
+                     "mask": {"rle": "gICAwP8=", "w": 50, "h": 60}}]
+    text = json.dumps(snap)
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", text)
+    with TestClient(_app(br)) as client:
+        with client.websocket_connect("/ws_detections") as ws:
+            assert ws.receive_text() == text
+
+
+# ---- /api/lock (W0.3: server-side crowd-safe hit-test -> /pilot/cmd) ----
+
+def _lock_snap(stamp=42.0, named_boxes=(("vis_car_0", [10, 10, 50, 50]),)):
+    s = json.loads(SNAP)
+    s["sim_stamp"] = stamp
+    s["contacts"] = [{"name": n, "cls": "car", "bbox_xyxy": b}
+                     for n, b in named_boxes]
+    return json.dumps(s)
+
+
+def _lock_app(br, stamp=42.1):
+    cams = FakeCameras(SimpleNamespace(seq=1, sim_stamp=stamp))
+    return _app(br, cams)
+
+
+def test_lock_unique_hit_publishes_one_pilot_cmd():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _lock_snap())
+    with TestClient(_lock_app(br)) as client:
+        r = client.post("/api/lock", json={"x": 30, "y": 30})
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "contact": "vis_car_0",
+                            "bbox_xyxy": [10, 10, 50, 50]}
+    assert br.published == [
+        ("/pilot/cmd", '{"op": "lock", "contact": "vis_car_0"}', "CMD")]
+
+
+def test_lock_ambiguous_crowd_is_409_and_publishes_nothing():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _lock_snap(named_boxes=(
+        ("vis_car_0", [10, 10, 60, 60]), ("vis_car_1", [20, 20, 70, 70]))))
+    with TestClient(_lock_app(br)) as client:
+        r = client.post("/api/lock", json={"x": 30, "y": 30})
+        assert r.status_code == 409
+        assert r.json() == {"ok": False, "reason": "ambiguous"}
+    assert br.published == []
+
+
+def test_lock_miss_is_409_and_publishes_nothing():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _lock_snap())
+    with TestClient(_lock_app(br)) as client:
+        r = client.post("/api/lock", json={"x": 300, "y": 300})
+        assert r.status_code == 409
+        assert r.json() == {"ok": False, "reason": "miss"}
+    assert br.published == []
+
+
+def test_lock_stale_snapshot_is_409_and_publishes_nothing():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _lock_snap(stamp=40.0))  # 2.1 s old
+    with TestClient(_lock_app(br)) as client:
+        r = client.post("/api/lock", json={"x": 30, "y": 30})
+        assert r.status_code == 409
+        assert r.json() == {"ok": False, "reason": "stale"}
+    assert br.published == []
+
+
+def test_lock_without_coordinates_is_400():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _lock_snap())
+    with TestClient(_lock_app(br)) as client:
+        assert client.post("/api/lock", json={"x": 30}).status_code == 400
+        assert client.post("/api/lock", json={}).status_code == 400
+    assert br.published == []
+
+
+# ---- /api/cmd (W3b: validated locked-object ops -> /pilot/cmd verbatim) ----
+
+def test_cmd_each_valid_op_publishes_once_verbatim():
+    br = FakeBridge()
+    ops = [
+        {"op": "lock", "contact": "vis_car_0"},
+        {"op": "orbit", "contact": "vis_car_0", "radius_m": 15, "rate_dps": 15},
+        {"op": "standoff", "contact": "vis_car_0", "range_m": 12.5},
+        {"op": "stop"},
+        {"op": "resume", "contact": "vis_car_0"},
+    ]
+    with TestClient(_app(br)) as client:
+        for op in ops:
+            r = client.post("/api/cmd", json=op)
+            assert r.status_code == 200
+            assert r.json() == {"ok": True, "op": op["op"]}
+    assert br.published == [("/pilot/cmd", json.dumps(op), "CMD") for op in ops]
+
+
+def test_cmd_accepts_bound_edges():
+    br = FakeBridge()
+    with TestClient(_app(br)) as client:
+        assert client.post("/api/cmd", json={"op": "orbit", "contact": "c",
+                           "radius_m": 8, "rate_dps": 2}).status_code == 200
+        assert client.post("/api/cmd", json={"op": "orbit", "contact": "c",
+                           "radius_m": 40, "rate_dps": 45}).status_code == 200
+        assert client.post("/api/cmd", json={"op": "standoff", "contact": "c",
+                           "range_m": 40}).status_code == 200
+    assert len(br.published) == 3
+
+
+def test_cmd_invalid_ops_are_400_and_publish_nothing():
+    br = FakeBridge()
+    bad = [
+        {},                                                      # no op
+        {"op": "dance"},                                         # unknown op
+        {"op": "orbit", "contact": "c", "rate_dps": 15},         # no radius
+        {"op": "orbit", "contact": "c", "radius_m": 15},         # no rate
+        {"op": "standoff", "contact": "c"},                      # no range
+        {"op": "resume"},                                        # no contact
+        {"op": "orbit", "contact": "  ", "radius_m": 15, "rate_dps": 15},
+        {"op": "orbit", "contact": "c", "radius_m": 7, "rate_dps": 15},
+        {"op": "orbit", "contact": "c", "radius_m": 41, "rate_dps": 15},
+        {"op": "orbit", "contact": "c", "radius_m": 15, "rate_dps": 1},
+        {"op": "orbit", "contact": "c", "radius_m": 15, "rate_dps": 46},
+        {"op": "standoff", "contact": "c", "range_m": 7},
+        {"op": "standoff", "contact": "c", "range_m": 41},
+        {"op": "orbit", "contact": "c", "radius_m": "15", "rate_dps": 15},
+        {"op": "orbit", "contact": "c", "radius_m": True, "rate_dps": 15},
+        ["not", "an", "object"],
+    ]
+    with TestClient(_app(br)) as client:
+        for op in bad:
+            r = client.post("/api/cmd", json=op)
+            assert r.status_code == 400, op
+            assert r.json()["ok"] is False
+        r = client.post("/api/cmd", content="{not json",
+                        headers={"Content-Type": "application/json"})
+        assert r.status_code == 400
+    assert br.published == []
+
+
+# ---- ops-bar rendered defaults (W3 codex R4: the H=4 m demo geometry) ----
+
+def test_index_renders_r4_ops_bar_defaults():
+    """R4 pin: the served cockpit stages the H=4 m geometry — the orbit
+    stepper renders R 15 m and sends 15 m / 8 dps, and Approach/Back-off
+    step ±3 m inside the 14-20 m stand-off band (R_min(4)=12, shadow ring
+    14; never below the floor), a baseline-less click sending the R4
+    demonstration pair 14 m / 18 m."""
+    br = FakeBridge()
+    with TestClient(_app(br)) as client:
+        html = client.get("/").text
+    assert 'id="op-rval">R 15 m</span>' in html
+    assert "orbitR: 15," in html
+    assert "radius_m: S.orbitR, rate_dps: 8" in html
+    assert "clamp((S.gap ?? 17) - 3, 14, 20)" in html
+    assert "clamp((S.gap ?? 15) + 3, 14, 20)" in html

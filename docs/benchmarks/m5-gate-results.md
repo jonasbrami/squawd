@@ -99,9 +99,31 @@ container age, not at boot).
 
 ## Single-drone N=1 regression (dynamic ladder, truth-fed)
 
-_NOT RUN — sim window consumed by the perceive-gate forensics (5 attempts +
-3 sim relaunches). The truth-fed path shares the exact code the M3a gate ran
-(Deps default `flight_contacts=gzposes`); queued for the next window._
+**RUN 2026-07-28 — regression found → codex-reviewed → fixed → validated →
+confirmed.**
+
+- First run (`evals/out/m5_truth_regression_20260728{,_retry}/`): 8/9 cells
+  matched baseline; **d2_shadow pilot lane regressed** — `dwell_moving`
+  10.5 s run-1 / 41.6 s fresh-container retry vs 45 s gate (baseline 68.1 s,
+  2026-07-06). Truth-fed bypasses perception ⇒ pursuit-side regression.
+- Codex review (`docs/benchmarks/d2-regression-review-codex.md`): culprit =
+  the `_shp` trajectory shaper in `agents/flight/ops.py` (discards
+  `control_ref()`'s direct shadow reference; a 1 m/s² accel-limited carrot ⇒
+  ~7–10 s lag on the 3.5 m/s rover) + the beam-geometry altitude profile
+  wrongly applied to truth-fed contacts (no `observation()` ⇒ descent to
+  ~3.8 m despite alt=12).
+- Fix (iteration 1, first attempt): `beam_capable` gate — truth-fed shadow
+  streams the direct reference at commanded alt; camera-fed M3b path
+  byte-identical. ICD tests in `tests/test_track_ops.py` (truth-shadow
+  direct-reference + ≥45 s dwell fixture; beam-capable branch preserved).
+  Suite 509 green.
+- Fix validation (`evals/out/m5_d2_fix1_20260728/`): **dwell 69.1 s vs 45
+  gate** (baseline 68.1 s); null lane still fails correctly.
+- Full-ladder re-confirmation (`evals/out/m5_d1d5_confirm_20260728/`): **all
+  9 cells match pre-M5 behavior** — pass/fail semantics, step counts, and
+  per-check outcomes identical to the composite baseline
+  (`pilot_dynamic/dyn_pilot_gate2` for d1/d3/d5, `pilot_track/dyn` for
+  d2/d4). **M5 CLOSED.**
 
 ## Strategy A/B demo (`intercept-lead`)
 

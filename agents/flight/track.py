@@ -13,6 +13,19 @@ CTRL_HZ = 10.0
 MAX_DURATION_S = 120.0
 MAX_SPEED_MPS = 12.0
 V_EMA_ALPHA = 0.35     # EMA weight of the newest finite-difference sample
+MIN_ORBIT_RADIUS_M = 8.0   # the 7 m keep-out bubble (ops.py track loop) + margin
+
+
+class OrbitPhase:
+    """Mutable θ state for mode="orbit" (control_ref itself stays stateless
+    per tick). θ initializes on the FIRST tick from the drone's CURRENT
+    relative bearing to the target — no phase jump — then advances
+    ω/CTRL_HZ per tick, the sign of rate_dps picking the direction."""
+
+    def __init__(self, radius_m: float, rate_dps: float) -> None:
+        self.radius = float(radius_m)
+        self.omega = math.radians(float(rate_dps))
+        self.theta = None                    # rad; None until the first tick
 
 
 class TargetEstimator:
@@ -79,17 +92,41 @@ def intercept_t_go(r_e, r_n, v_e, v_n, s):
 
 
 def control_ref(mode, me_e, me_n, tgt_e, tgt_n, est, speed,
-                standoff_e=0.0, standoff_n=0.0):
+                standoff_e=0.0, standoff_n=0.0, range_m=None, orbit=None):
     """One guidance tick -> (ref_e, ref_n, ff_ve, ff_vn).
 
     shadow:    ref = target + standoff, feedforward = target velocity
                (PX4's outer P closes the residual -> PD on a moving reference).
+               With range_m (W3a stand-off) the offset is RADIAL instead:
+               ref = tgt + range_m·(me−tgt)/|me−tgt|, re-evaluated per tick —
+               a radial hold on the current bearing, NOT the ω=0 degenerate
+               orbit case.
+    orbit:     ref = tgt + radius·(cosθ, sinθ) with θ carried by an OrbitPhase
+               (initialized from the drone's current relative bearing, then
+               advanced ω/CTRL_HZ per tick); feedforward = the reference's
+               tangential velocity radius·ω·(−sinθ, cosθ) + target velocity,
+               so PX4's cascade tracks the circling reference without lag.
     intercept: ref = closed-form lead point, feedforward = speed toward it
                (fire-control geometry recomputed every tick; falls back to a
                full-speed tail-chase while the velocity estimate warms up or
                when no root exists)."""
     if mode == "shadow":
+        if range_m is not None:
+            de, dn = me_e - tgt_e, me_n - tgt_n
+            d = math.hypot(de, dn)
+            if d > 1e-6:
+                return (tgt_e + range_m * de / d, tgt_n + range_m * dn / d,
+                        est.ve, est.vn)
         return (tgt_e + standoff_e, tgt_n + standoff_n, est.ve, est.vn)
+    if mode == "orbit":
+        if orbit.theta is None:
+            orbit.theta = math.atan2(me_n - tgt_n, me_e - tgt_e)
+        else:
+            orbit.theta += orbit.omega / CTRL_HZ
+        c, s = math.cos(orbit.theta), math.sin(orbit.theta)
+        return (tgt_e + orbit.radius * c, tgt_n + orbit.radius * s,
+                est.ve - orbit.radius * orbit.omega * s,
+                est.vn + orbit.radius * orbit.omega * c)
     t_go = (intercept_t_go(tgt_e - me_e, tgt_n - me_n, est.ve, est.vn, speed)
             if est.ready else None)
     if t_go is None:

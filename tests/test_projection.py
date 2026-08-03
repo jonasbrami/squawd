@@ -71,3 +71,15 @@ def test_footprint_in_region_disc_vs_box():
     assert P.footprint_in_region((50, 50), 10, (0, 0, 100, 100))
     assert not P.footprint_in_region((15, 50), 20, (0, 0, 100, 100))  # spills left
     assert not P.footprint_in_region((150, 50), 5, (0, 0, 100, 100))
+
+
+def test_min_pursuit_range_m_matches_the_r2_table():
+    """W3 codex R2 geometry law: R_min(H) = max(8, ceil((H + CAM_MOUNT_M -
+    AIM_Z_M) / tan(half-vfov - BOTTOM_MARGIN_DEG))) with the repo's own
+    640x360 / 69deg camera contract (half-vfov 21.136deg)."""
+    for alt, r_min in ((3.0, 9), (4.0, 12), (5.0, 15), (6.0, 18), (6.5, 20),
+                       (8.0, 24)):
+        assert P.min_pursuit_range_m(alt) == r_min
+    # the 8 m keep-out margin is the absolute floor at low hold altitudes
+    assert P.min_pursuit_range_m(2.5) == 8
+    assert P.min_pursuit_range_m(1.0) == 8

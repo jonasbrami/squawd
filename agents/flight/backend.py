@@ -1,11 +1,17 @@
 """Backend seam (design §6.5) — THE one module coupled to claude-agent-sdk's
 client + message types. Everything downstream (the pilot loop, the eval
 runner's Trace.observe) consumes the NORMALIZED typed event stream defined
-here — `Text / ToolCall / ToolResult / Result(usage)` — never SDK imports. A
-future backend swap to the designated fallback harness (kimi-agent-sdk,
-Apache-2.0, https://github.com/MoonshotAI/kimi-agent-sdk — pivot triggers in
-§6.5) touches THIS file only; the MCP tool binding in
+here — `Text / ToolCall / ToolResult / Result(usage + §5.5 quota metrics)` —
+never SDK imports. A future backend swap to the designated fallback harness
+(kimi-agent-sdk, Apache-2.0, https://github.com/MoonshotAI/kimi-agent-sdk —
+pivot triggers in §6.5) touches THIS file only; the MCP tool binding in
 `agents/flight/tools.py` is the other half of the seam (`make_pilot_options`).
+
+§5.5 quota instrumentation (M6): `BackendClient.query` measures what the
+subscription backend actually costs — top-level query count, exact inference
+requests (assistant turns; `num_turns` stays the fallback proxy), 429/quota
+error classification (`is_quota_error`), and ttfa/gap_p50/wall timings —
+stamped per run on the Result event, accumulated on the client.
 
 ToS confirmation (owner, documented at M6, 2026-07-22): the Kimi Code
 subscription is gated by terms AND a UA whitelist limited to Kimi CLI /
@@ -26,7 +32,10 @@ so on the Kimi tier `cli_path=shutil.which("claude")` is REQUIRED — enforced
 in `make_pilot_options` (agents/flight/tools.py), not left to callers.
 """
 import os
+import re
 import shutil
+import statistics
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -36,7 +45,10 @@ from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage,
                               UserMessage)
 
 KIMI_BASE_URL = "https://api.kimi.com/coding/"
-KIMI_MODELS = frozenset({"kimi-for-coding", "k3"})
+# All model IDs the subscription endpoint serves (GET /v1/models, verified
+# 2026-08-02): K2.7 Code standard/highspeed + K3 1M/256k.
+KIMI_MODELS = frozenset({"kimi-for-coding", "kimi-for-coding-highspeed",
+                         "k3", "k3-256k"})
 
 
 # ---- normalized typed event stream (design §6.5) ----
@@ -67,13 +79,33 @@ class ToolResult:
 
 @dataclass
 class Result:
-    """End-of-run usage/cost. On a non-Anthropic backend `cost_usd` is
-    meaningless (null/zero/a Claude-price estimate) — evals report quota
-    metrics (request count, tokens, latency) per §5.5 instead."""
+    """End-of-run usage/cost + the §5.5 quota instrumentation. On a
+    non-Anthropic backend `cost_usd` is meaningless (null/zero/a Claude-price
+    estimate) — evals report quota metrics (request count, tokens, latency)
+    per §5.5 instead. Fields:
+      usage              — input/output/cache token counts verbatim from the
+                           SDK (Kimi populates them, M0); explicitly None when
+                           the backend reports nothing (recorded as null)
+      num_turns          — the SDK-reported turn count; the FALLBACK proxy for
+                           inference requests
+      inference_requests — the EXACT inference-request count (assistant turns
+                           observed on the stream; stamped by BackendClient)
+      is_error           — the SDK's end-of-run error status
+      quota_errors       — API/quota rejections (429 / quota-exhausted /
+                           rate-limit) classified during this run
+      ttfa_s/gap_p50_s/wall_ms — stream timings measured at the seam (time to
+                           first activity, median inter-message gap, total
+                           wall time); api_ms stays the SDK's API latency"""
     usage: dict | None = None
     cost_usd: float | None = None
     num_turns: int | None = None
     api_ms: int | None = None
+    is_error: bool = False
+    inference_requests: int | None = None
+    quota_errors: int = 0
+    ttfa_s: float | None = None
+    gap_p50_s: float | None = None
+    wall_ms: int | None = None
 
 
 Event = Text | ToolCall | ToolResult | Result
@@ -97,9 +129,25 @@ def normalize(msg) -> list[Event]:
                            is_error=bool(b.is_error))
                 for b in msg.content if isinstance(b, ToolResultBlock)]
     if isinstance(msg, ResultMessage):
-        return [Result(usage=msg.usage, cost_usd=msg.total_cost_usd,
-                       num_turns=msg.num_turns, api_ms=msg.duration_api_ms)]
+        return [Result(usage=msg.usage if msg.usage else None,
+                       cost_usd=msg.total_cost_usd,
+                       num_turns=msg.num_turns, api_ms=msg.duration_api_ms,
+                       is_error=bool(msg.is_error))]
     return []
+
+
+# ---- §5.5 quota-error classification ----
+
+_QUOTA_RE = re.compile(
+    r"\b429\b|quota|rate.?limit|too many requests|insufficient.{0,16}credit",
+    re.IGNORECASE)
+
+
+def is_quota_error(text: str | None) -> bool:
+    """429 / quota-exhausted / rate-limit phrasing in SDK-surfaced error text
+    (assistant error messages, error subtypes, raised exceptions) — the
+    subscription backend's real failure mode, counted per §5.5."""
+    return bool(text) and bool(_QUOTA_RE.search(text))
 
 
 class BackendClient:
@@ -114,6 +162,11 @@ class BackendClient:
         self.options = options     # exposed for introspection (tests, transcripts)
         self._client = sdk_client if sdk_client is not None \
             else ClaudeSDKClient(options=options)
+        # §5.5 cumulative quota counters across all queries on this client
+        # (the per-run values ride each Result event).
+        self.queries = 0
+        self.inference_requests = 0
+        self.quota_errors = 0
 
     async def __aenter__(self):
         await self._client.__aenter__()
@@ -123,10 +176,46 @@ class BackendClient:
         return await self._client.__aexit__(exc_type, exc, tb)
 
     async def query(self, prompt: str) -> AsyncIterator[Event]:
+        """One top-level query. Measures the §5.5 run metrics at the seam —
+        exact inference-request count (assistant turns), quota-error
+        classification, ttfa/gap_p50/wall timings — and stamps them on the
+        run's Result event; the client counters accumulate across queries.
+        A raised stream exception is still classified (429/quota) before
+        re-raising, so quota failures are counted even without a Result."""
+        self.queries += 1
+        t0 = time.monotonic()
+        arrivals: list[float] = []
+        n_infer = 0
+        n_quota = 0
         await self._client.query(prompt)
-        async for msg in self._client.receive_response():
-            for ev in normalize(msg):
-                yield ev
+        try:
+            async for msg in self._client.receive_response():
+                arrivals.append(time.monotonic())
+                if isinstance(msg, AssistantMessage):
+                    n_infer += 1
+                    if any(isinstance(b, TextBlock) and is_quota_error(b.text)
+                           for b in msg.content):
+                        n_quota += 1
+                elif isinstance(msg, ResultMessage) and msg.is_error \
+                        and is_quota_error(getattr(msg, "subtype", None)):
+                    n_quota += 1
+                for ev in normalize(msg):
+                    if isinstance(ev, Result):
+                        gaps = [b - a for a, b in zip(arrivals, arrivals[1:])]
+                        ev.inference_requests = n_infer
+                        ev.quota_errors = n_quota
+                        ev.ttfa_s = round(arrivals[0] - t0, 3)
+                        ev.gap_p50_s = round(statistics.median(gaps), 3) \
+                            if gaps else 0.0
+                        ev.wall_ms = int((arrivals[-1] - t0) * 1000)
+                    yield ev
+        except Exception as e:
+            if is_quota_error(str(e)):
+                n_quota += 1
+            raise
+        finally:
+            self.inference_requests += n_infer
+            self.quota_errors += n_quota
 
 
 # ---- env recipes (design §5.2/§5.3) — the single source for agents AND evals
@@ -146,6 +235,11 @@ def kimi_recipe() -> dict:
         "CLAUDE_CODE_SUBAGENT_MODEL": "kimi-for-coding",
         "ENABLE_TOOL_SEARCH": "false",          # endpoint lacks tool search
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144",
+        # K3 minimal thinking for fast pilot reactions (owner directive
+        # 2026-08-02). Kimi maps Claude Code effort low->low; do NOT disable
+        # thinking outright — the endpoint routes that to K2.6, not K3
+        # (kimi.com/code/docs third-party-agents). Override via env for evals.
+        "CLAUDE_CODE_EFFORT_LEVEL": os.environ.get("SQUAWD_KIMI_EFFORT", "low"),
     }
 
 

@@ -106,11 +106,14 @@ def test_step_budget_check_matches_budget_everywhere():
 def test_perceive_tasks_load_with_dual_gates_and_identity_check():
     """Perceive ladder (M5): true target + visually distinct decoys in the
     perceive world; every rung grades the IDENTIFICATION act (TargetLockEvent
-    path) plus a mover shadow, and carries both pilot baselines."""
+    path) plus a mover shadow, and carries both pilot baselines. The glob is
+    the p*-RUNGS: s6_kimi_spike is an M6 backend smoke (no baselines by
+    design) with its own loader test below — the dual gate applies to every
+    ladder rung, current and future."""
     import glob
     from evals.spec import load_task
 
-    paths = sorted(glob.glob("evals/tasks/perceive/*.yaml"))
+    paths = sorted(glob.glob("evals/tasks/perceive/p*.yaml"))
     assert len(paths) == 2   # p1_identify + p2_crossing (2026-07-22)
     for p in paths:
         t = load_task(p)
@@ -122,3 +125,19 @@ def test_perceive_tasks_load_with_dual_gates_and_identity_check():
         assert id_checks and id_checks[0].get("truth") == "mov_true", p
         assert any(c["check"] == "dwell_moving" and c.get("mover") == "mov_true"
                    for c in t.oracle), p
+
+
+def test_s6_kimi_spike_loads_as_a_four_step_perceive_smoke():
+    """M6 S6 (design §5.6): the first live Kimi cell — exactly take_off ->
+    scan -> detect -> report on the perceive world, graded alive + the step
+    budget. A backend smoke, NOT a ladder rung (no pilot baselines)."""
+    from evals.spec import load_task
+
+    t = load_task("evals/tasks/perceive/s6_kimi_spike.yaml")
+    assert t.id == "s6_kimi_spike"
+    assert t.setup.world == "perceive" and t.setup.n_drones == 1
+    assert t.target_layer == "single_drone" and t.suite == "perceive"
+    assert t.budget.max_steps == 4
+    assert [c["check"] for c in t.oracle] == ["alive", "within_step_budget"]
+    budget_chk = t.oracle[1]
+    assert int(budget_chk["max_steps"]) == t.budget.max_steps

@@ -62,10 +62,13 @@ def _summarize_result(content, cap: int = 500) -> str:
 
 class Trace:
     """Counts steps AND records the full per-cell transcript: every tool call with
-    args/result/duration, agent text between calls, and end-of-run usage/cost. All
-    of it comes off the backend seam's typed event stream (design §6.5) that
-    `_drive` already iterates — tool choice per tier is thereby observed, not
-    inferred from step counts, and no SDK message type reaches this file."""
+    args/result/duration, agent text between calls, and end-of-run usage/cost —
+    plus the §5.5 quota metrics the backend seam stamps on the Result event
+    (exact inference requests, classified quota errors, ttfa/gap_p50/wall
+    timings). All of it comes off the backend seam's typed event stream (design
+    §6.5) that `_drive` already iterates — tool choice per tier is thereby
+    observed, not inferred from step counts, and no SDK message type reaches
+    this file."""
 
     def __init__(self) -> None:
         self.steps = 0
@@ -77,6 +80,12 @@ class Trace:
         self.cost_usd: float | None = None
         self.num_turns: int | None = None
         self.api_ms: int | None = None
+        # §5.5 quota metrics (stamped on the Result event by BackendClient)
+        self.inference_requests: int | None = None
+        self.quota_errors: int = 0
+        self.ttfa_s: float | None = None
+        self.gap_p50_s: float | None = None
+        self.wall_ms: int | None = None
         self.meta: dict = {}   # first-class side-channel; e.g. commander's drone_steps
 
     def observe(self, ev, now: float) -> None:
@@ -106,11 +115,20 @@ class Trace:
             self.cost_usd = ev.cost_usd
             self.num_turns = ev.num_turns
             self.api_ms = ev.api_ms
+            self.inference_requests = ev.inference_requests
+            self.quota_errors = ev.quota_errors
+            self.ttfa_s = ev.ttfa_s
+            self.gap_p50_s = ev.gap_p50_s
+            self.wall_ms = ev.wall_ms
 
     def transcript(self, t0_epoch: float) -> dict:
         return {"model": self.model, "t0_epoch": round(t0_epoch, 2),
                 "usage": self.usage, "cost_usd": self.cost_usd,
                 "num_turns": self.num_turns, "api_ms": self.api_ms,
+                "inference_requests": self.inference_requests,
+                "quota_errors": self.quota_errors,
+                "ttfa_s": self.ttfa_s, "gap_p50_s": self.gap_p50_s,
+                "wall_ms": self.wall_ms,
                 "events": self.events}
 
 
@@ -164,13 +182,16 @@ class Deps:
     SAMPLER + ORACLE ONLY — it is ground truth and must never reach the flight
     path. `flight_contacts` is the ContactProvider the flight tools read
     (VisionContacts camera-fed, or GzPoses for the explicit truth-fed control);
-    `detector` is the live Detector when cells run camera-fed."""
+    `detector` is the live Detector when cells run camera-fed. `pipeline` is
+    the live VisionPipeline on the vision lane (None on the truth lane) — it
+    feeds the eval client's `detect` tool exactly like the production pilot."""
     world: object
     bridge: object
     cameras: object
     oracle_truth: object = None    # GzPoses — sampler + oracle ONLY
     flight_contacts: object = None # ContactProvider fed to FlightOps
     detector: object = None
+    pipeline: object = None        # VisionPipeline — detect tool feed (M6)
 
     @property
     def gzposes(self):
@@ -236,12 +257,16 @@ class FleetHarness:
         NEVER to `deps.oracle_truth` (the Deps split, design §3.8: truth is for
         the sampler/oracle only; the truth-fed control is an explicit
         `flight_contacts = gzposes` choice made by run_evals, not by this
-        harness). Deferred imports: mavsdk-free unit tests can call this with
+        harness) — and carrying the SAME Envelope the production pilot builds
+        (agents/pilot/run.py), so eval cells fly with envelope parity (M6).
+        Deferred imports: mavsdk-free unit tests can call this with
         fake agents in place."""
+        from agents.flight.envelope import Envelope
         from agents.flight.ops import FlightOps
         return FlightOps(self._agents[0]._system, self._deps.world,
                          self._deps.bridge, 0, 1,
-                         contacts=self._deps.flight_contacts)
+                         contacts=self._deps.flight_contacts,
+                         envelope=Envelope())
 
     def client_for(self, model, n_drones: int = 1):
         """A fresh BackendClient (the §6.5 seam) bound to the shared System(s),
@@ -258,8 +283,16 @@ class FleetHarness:
                              "(single-drone rebuild); use n_drones=1")
         from agents.flight.backend import BackendClient, kimi_recipe
         from agents.flight.tools import make_pilot_options
+        from agents.pilot.detect_text import make_detect_text
+        # detect wired exactly like the production pilot (agents/pilot/run.py):
+        # the live VisionPipeline feeds make_detect_text; no pipeline (the
+        # truth-fed lane / perception down) -> detect_text None -> the detect
+        # tool is simply not registered (make_pilot_options guard).
+        detect = (make_detect_text(self._deps.world, self._deps.bridge,
+                                   self._deps.pipeline)
+                  if self._deps.pipeline is not None else None)
         opts = make_pilot_options(
-            self._make_ops(), report=lambda _m: None,
+            self._make_ops(), detect_text=detect, report=lambda _m: None,
             env=(kimi_recipe() if model in KIMI_MODELS else None), model=model,
             extra_prompt=self.prompt_append)
         return BackendClient(opts)

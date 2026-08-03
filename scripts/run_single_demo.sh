@@ -44,11 +44,18 @@ case "$RENDER_BACKEND" in
   *)      GPU_ARGS=(-e RENDER_BACKEND=cpu -e PX4_MODEL=gz_x500) ;;
 esac
 
+# W2 (design §4): the demo world runs the general COCO detector at 640 by
+# default (p50 39.6 ms, inside the 10 Hz budget); other worlds keep the
+# 2-class mover model. VISION_MODEL env always wins. The ONNX graph fixes its
+# own input size, so no imgsz flag flows — OnnxBackend reads it at load.
+VISION_MODEL_DEFAULT="mover-nano-seg-v1.onnx"
+[ "$WORLD" = "demo" ] && VISION_MODEL_DEFAULT="coco-nano-seg-v1-640.onnx"
+
 ENV_ARGS=(-e SWARM_N=1 -e PX4_GZ_WORLD="$WORLD" -e GZ_WORLD="$WORLD"
           -e CAM_W="${CAM_W:-640}" -e CAM_H="${CAM_H:-360}" -e CAM_FPS="${CAM_FPS:-10}"
           -e SQUAWD_BACKEND="$SQUAWD_BACKEND"
           -e VISION_BACKEND="${VISION_BACKEND:-onnx}"
-          -e VISION_MODEL="${VISION_MODEL:-mover-nano-seg-v1.onnx}")
+          -e VISION_MODEL="${VISION_MODEL:-$VISION_MODEL_DEFAULT}")
 [ -n "${KIMI_API_KEY:-}" ] && ENV_ARGS+=(-e KIMI_API_KEY="$KIMI_API_KEY")
 [ -n "${SQUAWD_MODEL:-}" ] && ENV_ARGS+=(-e SQUAWD_MODEL="$SQUAWD_MODEL")
 

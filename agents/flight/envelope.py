@@ -81,3 +81,10 @@ def check_speed(env: Envelope, speed: float) -> None:
     if speed > env.max_speed_mps:
         raise EnvelopeViolation(
             f"speed {speed:.1f} m/s exceeds the {env.max_speed_mps:.1f} m/s cap")
+
+
+def check_track(env: Envelope, alt: float) -> None:
+    """Pursuit altitude setpoint: the same ceiling rule as takeoff (M6
+    commitment safeguard — an unsolicited climb past the envelope ceiling is
+    refused at the tool boundary, never flown)."""
+    env._check_alt(float(alt), None)

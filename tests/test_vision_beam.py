@@ -174,6 +174,19 @@ def test_in_fusion_envelope_contract():
     assert not in_fusion_envelope(None, 0.0, 0.0, 0.0)          # unset ctx
 
 
+def test_in_fusion_envelope_orbit_clause():
+    """W3a: orbit is admitted under its OWN speed clause (6 m/s — tangential
+    R·ω at 15 m·15°/s ≈ 3.9 m/s is above the shadow gate's 3) while the
+    Δz and half-width gates apply unchanged; the shadow clause is NOT
+    loosened (3.5 m/s still declined)."""
+    assert in_fusion_envelope("orbit", 3.9, 1.0, 0.1)     # 15 m · 15°/s
+    assert in_fusion_envelope("orbit", 6.0, 0.0, 0.0)     # the orbit cap
+    assert not in_fusion_envelope("orbit", 6.5, 0.0, 0.0)  # over the cap
+    assert not in_fusion_envelope("orbit", 2.0, 3.5, 0.0)  # |Δz| > 3
+    assert not in_fusion_envelope("orbit", 2.0, 0.0, 0.3)  # > half-width
+    assert not in_fusion_envelope("shadow", 3.5, 0.0, 0.0)  # shadow untouched
+
+
 # ---- VisionContacts: fusion + acquisition SM (design §3.10) ----
 
 class FakeWorld:

@@ -3,7 +3,9 @@
 Owns: the MAVSDK link (injected, shared), THE one FlightOps (injected — the
 same instance the tools and the estop arbiter use), its user inbox
 (/pilot/user_input), its report outbox (/pilot/chat), its Claude client
-(make_pilot_options), the react loop, and the estop supervisor task.
+(make_pilot_options), the react loop, and the estop supervisor task. W3a:
+also owns THE CommandArbiter — UI ops from /pilot/cmd take the operator
+lease through it, and every LLM tool call passes its guard_llm first.
 """
 import asyncio
 
@@ -15,6 +17,8 @@ from agents.core.bus import CMD_QOS, publish_str
 from agents.core.store import TopicLog
 from agents.flight.backend import BackendClient
 from agents.flight.tools import make_pilot_options
+from agents.pilot.arbiter import CommandArbiter
+from agents.pilot.cmd import cmd_supervisor, make_run_op
 from agents.pilot.estop import ActiveToolRegistry, estop_supervisor
 
 
@@ -27,12 +31,13 @@ class PilotAgent:
         self._ops = ops
         self._bridge = bridge
         self.registry = ActiveToolRegistry()
+        self.arbiter = CommandArbiter(self.registry, ops, make_run_op(ops))
         bridge.subscribe("/px4_0/fmu/out/vehicle_local_position",
                          VehicleLocalPosition)
         self._inbox = TopicLog(bridge, "/pilot/user_input", String, CMD_QOS)
         self.client = BackendClient(make_pilot_options(
             ops, detect_text=detect_text, report=self.report,
-            registry=self.registry,
+            registry=self.registry, guard=self.arbiter.guard_llm,
             env=env, model=model, cli_path=cli_path))
         self._seen = 0
 
@@ -63,7 +68,8 @@ class PilotAgent:
         async with self.client:
             await asyncio.gather(
                 self._loop(),
-                estop_supervisor(self._bridge, self.registry, self._ops))
+                estop_supervisor(self._bridge, self.registry, self._ops),
+                cmd_supervisor(self._bridge, self.arbiter))
 
     async def _loop(self) -> None:
         while True:

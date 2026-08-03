@@ -39,7 +39,7 @@
   .land:hover{filter:brightness(1.2)}
 
   /* ---------- layout ---------- */
-  main{flex:1;display:grid;grid-template-columns:1fr 320px;gap:12px;padding:12px;min-height:0}
+  main{flex:1;display:grid;grid-template-columns:1fr 280px;gap:12px;padding:12px;min-height:0}
   .rail{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
   .card h4{font-size:11px;font-family:var(--mono);color:var(--faint);text-transform:uppercase;
@@ -48,7 +48,8 @@
   /* ---------- POV tile ---------- */
   .pov{display:grid;place-items:center;min-height:0}
   .pov-inner{position:relative;aspect-ratio:16/9;max-width:100%;max-height:100%;
-    width:100%;border:1px solid var(--line-hi);border-radius:14px;overflow:hidden;background:#000}
+    width:100%;border:1px solid var(--line-hi);border-radius:14px;overflow:hidden;
+    background:#000;cursor:crosshair}
   canvas.cam,canvas.hud{position:absolute;inset:0;width:100%;height:100%}
   canvas.hud{pointer-events:none}
   .hud-dom{position:absolute;font-family:var(--mono);pointer-events:none}
@@ -61,6 +62,26 @@
   .trackbanner.g{color:var(--green);border-color:#1d5c42}
   .trackbanner.a{color:var(--amber);border-color:#6e5223}
   .trackbanner.r{color:var(--red);border-color:#7a2a2a}
+  .lockedpill{top:40px;left:12px;right:auto}
+  .toast{top:76px;left:50%;transform:translateX(-50%);background:#0a1128ee;
+    border:1px solid;border-radius:8px;padding:6px 12px;font-size:12px;display:none}
+  .toast.g{color:var(--green);border-color:#1d5c42}
+  .toast.a{color:var(--amber);border-color:#6e5223}
+  .toast.r{color:var(--red);border-color:#7a2a2a}
+  .opsbar{bottom:46px;left:50%;transform:translateX(-50%);display:none;gap:7px;
+    align-items:center;background:#0a1128cc;border:1px solid var(--line-hi);
+    border-radius:10px;padding:7px 9px;pointer-events:auto}
+  .opsbar .rval{font-size:11px;color:var(--dim)}
+  .btn.op{font-size:11px;padding:6px 11px;border-radius:7px;letter-spacing:.5px;
+    color:var(--accent);background:#0d1836;border-color:var(--line-hi)}
+  .btn.op:hover{filter:brightness(1.3)}
+  .btn.op:disabled{opacity:.45;cursor:default;filter:none}
+  .btn.op.stop{color:var(--red);border-color:#7a2a2a;background:#2a0d0d}
+  .btn.op.ghost{color:var(--dim);padding:6px 9px}
+  .ripple{position:absolute;border:2px solid var(--accent);border-radius:50%;
+    width:10px;height:10px;pointer-events:none;animation:rip .5s ease-out forwards}
+  @keyframes rip{from{opacity:.9;transform:translate(-50%,-50%) scale(1)}
+    to{opacity:0;transform:translate(-50%,-50%) scale(4.5)}}
   .degraded{top:40px;left:50%;transform:translateX(-50%);background:#2a0d0dee;
     border:1px solid var(--red);border-radius:8px;padding:7px 14px;font-size:13px;
     font-weight:700;color:var(--red);letter-spacing:1px;display:none}
@@ -88,6 +109,9 @@
   .map canvas{width:220px;height:220px}
   .clist{display:flex;flex-direction:column;gap:6px;max-height:170px;overflow:auto}
   .citem{border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-family:var(--mono);font-size:11px}
+  .citem[data-name]{cursor:pointer}
+  .citem[data-name]:hover{border-color:var(--line-hi)}
+  .citem.sel{border-color:var(--accent)}
   .citem .id{color:var(--txt);font-weight:700}
   .citem .row{display:flex;justify-content:space-between;color:var(--dim);margin-top:2px}
   .pill{font-size:9.5px;padding:1px 6px;border-radius:4px;border:1px solid}
@@ -99,20 +123,21 @@
   .sens b{display:block;color:var(--txt);font-size:12px}
   .sens .g b{color:var(--green)} .sens .r b{color:var(--red)} .sens .a b{color:var(--amber)}
 
-  /* ---------- dock ---------- */
-  .dock{flex:none;height:118px;border-top:1px solid var(--line);background:#0a1128;
-    display:grid;grid-template-columns:1fr 320px;gap:12px;padding:10px 12px}
-  .chat{overflow:auto;font-family:var(--mono);font-size:11.5px;display:flex;
-    flex-direction:column;gap:3px;padding-right:6px}
+  /* ---------- dock (W3b: slim overlay strip — video-first) ---------- */
+  .dock{position:fixed;left:0;right:0;bottom:0;height:44px;z-index:10;
+    border-top:1px solid var(--line);background:#0a1128d9;
+    display:grid;grid-template-columns:1fr 280px;gap:12px;padding:6px 12px}
+  .chat{overflow:auto;font-family:var(--mono);font-size:10.5px;display:flex;
+    flex-direction:column;gap:2px;padding-right:6px}
   .chat .u{color:var(--accent)} .chat .p{color:var(--green)}
   .chat .e{color:var(--red)} .chat .s{color:var(--faint)}
   .cmd{display:flex;gap:8px;align-items:flex-start}
   .cmd input{flex:1;background:#080d20;border:1px solid var(--line);border-radius:8px;
-    color:var(--txt);font-family:var(--mono);font-size:12px;padding:9px 12px;outline:none}
+    color:var(--txt);font-family:var(--mono);font-size:12px;padding:6px 12px;outline:none}
   .cmd input:focus{border-color:var(--accent)}
   .cmd button{background:linear-gradient(135deg,var(--accent),#2b6cff);border:none;
     color:#04101e;font-weight:800;font-family:var(--mono);border-radius:8px;
-    padding:9px 16px;cursor:pointer}
+    padding:6px 16px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -140,6 +165,8 @@
       <div class="hud-dom tape">HDG <b id="t-hdg">—</b> <span id="t-card"></span></div>
       <div class="hud-dom degraded" id="degraded"></div>
       <div class="hud-dom trackbanner" id="trackbanner"></div>
+      <div class="hud-dom trackbanner" id="lockedpill"></div>
+      <div class="hud-dom toast" id="toast"></div>
       <div class="hud-dom ladder" id="ladder"></div>
       <div class="hud-dom xh">+</div>
       <div class="hud-dom beam" id="beam"><span class="chip" id="beam-chip">ToF —</span></div>
@@ -151,6 +178,16 @@
         <div>BATT<b id="s-batt">—</b></div>
         <div>V<b id="s-volt">—</b></div>
         <div>ARMED<b id="s-arm">—</b></div>
+      </div>
+      <div class="hud-dom opsbar" id="opsbar">
+        <button class="btn op" id="op-orbit">⟳ ORBIT</button>
+        <button class="btn op ghost" id="op-rdec" title="orbit radius −5 m">−</button>
+        <span class="rval" id="op-rval">R 15 m</span>
+        <button class="btn op ghost" id="op-rinc" title="orbit radius +5 m">+</button>
+        <button class="btn op" id="op-approach">◀ APPROACH</button>
+        <button class="btn op" id="op-backoff">BACK OFF ▶</button>
+        <button class="btn op stop" id="op-stop">■ STOP</button>
+        <button class="btn op" id="op-resume">↻ RESUME</button>
       </div>
     </div>
   </div>
@@ -186,6 +223,8 @@
  *   WS /ws_detections -> verbatim PerceptionSnapshot v1 JSON (authoritative fusion)
  *   GET /state (2 Hz) -> pose/attitude/mode/battery/health + server-side banner
  *   GET /chat (1 Hz)  -> feed; POST /command; POST /estop
+ *   POST /api/lock    click {x,y} frame px -> server hit-test -> /pilot/cmd (W0.3)
+ *   POST /api/cmd     locked-object ops (orbit/standoff/stop/resume) -> /pilot/cmd (W3b)
  * The 0.5 s overlay match rule mirrors agents/observatory/overlay.py — keep in sync.
  */
 const OVERLAY_MAX_AGE_S = 0.5;              // mirror of overlay.py OVERLAY_MAX_AGE_S
@@ -199,6 +238,13 @@ const S = {
   lastStamp: 0,         // sim_stamp of the newest received access unit
   auTimes: [],          // wall-clock arrival times of recent AUs (fps estimate)
   chatNext: 0,
+  hover: null,          // contact under the cursor (client-side preview ONLY)
+  hoverKey: null,       // its name (change guard for redraws)
+  locked: null,         // contact latched by a 200 from /api/lock (pre-track handoff)
+  lockedAt: 0,          // performance.now() of the latch (3 s timeout)
+  gap: null,            // last track.gap_m (Approach / Back off baseline)
+  orbitR: 15,           // orbit radius stepper (m); R4 default 15 m / 8 dps
+  orbit: null,          // {contact, radius_m} while an orbit op is active (PPI ring)
 };
 let decoder = null;
 
@@ -289,6 +335,8 @@ function connectDet() {
     try {
       S.snap = JSON.parse(ev.data);          // verbatim PerceptionSnapshot v1
       el("dot-det").className = "g";
+      if (S.hoverKey)                        // re-resolve hover on the new snap
+        S.hover = (S.snap.contacts || []).find(c => c.name === S.hoverKey) || null;
       drawHUD();
       drawContacts();
       drawSensors();
@@ -347,18 +395,21 @@ function drawHUD() {
   }
   updateBeam(fresh ? snap : null);
   updateTrackBanner(fresh ? snap : null);
+  updateLockUI(fresh ? snap : null);
   if (!fresh) return;
 
   const sx = hud.width / (snap.frame_w || hud.width);
   const sy = hud.height / (snap.frame_h || hud.height);
   for (const d of snap.dets || []) drawDet(ctx, d, snap, sx, sy);
+  if (S.hover && S.hover.name !== curTarget()) drawHoverBox(ctx, S.hover, sx, sy);
 }
 
 function drawDet(ctx, d, snap, sx, sy) {
   const c = matchContact(d, snap.contacts);
   const color = healthColor(c ? c.health : null);
   const [x1, y1, x2, y2] = d.xyxy.map((v, i) => v * (i % 2 ? sy : sx));
-  const designated = snap.track && snap.track.target && c && c.name === snap.track.target;
+  const tgt = curTarget();                   // latched lock (W3b) or track.target
+  const designated = tgt && c && c.name === tgt;
 
   ctx.strokeStyle = color;
   ctx.lineWidth = designated ? 2.5 : 1.6;
@@ -392,6 +443,44 @@ function drawDet(ctx, d, snap, sx, sy) {
   ctx.fillRect(x1 + 5, y2 + 18, Math.max(rw, 46) - 10, 3);
   ctx.fillStyle = color;
   ctx.fillRect(x1 + 5, y2 + 18, (Math.max(rw, 46) - 10) * conf, 3);
+
+  if (designated) drawReticle(ctx, x1, y1, x2, y2, color);
+}
+
+function drawReticle(ctx, x1, y1, x2, y2, color) {
+  /* Latched-lock reticle (W3b, design v0.3 §5): corner brackets + a pulsing
+   * ring around the designated contact's box. */
+  const k = Math.max(8, Math.min(x2 - x1, y2 - y1) * 0.25);
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (const [px, py, dx, dy] of [[x1, y1, 1, 1], [x2, y1, -1, 1],
+                                  [x1, y2, 1, -1], [x2, y2, -1, -1]]) {
+    ctx.moveTo(px + dx * k, py); ctx.lineTo(px, py); ctx.lineTo(px, py + dy * k);
+  }
+  ctx.stroke();
+  const t = performance.now() / 1000;
+  ctx.globalAlpha = 0.55 + 0.3 * Math.sin(t * 4);
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(x2 - x1, y2 - y1) * (0.6 + 0.07 * Math.sin(t * 4)), 0, 7);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawHoverBox(ctx, c, sx, sy) {
+  /* Client-side hover preview ONLY (thin dashed outline + class label) — the
+   * authoritative click hit-test stays server-side (/api/lock, W0.3). */
+  if (!c.bbox_xyxy || c.bbox_xyxy.length !== 4) return;
+  const [x1, y1, x2, y2] = c.bbox_xyxy.map((v, i) => v * (i % 2 ? sy : sx));
+  ctx.strokeStyle = "#4cc3ff";
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  ctx.setLineDash([]);
+  ctx.font = "10px ui-monospace, Menlo, monospace";
+  ctx.fillStyle = "#4cc3ff";
+  ctx.fillText(c.cls || "?", x1 + 4, Math.max(10, y1 + 12));
 }
 
 /* ---------------- beam + track + ladder (DOM) ---------------- */
@@ -495,13 +584,140 @@ function drawContacts() {
     box.innerHTML = `<div class="citem" style="color:var(--faint)">none</div>`;
     return;
   }
+  const tgt = curTarget();
   box.innerHTML = list.map(c => {
     const pc = c.health === "MEASURED" ? "g" : c.health === "COASTING" ? "a" : "b";
     const rng = c.range_m != null ? `${c.range_m.toFixed(1)} m · ${c.range_src}` : "no range";
-    return `<div class="citem"><span class="id">${c.name}</span>
+    const sel = c.name === tgt ? " sel" : "";
+    return `<div class="citem${sel}" data-name="${c.name}" title="click to lock"><span class="id">${c.name}</span>
       <span class="pill ${pc}">${c.health || "?"}</span>
       <div class="row"><span>${rng}</span><span>conf ${(c.conf ?? 0).toFixed(2)}</span></div></div>`;
   }).join("");
+}
+
+/* ---------------- click-to-lock + locked ops (W3b, design v0.3 §5) ---------------- */
+
+function curTarget() {
+  /* The operator's current object of interest: a just-clicked lock latch
+   * (until the snapshot's track.target catches up) else the authoritative
+   * track target. */
+  return S.locked || (S.snap && S.snap.track && S.snap.track.target) || null;
+}
+
+function framePx(e) {
+  /* CSS px event -> camera-frame px via the canvas' native backing size and
+   * bounding rect (also yields pov-relative px for DOM effects). */
+  const cam = el("cam"), r = cam.getBoundingClientRect();
+  if (!cam.width || !r.width) return null;
+  return { x: (e.clientX - r.left) * cam.width / r.width,
+           y: (e.clientY - r.top) * cam.height / r.height,
+           cx: e.clientX - r.left, cy: e.clientY - r.top };
+}
+
+function hoverHit(e) {
+  const p = framePx(e);
+  if (!p || !overlayFresh()) return null;
+  for (const c of S.snap.contacts || []) {
+    const b = c.bbox_xyxy;
+    if (b && b.length === 4 && b[0] <= p.x && p.x <= b[2] && b[1] <= p.y && p.y <= b[3])
+      return c;
+  }
+  return null;
+}
+
+function ripple(cx, cy) {
+  const d = document.createElement("div");
+  d.className = "ripple";
+  d.style.left = cx + "px"; d.style.top = cy + "px";
+  el("pov").appendChild(d);
+  d.addEventListener("animationend", () => d.remove());
+}
+
+let toastTimer = 0;
+function flashToast(text, cls) {
+  const t = el("toast");
+  t.textContent = text;
+  t.className = "hud-dom toast " + (cls || "a");
+  t.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = "none"; }, 2600);
+}
+
+async function lockAt(x, y) {
+  /* Click-to-lock: the SERVER hit-tests (W0.3); on 200 latch the reticle on
+   * the contact until snap.track.target catches up; on 409 say why. */
+  let r;
+  try {
+    r = await fetch("/api/lock", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x, y }),
+    });
+  } catch (e) { flashToast("lock failed — server unreachable", "r"); return; }
+  const j = await r.json().catch(() => ({}));
+  if (r.ok) {
+    S.locked = j.contact; S.lockedAt = performance.now();
+    flashToast(`locked ${j.contact}`, "g");
+    drawHUD();
+  } else {
+    flashToast({ miss: "no object there",
+                 ambiguous: "ambiguous — zoom or wait",
+                 stale: "stale video" }[j.reason] || `lock rejected (${r.status})`, "a");
+  }
+}
+
+function updateLockUI(snap) {
+  const t = snap && snap.track, target = t && t.target;
+  if (target) {
+    S.gap = t.gap_m;
+    if (S.locked && target === S.locked) S.locked = null;   // authority caught up
+  } else {
+    S.orbit = null;
+  }
+  if (S.locked && performance.now() - S.lockedAt > 3000) S.locked = null;
+  const pill = el("lockedpill"), bar = el("opsbar");
+  if (!target) { pill.style.display = "none"; bar.style.display = "none"; return; }
+  const gap = t.gap_m != null ? ` · gap ${t.gap_m.toFixed(1)} m` : "";
+  /* HUD honesty (W3 codex §5): a click lock is a VISION lock — say so and
+   * carry the beam's raw status (ToF SEARCHING/NO-RETURN/OUT-OF-ENVELOPE…);
+   * RANGE LOCKED (green) is reserved for an actually LOCKED beam. */
+  const st = snap.beam && snap.beam.status ? snap.beam.status : null;
+  const ranged = st === "LOCKED";
+  const beam = st ? ` · ToF ${st}` : "";
+  pill.innerHTML = `<b>${ranged ? "RANGE LOCKED" : "VISION LOCK"}</b>${target}${gap}${beam}`;
+  pill.className = "hud-dom trackbanner " + (ranged ? "g" : "a") + " lockedpill";
+  pill.style.display = "block";
+  bar.style.display = "flex";
+}
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function setOrbitR(v) {
+  S.orbitR = clamp(v, 8, 40);
+  el("op-rval").textContent = `R ${S.orbitR} m`;
+}
+
+async function sendOp(op) {
+  /* Locked-object op -> /api/cmd (schema-validated server-side, published
+   * verbatim on /pilot/cmd). One op in flight at a time; result is transient. */
+  const btns = el("opsbar").querySelectorAll("button");
+  btns.forEach(b => b.disabled = true);
+  try {
+    const r = await fetch("/api/cmd", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(op),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      S.orbit = op.op === "orbit" ? { contact: op.contact, radius_m: op.radius_m } : null;
+      flashToast(`${op.op} sent${op.contact ? " · " + op.contact : ""}`, "g");
+    } else {
+      flashToast(`${op.op} rejected — ${j.error || r.status}`, "r");
+    }
+  } catch (e) {
+    flashToast(`${op.op} failed — server unreachable`, "r");
+  } finally {
+    btns.forEach(b => b.disabled = false);
+  }
 }
 
 /* ---------------- PPI map ---------------- */
@@ -539,6 +755,11 @@ function drawPPI() {
     ranged ? ctx.fill() : ctx.stroke();        // bearing-only: hollow blip at the edge
     const designated = S.snap.track && S.snap.track.target === c.name;
     if (designated) { ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.stroke(); }
+    if (designated && S.orbit && S.orbit.contact === c.name) {
+      ctx.setLineDash([4, 3]);                 // active orbit radius ring (W3b)
+      ctx.beginPath(); ctx.arc(x, y, R * S.orbit.radius_m / 35, 0, 7); ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
 }
 
@@ -599,6 +820,55 @@ el("cmd-send").onclick = sendCommand;
 el("cmd-in").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCommand(); });
 el("btn-estop").onclick = (e) => estop("hold", e.target);
 el("btn-land").onclick = (e) => estop("land", e.target);
+
+/* W3b: hover preview + click-to-lock + clickable contact list + ops bar */
+el("pov").addEventListener("mousemove", (e) => {
+  const h = hoverHit(e), key = h ? h.name : null;
+  if (key !== S.hoverKey) { S.hoverKey = key; S.hover = h; drawHUD(); }
+});
+el("pov").addEventListener("mouseleave", () => {
+  if (S.hoverKey !== null) { S.hoverKey = null; S.hover = null; drawHUD(); }
+});
+el("pov").addEventListener("click", (e) => {
+  if (e.target.closest("#opsbar")) return;     // ops bar clicks aren't locks
+  const p = framePx(e);
+  if (!p) return;
+  ripple(p.cx, p.cy);
+  lockAt(p.x, p.y);
+});
+el("contacts").addEventListener("click", (e) => {
+  const item = e.target.closest(".citem[data-name]");
+  if (!item) return;
+  const c = ((S.snap && S.snap.contacts) || []).find(c => c.name === item.dataset.name);
+  if (!c || !c.bbox_xyxy) return;
+  lockAt((c.bbox_xyxy[0] + c.bbox_xyxy[2]) / 2, (c.bbox_xyxy[1] + c.bbox_xyxy[3]) / 2);
+});
+el("op-orbit").onclick = () => {
+  const c = curTarget();
+  if (c) sendOp({ op: "orbit", contact: c, radius_m: S.orbitR, rate_dps: 8 });
+};
+/* R4: Approach/Back-off step ±3 m inside the 14-20 m stand-off band — the
+ * H=4 m safe (H,R) pairs (R_min 12, shadow ring 14) keep the car out of the
+ * level camera's blind cone; a click without a gap baseline sends the R4
+ * demonstration pair (14 m / 18 m). The FlightOps radial floor remains the
+ * final authority below 12 m. */
+el("op-approach").onclick = () => {
+  const c = curTarget();
+  if (c) sendOp({ op: "standoff", contact: c,
+                  range_m: Math.round(clamp((S.gap ?? 17) - 3, 14, 20) * 10) / 10 });
+};
+el("op-backoff").onclick = () => {
+  const c = curTarget();
+  if (c) sendOp({ op: "standoff", contact: c,
+                  range_m: Math.round(clamp((S.gap ?? 15) + 3, 14, 20) * 10) / 10 });
+};
+el("op-stop").onclick = () => sendOp({ op: "stop" });
+el("op-resume").onclick = () => {
+  const c = curTarget();
+  if (c) sendOp({ op: "resume", contact: c });
+};
+el("op-rdec").onclick = () => setOrbitR(S.orbitR - 5);
+el("op-rinc").onclick = () => setOrbitR(S.orbitR + 5);
 
 connectCam();
 connectDet();

@@ -7,6 +7,7 @@ publishes RAW-detection snapshots (empty contacts array, beam/track IDLE) so
 /pilot/detections and the overlay work before fusion exists (Codex-B4).
 """
 import asyncio
+import base64
 import json
 from dataclasses import dataclass, field
 
@@ -33,8 +34,18 @@ class PerceptionSnapshot:
 
     def to_json(self) -> str:
         def det_json(d):
-            return {"cls": d.cls, "conf": round(d.conf, 2),
-                    "xyxy": [round(v, 1) for v in d.xyxy], "tid": d.tid}
+            j = {"cls": d.cls, "conf": round(d.conf, 2),
+                 "xyxy": [round(v, 1) for v in d.xyxy], "tid": d.tid}
+            if d.mask is not None:
+                # W2 (design §4): the box-region RLE mask rides the wire for
+                # UI drawing — base64 varints + the decode dims, computed with
+                # the encoder's own box formula. Omitted when the backend has
+                # no mask (the pre-W2 wire shape, byte-compatible).
+                j["mask"] = {
+                    "rle": base64.b64encode(d.mask).decode("ascii"),
+                    "w": max(1, int(d.xyxy[2]) - int(d.xyxy[0])),
+                    "h": max(1, int(d.xyxy[3]) - int(d.xyxy[1]))}
+            return j
         return json.dumps({
             "schema_version": self.schema_version,
             "sim_stamp": round(self.sim_stamp, 2),

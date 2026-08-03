@@ -58,13 +58,28 @@ class BeamAssociation:
 
 def in_fusion_envelope(mode: str | None, own_speed: float, dz: float,
                        off_boresight_deg: float, *, speed_max_mps: float = 3.0,
+                       orbit_speed_max_mps: float = 6.0,
                        dz_max_m: float = 3.0,
                        half_width_deg: float = 0.25) -> bool:
     """The RELIABLE fusion envelope (design §3.10): shadow mode, own speed
     ≤3 m/s, near co-altitude (|Δz| ≤ 3 m), target within the beam half-width
     of boresight (0.25° for the 0.5° beam). Outside it fusion is
     opportunistic-only — the caller may still pass in_envelope=True, this
-    module never does on its own."""
+    module never does on its own.
+
+    W3a: orbit is admitted DELIBERATELY, under its own speed clause. The
+    shadow gate's ≤3 m/s exists to bound the footprint's smear across the
+    box while translating; an orbit at radius R and rate ω flies
+    tangentially at R·ω (15 m · 15°/s ≈ 3.9 m/s — above 3) while the yaw
+    servo holds the nose, hence the beam, ON the target, so the smear
+    argument doesn't transfer. orbit_speed_max_mps = 6.0 covers the demo
+    envelope (≈23 m at 15°/s, or 15 m at ~21°/s) and stays inside the
+    pursuit speed band where the detector holds the box steady. The shadow
+    clause is NOT loosened."""
+    if mode == "orbit":
+        return (own_speed <= orbit_speed_max_mps
+                and abs(dz) <= dz_max_m
+                and abs(off_boresight_deg) <= half_width_deg)
     return (mode == "shadow" and own_speed <= speed_max_mps
             and abs(dz) <= dz_max_m
             and abs(off_boresight_deg) <= half_width_deg)

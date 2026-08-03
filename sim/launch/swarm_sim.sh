@@ -111,6 +111,124 @@ elif [ "$PX4_GZ_WORLD" = "perceive" ]; then
   fi
   export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:+$GZ_SIM_SYSTEM_PLUGIN_PATH:}/workspace/sim/plugins"
   export MOVERS_JSON="/workspace/PX4-Autopilot/$WORLDS/perceive_boxes.json"
+elif [ "$PX4_GZ_WORLD" = "assets" ]; then
+  # W0.1 detector-on-rendered-assets validation world (design 2026-07-28 §2.1):
+  # static Fuel cast at known ranges + fixed cameras replicating the x500_depth
+  # IMX214 geometry. Fuel models download once into the mounted cache; the
+  # generator then resolves the Walking-person actor mesh from that cache.
+  MARKER="$HOME/.gz/fuel/.w0_assets_v1"
+  if [ ! -f "$MARKER" ]; then
+    echo "downloading assets-world Fuel models (one-time)…"
+    for m in Hatchback SUV TruckDelivery TinyRobot "Walking person" "House 1"; do
+      gz fuel download -u "https://fuel.gazebosim.org/1.0/OpenRobotics/models/$m" -t model || true
+    done
+    touch "$MARKER"
+  fi
+  # Walking person: strip <library_animations> from the cached 26 MB dae into
+  # walking_frozen.dae (idempotent) — the gate renders the walker as a STATIC
+  # mesh visual (frozen bind pose; <actor> stalls the headless render thread,
+  # found 2026-08-01), and the 4 MB keyframe-free file parses far faster.
+  python3 - <<'EOF' || true
+import glob, re
+for src in glob.glob("/root/.gz/fuel/fuel.gazebosim.org/openrobotics/models/"
+                     "walking person/*/meshes/walking.dae"):
+    dst = src.replace("walking.dae", "walking_frozen.dae")
+    try:
+        xml = open(src, encoding="utf-8", errors="ignore").read()
+        xml = re.sub(r"<library_animations>.*?</library_animations>", "", xml,
+                     flags=re.S)
+        xml = re.sub(r"<library_animation_clips>.*?</library_animation_clips>",
+                     "", xml, flags=re.S)
+        open(dst, "w").write(xml)
+        print("wrote", dst, len(xml) >> 20, "MB")
+    except OSError as e:
+        print("frozen-strip failed:", e)
+EOF
+  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_assets_world.py ]; then
+    python3 /workspace/sim/worlds/make_assets_world.py "$WORLDS/default.sdf" "$WORLDS/assets.sdf" || true
+  fi
+  # Fuel texture path fixes (cache-side, idempotent): the car meshes reference
+  # textures by bare name (resolved against meshes/, where they do NOT live)
+  # and by model://<name>/... URIs (which need a version-less model dir on the
+  # resource path). Without this, Hatchback renders untextured gray — that
+  # would falsify the very domain gap W0.1 measures. Provide both resolutions.
+  LINKS="$HOME/.gz/model-links"
+  mkdir -p "$LINKS"
+  for d in "$HOME"/.gz/fuel/fuel.gazebosim.org/openrobotics/models/*/; do
+    latest="$(ls -d "$d"*/ 2>/dev/null | sort -V | tail -1)"
+    [ -n "$latest" ] || continue
+    ln -sfn "$latest" "$LINKS/$(basename "$d")"
+    if [ -d "${latest}materials/textures" ]; then
+      cp -n "${latest}materials/textures"/*.png "${latest}meshes/" 2>/dev/null || true
+    fi
+  done
+  export GZ_SIM_RESOURCE_PATH="$LINKS${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+elif [ "$PX4_GZ_WORLD" = "demo" ]; then
+  # W1b demo world (design 2026-07-28 §3): 5 mesh-visual movers (velocity-drive
+  # mover_system plugin, heading_align) + Fuel landmark neighborhood. Fuel
+  # models download once into the cache; the generator then resolves the
+  # car/house/tree meshes and their scales/poses from the cached model.sdf
+  # files.
+  MARKER="$HOME/.gz/fuel/.w1b_demo_v1"
+  if [ ! -f "$MARKER" ]; then
+    echo "downloading demo-world Fuel models (one-time)…"
+    for m in "Hatchback red" Hatchback SUV TruckDelivery "Walking person" \
+             "Gas Station" "Pine Tree" "Oak Tree" "Lamp Post" "House 1" "House 2"; do
+      gz fuel download -u "https://fuel.gazebosim.org/1.0/OpenRobotics/models/$m" -t model || true
+    done
+    touch "$MARKER"
+  fi
+  # Walking person: strip <library_animations> from the cached dae into
+  # walking_frozen.dae (idempotent, same as the `assets` branch) — the demo
+  # renders walkers as STATIC mesh visuals (frozen stride; <actor> stalls the
+  # headless render thread, W0.1 2026-08-01), and the keyframe-free file
+  # parses far faster.
+  python3 - <<'EOF' || true
+import glob, re
+for src in glob.glob("/root/.gz/fuel/fuel.gazebosim.org/openrobotics/models/"
+                     "walking person/*/meshes/walking.dae"):
+    dst = src.replace("walking.dae", "walking_frozen.dae")
+    try:
+        xml = open(src, encoding="utf-8", errors="ignore").read()
+        xml = re.sub(r"<library_animations>.*?</library_animations>", "", xml,
+                     flags=re.S)
+        xml = re.sub(r"<library_animation_clips>.*?</library_animation_clips>",
+                     "", xml, flags=re.S)
+        open(dst, "w").write(xml)
+        print("wrote", dst, len(xml) >> 20, "MB")
+    except OSError as e:
+        print("frozen-strip failed:", e)
+EOF
+  # Fuel texture path fixes (cache-side, idempotent) — same as the `assets`
+  # branch: the car meshes reference textures by bare name (resolved against
+  # meshes/, where they do NOT live) and by model://<name>/... URIs (which
+  # need a version-less model dir on the resource path). Without this the cars
+  # render untextured gray (W0.1 lesson).
+  LINKS="$HOME/.gz/model-links"
+  mkdir -p "$LINKS"
+  for d in "$HOME"/.gz/fuel/fuel.gazebosim.org/openrobotics/models/*/; do
+    latest="$(ls -d "$d"*/ 2>/dev/null | sort -V | tail -1)"
+    [ -n "$latest" ] || continue
+    ln -sfn "$latest" "$LINKS/$(basename "$d")"
+    if [ -d "${latest}materials/textures" ]; then
+      cp -n "${latest}materials/textures"/*.png "${latest}meshes/" 2>/dev/null || true
+    fi
+  done
+  # "Hatchback red" ships WITHOUT wheels3.png although its mtl references
+  # ../materials/textures/wheels3.png (same wheel mesh as the plain Hatchback)
+  # — borrow the texture or the wheels render untextured (found W1a 2026-08-01).
+  RED="$(ls -d "$HOME"/.gz/fuel/fuel.gazebosim.org/openrobotics/models/hatchback\ red/*/ 2>/dev/null | sort -V | tail -1)"
+  PLAIN="$(ls -d "$HOME"/.gz/fuel/fuel.gazebosim.org/openrobotics/models/hatchback/*/ 2>/dev/null | sort -V | tail -1)"
+  if [ -n "$RED" ] && [ -n "$PLAIN" ]; then
+    cp -n "${PLAIN}meshes/wheels3.png" "${RED}materials/textures/wheels3.png" 2>/dev/null || true
+    cp -n "${PLAIN}meshes/wheels3.png" "${RED}meshes/wheels3.png" 2>/dev/null || true
+  fi
+  export GZ_SIM_RESOURCE_PATH="$LINKS${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_demo_world.py ]; then
+    python3 /workspace/sim/worlds/make_demo_world.py "$WORLDS/default.sdf" "$WORLDS/demo.sdf" || true
+  fi
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:+$GZ_SIM_SYSTEM_PLUGIN_PATH:}/workspace/sim/plugins"
+  export MOVERS_JSON="/workspace/PX4-Autopilot/$WORLDS/demo_boxes.json"
 elif [ "$PX4_GZ_WORLD" = "baylands" ]; then
   # baylands.sdf <include>s two Gazebo Fuel models (terrain + Coast Water). Cache
   # them once (needs internet on the first run; mount /root/.gz/fuel to persist).

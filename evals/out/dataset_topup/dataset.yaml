@@ -1,6 +1,0 @@
-path: /workspace/evals/out/dataset_topup
-train: images/train
-val: images/val
-names:
-  0: target
-  1: obstacle

@@ -2,12 +2,14 @@
 
 The single place that knows the taxonomy. Factories lazy-import their
 implementation so a missing extra removes the entry without breaking import.
-Default is `none` (no registry tracker — the designated contact uses
-VisionContacts' built-in world-space gate like every other contact).
+Default is `none` (a first-class no-op entry — it resolves the lock seed,
+then the designated contact uses VisionContacts' built-in world-space gate
+like every other contact).
 """
 import importlib
 
 _REGISTRY = {
+    "none":       ("agents.vision.trackers.none", "NoOpTracker", False),
     "botsort":    ("agents.vision.trackers.dnn", "DnnAssociationTracker", True),
     "bytetrack":  ("agents.vision.trackers.dnn", "DnnAssociationTracker", True),
     "ocsort":     ("agents.vision.trackers.dnn", "DnnAssociationTracker", True),

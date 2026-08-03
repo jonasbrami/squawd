@@ -8,6 +8,10 @@ none. This module is the tested authority for that rule; the browser UI
 
 Everything here is pure/dumb (no ROS, no gz, no asyncio) so the M4 contract
 is unit-testable off-sim: snapshots are plain parsed-JSON dicts.
+
+Also the click hit-test (design v0.3 W0.3): SERVER-side, keyed on the
+authoritative ``contacts[].bbox_xyxy``, gated on the same 0.5 s freshness —
+an ambiguous (overlapped-crowd) or stale click is rejected, never guessed.
 """
 
 OVERLAY_MAX_AGE_S = 0.5
@@ -40,6 +44,34 @@ def overlay_fresh(frame_stamp: float, snap: dict | None,
         return False
     age = overlay_age_s(frame_stamp, snap.get("sim_stamp"))
     return age is not None and age <= max_age_s
+
+
+def hit_test(snap: dict | None, x: float, y: float,
+             frame_stamp: float | None = None,
+             max_age_s: float = OVERLAY_MAX_AGE_S) -> dict:
+    """Click hit-test against `contacts[].bbox_xyxy` (authoritative, W0.3).
+
+    Returns {"contact": name, "bbox_xyxy": box} when EXACTLY ONE contact box
+    contains the frame-pixel point (x, y); otherwise {"contact": None,
+    "reason": ...} — "stale" when the snapshot fails the overlayFresh gate
+    against the server's newest frame stamp (an unstamped pair never hits),
+    "ambiguous" on an overlapped crowd, "miss" when no box contains it.
+    """
+    if not overlay_fresh(frame_stamp, snap, max_age_s):
+        return {"contact": None, "reason": "stale"}
+    hits = [c for c in snap.get("contacts") or []
+            if _box_contains(c.get("bbox_xyxy"), x, y)]
+    if len(hits) > 1:
+        return {"contact": None, "reason": "ambiguous"}
+    if not hits:
+        return {"contact": None, "reason": "miss"}
+    c = hits[0]
+    return {"contact": c.get("name"), "bbox_xyxy": c.get("bbox_xyxy")}
+
+
+def _box_contains(box, x: float, y: float) -> bool:
+    return (box is not None and len(box) == 4
+            and box[0] <= x <= box[2] and box[1] <= y <= box[3])
 
 
 def hud_banner(snap: dict | None) -> str | None:

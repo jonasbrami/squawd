@@ -22,4 +22,10 @@ in each artifact's manifest (`<model>.json`: `{"sha256", "source", "trained_at",
 Copy or symlink weights here; do NOT commit them. The host lab
 (`~/perception-lab`, symlinks into `~/scratch/yolo-webcam`) is the current
 source of pre-trained weights. Custom mover models ship from the M2.5 training
-pipeline as `mover-nano-seg-v<N>.onnx` + `mover-nano-seg-v<N>.json`.
+pipeline as `mover-nano-seg-v<N>.onnx` + `mover-nano-seg-v<N>.json`. The demo
+prototype's general-perception model ships as `coco-nano-seg-v1.onnx` +
+`.json` (stock COCO yolo11n-seg, no fine-tune; its manifest adds `"classes"`
+with the 80 COCO names — see `scripts/export_coco_seg.py` and
+`docs/benchmarks/w0-detector-assets.md`). Two operating points exist: the 416
+export (multi-detector/constrained deployments) and `coco-nano-seg-v1-640.onnx`
+(single-drone demo; `run_single_demo.sh demo` selects it by default).

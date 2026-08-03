@@ -5,7 +5,7 @@ import pytest
 
 from agents.flight.envelope import (Envelope, EnvelopeViolation, check_fly_endpoint,
                                     check_goto, check_orbit, check_speed,
-                                    check_takeoff)
+                                    check_takeoff, check_track)
 
 ENV = Envelope()
 
@@ -14,6 +14,16 @@ def test_takeoff_rejects_altitude_above_ceiling():
     with pytest.raises(EnvelopeViolation, match="exceeds ceiling"):
         check_takeoff(ENV, 81.0)
     check_takeoff(ENV, 10.0)                      # inside: no raise
+
+
+def test_track_rejects_pursuit_alt_above_ceiling():
+    """M6 commitment guard: the pursuit altitude setpoint obeys the same
+    ceiling rule as takeoff."""
+    with pytest.raises(EnvelopeViolation, match="exceeds ceiling"):
+        check_track(ENV, 90.0)
+    with pytest.raises(EnvelopeViolation, match="below ground"):
+        check_track(ENV, 0.2)
+    check_track(ENV, 12.0)                        # inside: no raise
 
 
 def test_speed_rejects_over_cap_and_nonpositive():

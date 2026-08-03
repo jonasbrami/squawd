@@ -27,7 +27,12 @@ class ActiveToolRegistry:
         self._generation += 1
         return self._generation
 
-    def clear(self) -> None:
+    def clear(self, generation: int | None = None) -> None:
+        """No-arg: unconditional (the original tool-wrapper contract). With
+        the generation captured at register(), a STALE writer's completion
+        cannot clear a newer owner's slot (the preemption race, W0.4)."""
+        if generation is not None and generation != self._generation:
+            return
         self._task = None
 
     @property

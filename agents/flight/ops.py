@@ -51,6 +51,13 @@ ARRIVE_POLL_S = 0.5
 ARRIVE_MIN_TIMEOUT_S = 15.0
 ARRIVE_MARGIN = 2.5         # arrival timeout = MARGIN * dist / speed (accel/decel headroom)
 
+# W3 codex R4 layer-5 pre-emption (the demo/hold_altitude coast only): coast
+# yaw steers on the EKF-PREDICTED contact bearing, but never further out than
+# this horizon from the last measurement — a constant-velocity ghost is
+# fiction through the mover's 90deg corners, and any search behavior stays
+# bounded to the same horizon.
+COAST_PREDICT_HORIZON_S = 2.0
+
 
 def _result_text(logs, body):
     """Prefix any log() lines before the result/traceback body."""
@@ -138,7 +145,16 @@ class FlightOps:
         mover, well inside the lost window — fable-Q3), adopt it — the pursuit
         follows the OBJECT across the EKF's ephemeral-id rebirths. Ambiguity
         (two candidates in gate) adopts neither (hold/reacquire, not a wrong
-        identity). Returns (new_name, pos) or None."""
+        identity). Returns (new_name, pos) or None.
+
+        W3 codex §3 (COCO profile ONLY — the provider's TrackerConfig carries
+        a non-empty assoc_keys map; the mover/truth path runs the legacy law
+        above BYTE-IDENTICAL): compare ASSOCIATION KEYS (a car->truck reclass
+        keeps the object), require dt_s <= rebind_window_s, and search within
+        min(8 m, gate_m + dt_s) of the CV-predicted point. With several
+        matches adopt the NEAREST only when the rest form a <=2 m duplicate
+        cluster around it (the observed double-birth of one physical car) or
+        the runner-up is >=2 m farther — otherwise remain ambiguous."""
         if self.contacts is None or last is None:
             return None
         cls = name.split("_")[1] if "_" in name else None
@@ -146,7 +162,31 @@ class FlightOps:
         # (the vision EKF knows its rebirth scale); 5 m default when it doesn't.
         prov = getattr(self.contacts, "cfg", None) or getattr(self.contacts, "config", None)
         gate = getattr(prov, "gate_m", 5.0)
+        skeys = getattr(prov, "assoc_keys", None) or {}
         pe, pn = last[0] + vel[0] * dt_s, last[1] + vel[1] * dt_s
+        if skeys and cls is not None:
+            if dt_s > getattr(prov, "rebind_window_s", 2.0):
+                return None                 # expired: a new object, not lineage
+            key = skeys.get(cls, cls)
+            radius = min(8.0, gate + dt_s)
+            matches = []
+            for cand, pos in self.contacts.poses().items():
+                ccls = cand.split("_")[1] if "_" in cand else None
+                if ccls is None or skeys.get(ccls, ccls) != key:
+                    continue
+                d = math.hypot(pos[0] - pe, pos[1] - pn)
+                if d <= radius:
+                    matches.append((d, cand, pos))
+            if not matches:
+                return None
+            matches.sort(key=lambda m: m[0])
+            (d0, best, p0), rest = matches[0], matches[1:]
+            if rest:
+                cluster = all(math.hypot(p[0] - p0[0], p[1] - p0[1]) <= 2.0
+                              for _d, _c, p in rest)
+                if not cluster and rest[0][0] - d0 < 2.0:
+                    return None             # genuinely ambiguous: hold (LOST)
+            return (best, p0)
         matches = []
         for cand, pos in self.contacts.poses().items():
             if cls is None or cand.startswith(f"vis_{cls}_") or cand == name:
@@ -478,24 +518,53 @@ class FlightOps:
             except Exception:
                 pass
 
-    async def track(self, target="", mode="shadow", alt=12.0, duration_s=60.0,
+    async def track(self, target="", mode="shadow", alt=None, duration_s=60.0,
                     within_m=15.0, speed=12.0, standoff_east=0.0,
-                    standoff_north=0.0, acquire_budget_s: float = 45.0) -> str:
+                    standoff_north=0.0, acquire_budget_s: float = 45.0,
+                    radius_m: float = 15.0, rate_dps: float = 15.0,
+                    range_m: float | None = None,
+                    hold_altitude: bool = False) -> str:
         """Real-time pursuit of a gz mover: 10 Hz offboard streaming of
         position + velocity-feedforward setpoints (PX4's cascade is the PD
         law — see agents/flight/track.py). Blocks until duration_s (capped)
         elapses, or returns EARLY in intercept mode the moment the horizontal
-        gap closes within within_m."""
+        gap closes within within_m. alt=None (the tool default) holds the
+        CURRENT altitude — the same rule as orbit's (M6 commitment safeguard:
+        an omitted alt must never be a silent fixed-default climb).
+
+        W3a locked-object ops: mode="orbit" circles the contact at radius_m,
+        rate_dps (sign = direction) with tangential feedforward; mode="shadow"
+        with range_m holds a RADIAL stand-off (the /pilot/cmd standoff op).
+        Both floor at track.MIN_ORBIT_RADIUS_M (the 7 m keep-out + margin).
+
+        hold_altitude=True (W3 codex §4, the /pilot/cmd operator layer only —
+        NOT exposed on the LLM tool schema): shadow holds the COMMANDED
+        altitude and skips the M3b beam-geometry altitude profile (its sag
+        descended the COCO demo pursuit out of the car's detection
+        envelope), and the R2 radial floor raises range_m/radius_m to
+        projection.min_pursuit_range_m(alt) — the level camera's blind cone
+        grows with the hold altitude (docs/benchmarks/w3-rerun.md). R3: the
+        held shadow takes the DIRECT reference lane (the 1 m/s^2 shaper lost
+        the mover's 90deg corners — docs/benchmarks/w3-run3.md), the
+        implicit lock ring defaults to R_min+2, and a radial escape
+        feedforward engages inside R_min+1. R8: an image-edge barrier grows
+        the guard by up to 4 m as the designated contact's bbox bottom nears
+        the frame floor (docs/benchmarks/w3-run7.md). Default False keeps
+        the M3b law byte-identical."""
         import time as _time
 
         from mavsdk.offboard import (OffboardError, PositionNedYaw,
                                      VelocityNedYaw)
 
         from agents.flight import track as trk
+        from agents.perception import projection as proj
 
         if self.contacts is None:
             raise ValueError("track needs a contact provider (no mover feed)")
         name = str(target or "").strip()
+        if alt is None:
+            me_now = self.world.world_xy(self.bridge, self.i)
+            alt = me_now[2] if me_now else 12.0
         poses = self.contacts.poses()
         if name not in poses:
             # O4/O6: a BEARING-ONLY contact (a detection the EKF tracks but no
@@ -530,14 +599,59 @@ class FlightOps:
                          or "none seen yet")
                 raise ValueError(f"unknown moving contact {name!r} (visible: "
                                  f"{known})")
+        # W3 integration fix: an ALREADY-positioned (geom) contact never
+        # passed through _acquire, so nothing designated it — but _feed_tof
+        # idles while `designated is None`, so the ToF beam never fused on
+        # the /api/lock click path and the cockpit's track banner/beam chip
+        # stayed IDLE for the whole pursuit (design §5: the click perception
+        # path runs through VisionContacts.designate; the pursuit already
+        # feeds set_beam_context every tick — dead context without this).
+        # Idempotent (post-_acquire re-designate is a no-op); truth-fed
+        # providers (GzPoses) have no designate and are untouched.
+        designate = getattr(self.contacts, "designate", None)
+        if callable(designate):
+            try:
+                designate(name)
+            except Exception:
+                pass
         mode = str(mode or "shadow").strip().lower()
-        if mode not in ("shadow", "intercept"):
-            raise ValueError("mode must be 'shadow' or 'intercept'")
+        if mode not in ("shadow", "intercept", "orbit"):
+            raise ValueError("mode must be 'shadow', 'intercept' or 'orbit'")
+        # W3 integration fix: apply the pursuit tuning HERE — until now only
+        # the eval harnesses called tune_pursuit_params, so the live pilot /
+        # operator click path pursued with PX4's stock MPC_TILTMAX_AIR: the
+        # first dash pitched the body-fixed camera past the ±21° vfov edge,
+        # the car left the frame, and the EKF dropped the contact inside
+        # lost_s (five consecutive LOST pursuits observed live 2026-08-01).
+        # Best effort and idempotent (the method already tolerates param
+        # failures; the evals' explicit calls stay harmless).
+        await self.tune_pursuit_params()
         alt = float(alt)
         within = max(1.0, float(within_m))
         speed = min(abs(float(speed)), trk.MAX_SPEED_MPS) or trk.MAX_SPEED_MPS
         dur = min(max(float(duration_s), 1.0), trk.MAX_DURATION_S)
         so_e, so_n = float(standoff_east), float(standoff_north)
+        # keep-out floor: no orbit radius / stand-off range inside the bubble
+        radius_m = max(trk.MIN_ORBIT_RADIUS_M, float(radius_m))
+        range_m = (None if range_m is None
+                   else max(trk.MIN_ORBIT_RADIUS_M, float(range_m)))
+        if hold_altitude:
+            # W3 codex R2 geometry law (the operator/demo path only): the
+            # level camera's frame floor (half-vfov - 3deg margin) sets a
+            # radial floor that GROWS with the commanded hold altitude —
+            # inside it the target drops out of frame and the pursuit
+            # LOST-breaks in its own blind cone (docs/benchmarks/w3-rerun.md).
+            # A shadow without an explicit range defaults to the floor + 2 m
+            # of corner-transient reserve (W3 codex R3: R_min is a
+            # steady-state law, the ring needs margin for the mover's
+            # corners); an explicit standoff stays floored at the floor
+            # itself. hold_altitude=False keeps the M0-M6 defaults
+            # byte-identical.
+            r_min = proj.min_pursuit_range_m(alt)
+            r_guard = r_min + 1.0
+            radius_m = max(radius_m, r_min)
+            range_m = r_min + 2.0 if range_m is None else max(range_m, r_min)
+        orb = trk.OrbitPhase(radius_m, rate_dps)
 
         # world ENU -> PX4 local NED: constant offset from one simultaneous read
         me = self.world.world_xy(self.bridge, self.i)
@@ -603,6 +717,15 @@ class FlightOps:
                     if adopted is not None:
                         name, tp = adopted
                         self._last_track_name = name
+                        # the EKF rebirth changed the id — move the
+                        # designation (and with it ToF fusion + the cockpit
+                        # banner) onto the ADOPTED contact, or fusion dies
+                        # on the first churn (W3 integration fix).
+                        if callable(designate):
+                            try:
+                                designate(name)
+                            except Exception:
+                                pass
                     if tp is None:
                         # really gone: hold position (the stream NEVER stops
                         # mid-call) and give the provider lost_s to return.
@@ -652,9 +775,11 @@ class FlightOps:
                 # the measured bearing at a creep (the beam IS the
                 # acquisition — restore the close geometry where it re-locks,
                 # the SM's COASTING -> ACQUIRING leg). For geom contacts the
-                # proven M3a behavior is unchanged: hold the shaped point and
-                # keep the nose on the measured bearing — the stream NEVER
-                # stops mid-call (O2).
+                # proven M3a behavior holds the shaped point and keeps the
+                # nose on the measured bearing — the stream NEVER stops
+                # mid-call (O2). R4 (the demo/hold_altitude path only): the
+                # nose follows the EKF-PREDICTED bearing instead, below; the
+                # mover default keeps the stale bearing byte-identical.
                 health_fn = getattr(self.contacts, "health", None)
                 health = health_fn(name) if callable(health_fn) else "MEASURED"
                 if health == "COASTING":
@@ -669,6 +794,27 @@ class FlightOps:
                                        2.0 * math.cos(b_rad),
                                        2.0 * math.sin(b_rad), coast_yaw)
                     else:
+                        if hold_altitude and src != "tof" \
+                                and getattr(obs, "e", None) is not None:
+                            # W3 codex R4: the coast froze yaw on the STALE
+                            # measured bearing while the EKF kept predicting
+                            # the contact — steer on the PREDICTED position's
+                            # bearing so the level camera follows the mover
+                            # through the grace period. Position/velocity
+                            # stay HELD at the shaped point and the
+                            # prediction never feeds association — yaw is its
+                            # only consumer. The prediction is walked back to
+                            # the COAST_PREDICT_HORIZON_S cap (the layer-5
+                            # pre-emption) before the bearing is taken.
+                            age = max(0.0, float(getattr(obs, "age_s", 0.0)
+                                                 or 0.0))
+                            back = age - min(age, COAST_PREDICT_HORIZON_S)
+                            pe = float(obs.e) \
+                                - float(getattr(obs, "ve", 0.0) or 0.0) * back
+                            pn = float(obs.n) \
+                                - float(getattr(obs, "vn", 0.0) or 0.0) * back
+                            coast_yaw = math.degrees(
+                                math.atan2(pe - me[0], pn - me[1]))
                         pos, vel = _sp(_shp[0], _shp[1], alt, 0.0, 0.0,
                                        coast_yaw)
                     await self.drone.offboard.set_position_velocity_ned(pos, vel)
@@ -682,7 +828,108 @@ class FlightOps:
                 ref_e, ref_n, ff_ve, ff_vn = trk.control_ref(
                     mode, me[0], me[1], tp[0], tp[1], est,
                     min(speed, 0.5 + 1.5 * (_time.monotonic() - wall0)),
-                    so_e, so_n)
+                    so_e, so_n, range_m=range_m, orbit=orb)
+                # d2 regression: an observation-LESS provider (truth-fed
+                # GzPoses) has no ToF beam to serve — stream control_ref's
+                # DIRECT reference (target+standoff, velocity feedforward) at
+                # the commanded alt: the proven July 6 law. The shaped servo
+                # and beam-geometry altitude profile below exist for the
+                # camera-fed M3b lane only and stay byte-identical there.
+                # W3a: ORBIT always takes this direct lane, camera-fed or
+                # not — the shaper below re-derives the feedforward as
+                # est + KP·err and DROPS control_ref's tangential term (the
+                # carrot would corner-cut the circle), and its altitude
+                # profile would descend toward the 2.3 m floor. W3 codex R3:
+                # hold_altitude shadow joins this lane even camera-fed — the
+                # 1 m/s^2 shaper cannot hold the ring through a mover's 90deg
+                # corner (w3-run3.md's 15.1 m corner cut); only the mover
+                # default (hold_altitude=False) keeps M3b semantics for
+                # shadow/intercept, byte-identical.
+                beam_capable = callable(getattr(self.contacts, "observation", None))
+                if (mode == "orbit" or (mode == "shadow"
+                                        and (hold_altitude or not beam_capable))):
+                    ref_u = trk.clamp_ref_alt(self.world, ref_e, ref_n, alt)
+                    # yaw: prefer the measured camera bearing (image truth —
+                    # the shaper lane's precedence below) so the level camera
+                    # CENTERS the target; the 0.4 s predicted lead stays the
+                    # fallback for an observation-less provider.
+                    obs_fn = getattr(self.contacts, "observation", None)
+                    obs = obs_fn(name) if callable(obs_fn) else None
+                    mb = getattr(obs, "bearing_deg", None)
+                    if mb is not None:
+                        yaw = float(mb)
+                    else:
+                        ly = tp
+                        if est.ready:
+                            ly = (tp[0] + est.ve * 0.4, tp[1] + est.vn * 0.4)
+                        yaw = math.degrees(
+                            math.atan2(ly[0] - me[0], ly[1] - me[1]))
+                    if hold_altitude:
+                        # image-edge barrier (W3 codex R8, the demo shadow
+                        # only): the level camera cannot pitch down to follow
+                        # a depression transient (w3-run7 K2 — the box bottom
+                        # hit row 359/360, then dets=[] and LOST), so as the
+                        # designated contact's bbox bottom nears the 360-row
+                        # frame floor the guard radius grows by up to 4 m and
+                        # the radial reference projects out to it — the
+                        # pursuit backs off enough to keep the whole box in
+                        # frame. q ramps 0->1 over the bottom 60 px; a stale
+                        # view (age_s >= 0.3) or no bbox (bearing-only) keeps
+                        # q=0 — no effect, and orbit/truth-fed lanes never
+                        # see it.
+                        r_vis = r_guard
+                        if mode == "shadow":
+                            bbox = getattr(obs, "bbox_xyxy", None)
+                            age = float(getattr(obs, "age_s", 0.0) or 0.0)
+                            if bbox is not None and age < 0.3:
+                                q = (float(bbox[3]) - 300.0) / 40.0
+                                q = min(1.0, max(0.0, q))
+                                if q > 0.0:
+                                    r_vis = r_guard + 4.0 * q
+                                    dr_e = ref_e - tp[0]
+                                    dr_n = ref_n - tp[1]
+                                    dr = math.hypot(dr_e, dr_n)
+                                    if 1e-9 < dr < r_vis:
+                                        ref_e = tp[0] + r_vis * dr_e / dr
+                                        ref_n = tp[1] + r_vis * dr_n / dr
+                        if 1e-9 < gap < r_vis:
+                            # corner interlock (W3 codex R3): while the live
+                            # gap is inside the guard radius, add an outward
+                            # radial escape velocity (away from the target)
+                            # to the feedforward, then re-cap the vector at
+                            # 6 m/s — tangential following yields until
+                            # geometry recovers. R8: the visibility expansion
+                            # adds its own outward term min(3, R_vis-gap)
+                            # BEFORE the same cap.
+                            if r_vis > r_guard:
+                                vis = min(3.0, r_vis - gap)
+                                ff_ve += vis * (me[0] - tp[0]) / gap
+                                ff_vn += vis * (me[1] - tp[1]) / gap
+                            if gap < r_guard:
+                                esc = min(2.0, 0.8 * (r_guard - gap))
+                                ff_ve += esc * (me[0] - tp[0]) / gap
+                                ff_vn += esc * (me[1] - tp[1]) / gap
+                            fv = math.hypot(ff_ve, ff_vn)
+                            if fv > 6.0:
+                                ff_ve, ff_vn = ff_ve * 6.0 / fv, \
+                                    ff_vn * 6.0 / fv
+                    pos, vel = _sp(ref_e, ref_n, ref_u, ff_ve, ff_vn, yaw)
+                    await self.drone.offboard.set_position_velocity_ned(pos, vel)
+                    if beam_capable:
+                        # orbit on a camera-fed provider: keep feeding the
+                        # fusion context (the shaper lane's feed below never
+                        # runs here) — in_fusion_envelope admits orbit under
+                        # its own speed clause (beam.py, W3a).
+                        lp = self.bridge.latest(
+                            f"/px4_{self.i}/fmu/out/vehicle_local_position")
+                        own_sp = (math.hypot(getattr(lp, "vx", 0.0),
+                                             getattr(lp, "vy", 0.0))
+                                  if lp else 0.0)
+                        ctx = getattr(self.contacts, "set_beam_context", None)
+                        if callable(ctx):
+                            ctx(mode=mode, own_speed_mps=own_sp)
+                    await asyncio.sleep(1.0 / trk.CTRL_HZ)
+                    continue
                 # shaped-velocity servo: control_ref gives the REFERENCE, but
                 # raw reference jumps saturate PX4's tilt cap and oscillate —
                 # instead servo a virtual point (_shp) toward the reference
@@ -732,7 +979,13 @@ class FlightOps:
                 obs_src = getattr(obs, "range_src", None) if obs else None
                 e2 = getattr(obs, "elevation_deg", None) if obs else None
                 xy2 = getattr(obs, "bbox_xyxy", None) if obs else None
-                if obs_src == "tof" and e2 is not None and xy2 is not None:
+                if hold_altitude:
+                    # operator opt-out (W3 codex §4): hold the commanded alt —
+                    # the profile below sagged the COCO demo pursuit toward
+                    # 2.3-3 m and the car left the frame floor. clamp_ref_alt
+                    # still applies above; the min() shape is unchanged.
+                    alt_ref = alt
+                elif obs_src == "tof" and e2 is not None and xy2 is not None:
                     from agents.perception.projection import vfov_deg
                     fy2 = (360.0 / 2.0) / math.tan(
                         math.radians(vfov_deg(640, 360)) / 2.0)
@@ -794,7 +1047,8 @@ class FlightOps:
                         f"gap {hit[1]:.1f}m; {v}")
             return (f"{self.name} did NOT close within {within:g}m of {name} "
                     f"in {t_total:.0f}s (min gap {log.min_gap:.1f}m); {v}")
-        return (f"{self.name} shadowed {name} for {t_total:.0f}s: gap min "
+        verb = "orbited" if mode == "orbit" else "shadowed"
+        return (f"{self.name} {verb} {name} for {t_total:.0f}s: gap min "
                 f"{log.min_gap:.1f}m / mean {log.mean_gap():.1f}m, best "
                 f"contiguous ≤{within:g}m: {log.best_dwell:.0f}s; {v}")
 

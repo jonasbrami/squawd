@@ -28,13 +28,10 @@ import time
 
 sys.path.insert(0, "/workspace")
 
-from mavsdk import System
-from mavsdk.action import ActionError
-from gz.transport13 import Node as GzNode
-from gz.msgs10.pose_v_pb2 import Pose_V
-from PIL import Image, ImageDraw
-
-from agents.core.camera import GzCameras
+# Third-party/sim imports (mavsdk, gz, PIL, agents.core.camera) are LAZY —
+# they live inside main()/Truth.__init__ so this module stays importable on
+# the host (no sim deps) for scripts/demo_dataset.py, which reuses Truth,
+# hull and the labeling geometry (W2.5b demo-coco path).
 
 FX = 320.0 / math.tan(1.204 / 2.0)          # IMX214 intrinsics (projection.py)
 FY = FX                                      # square pixels, 640x360
@@ -49,6 +46,8 @@ class Truth:
     """Latest (pos, quat) per model from dynamic_pose/info."""
 
     def __init__(self, world: str):
+        from gz.transport13 import Node as GzNode
+        from gz.msgs10.pose_v_pb2 import Pose_V
         self._world = world
         self._models: dict[str, tuple] = {}
         self._node = GzNode()
@@ -147,6 +146,7 @@ def label_mover(mov, cam, bearing, pitch, w, h):
 # ---------- capture ----------
 
 async def arm_takeoff_goto(s, alt, tgt_geo=None):
+    from mavsdk.action import ActionError
     for _ in range(3):
         try:
             await s.action.hold()
@@ -162,6 +162,12 @@ async def arm_takeoff_goto(s, alt, tgt_geo=None):
 
 
 async def main() -> int:
+    from mavsdk import System
+    from mavsdk.action import ActionError
+    from PIL import Image, ImageDraw
+
+    from agents.core.camera import GzCameras
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--sidecar", default="/workspace/PX4-Autopilot/Tools/"
                     "simulation/gz/worlds/dynamic_boxes.json")

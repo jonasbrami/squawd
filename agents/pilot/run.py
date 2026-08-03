@@ -51,10 +51,12 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
             backend = OnnxBackend(base, base.rsplit(".", 1)[0] + ".json")
         else:
             backend = ColorBlobBackend()
-        detector = Detector(cameras, backend, i=0, hz=10.0, conf=0.25)
-        # conf 0.25 for production tracking: the blob's far-range scores
-        # (0.35–0.45) would starve the CV-EKF at the 0.45 default; measurement
-        # quality lives in the contacts' NN/NIS gates (design §6.8)
+        detector = Detector(cameras, backend, i=0, hz=10.0, conf=cfg.conf,
+                            tracker=cfg.tracker)
+        # conf 0.25 default for production tracking: the blob's far-range
+        # scores (0.35–0.45) would starve the CV-EKF at the 0.45 default;
+        # measurement quality lives in the contacts' NN/NIS gates (design
+        # §6.8). VISION_CONF overrides (W2 §4: same 0.25 floor for COCO).
         detector.start()
         rangefinder = None
         if world is not None:
@@ -71,7 +73,12 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
             except Exception as e:
                 print(f"rangefinder boot failed: {e} — ToF degraded",
                       flush=True)
-        contacts = VisionContacts(world, rangefinder=rangefinder) \
+        # W3 codex §1/§2: the shipped coco-* models assemble the tracker with
+        # the vehicle superclass keys + 5 s grace (cfg.tracker_config());
+        # None keeps the mover's contractual TrackerConfig defaults.
+        contacts = VisionContacts(world, rangefinder=rangefinder,
+                                  config=cfg.tracker_config(),
+                                  admit_classes=cfg.admit_classes) \
             if world is not None else None
         if contacts is not None:
             contacts.attach_detector(detector)      # designate() lock seam

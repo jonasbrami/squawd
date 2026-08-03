@@ -1,0 +1,26 @@
+{
+ "model": "models/coco-nano-seg-v1.onnx",
+ "imgsz": 416,
+ "iters": 120,
+ "nproc": 20,
+ "ort_version": "1.28.0",
+ "raw_infer_ms": {
+  "mean": 17.12,
+  "p50": 16.78,
+  "p95": 18.93,
+  "max": 25.22
+ },
+ "pipeline_ms": {
+  "mean": 18.13,
+  "p50": 17.8,
+  "p95": 19.93,
+  "max": 27.3
+ },
+ "pipeline_with_masks_ms": {
+  "mean": 18.57,
+  "p50": 18.29,
+  "p95": 19.68,
+  "max": 27.3
+ },
+ "note": "raw=letterbox+sess.run; pipeline=raw+box decode+NMS; with_masks adds per-det mask assembly (production OnnxBackend.infer parity)"
+}

@@ -7,6 +7,14 @@ Endpoints (ICD §8.2):
                       binary [seq:u32, stamp:f64, H.264 AU] per access unit
 - WS   /ws_detections verbatim relay of the pilot's /pilot/detections
 - POST /command       {text} -> /pilot/user_input (CMD_QOS)
+- POST /api/lock      {x, y} frame px -> SERVER-side hit-test (overlay.hit_test,
+                      W0.3) -> {"op":"lock","contact":name} on /pilot/cmd
+                      (CMD_QOS) for the pilot's W0.4 arbiter; 409 + reason
+                      (stale|ambiguous|miss) when the click can't be honored
+- POST /api/cmd       raw locked-object op (design v0.3 §5 schema: orbit /
+                      standoff / stop / resume; per-op fields + numeric bounds
+                      checked) published VERBATIM on /pilot/cmd (CMD_QOS) —
+                      400 on anything malformed (W3b)
 - POST /estop         {action: "hold"|"land"} -> /pilot/estop (CMD_QOS); the
                       pilot's own arbiter (M1) does the cancel + emergency act
 - GET  /chat?since=n  /pilot/chat TopicLog lines
@@ -27,7 +35,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
 from agents.core.store import TopicLog
-from agents.observatory import metrics
+from agents.observatory import metrics, overlay
 from agents.observatory.video import VideoHub
 
 HERE = os.path.dirname(__file__)
@@ -41,9 +49,51 @@ T_BATT = PX4_BASE + "/battery_status"
 T_DETECTIONS = "/pilot/detections"
 T_USER_INPUT = "/pilot/user_input"
 T_ESTOP = "/pilot/estop"
+T_CMD = "/pilot/cmd"
 T_CHAT = "/pilot/chat"
 
 AU_HEADER = struct.Struct(">Id")        # [seq:u32 BE, sim_stamp:f64 BE] (ICD §8.2)
+
+# Locked-object op schema (design v0.3 §5) — the cockpit<->pilot contract on
+# /pilot/cmd, shared with the flight workstream's W0.4 arbiter. The server
+# validates and relays VERBATIM; it never reshapes a payload.
+OP_REQUIRED = {
+    "lock": ("contact",),
+    "orbit": ("contact", "radius_m", "rate_dps"),
+    "standoff": ("contact", "range_m"),
+    "stop": (),
+    "resume": ("contact",),
+}
+OP_BOUNDS = {"radius_m": (8, 40), "rate_dps": (2, 45), "range_m": (8, 40)}
+
+
+def validate_op(body) -> str | None:
+    """Gate a raw /pilot/cmd op payload against the v0.3 §5 schema.
+
+    None when the op is well-formed (op known, its required fields present,
+    numeric args in bounds); otherwise the legible 400 reason. Extra fields
+    pass through untouched — validation gates, never reshapes.
+    """
+    if not isinstance(body, dict):
+        return "body must be a JSON object"
+    op = body.get("op")
+    if op not in OP_REQUIRED:
+        return f"unknown op {op!r} (expected one of {sorted(OP_REQUIRED)})"
+    for field in OP_REQUIRED[op]:
+        if field not in body:
+            return f"op {op!r} requires {field!r}"
+    if "contact" in OP_REQUIRED[op]:
+        contact = body["contact"]
+        if not isinstance(contact, str) or not contact.strip():
+            return "contact must be a non-empty string"
+    for field, (lo, hi) in OP_BOUNDS.items():
+        if field in OP_REQUIRED[op]:
+            v = body[field]
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return f"{field} must be a number"
+            if not lo <= v <= hi:
+                return f"{field} must be within [{lo}, {hi}] (got {v})"
+    return None
 
 
 def _snap_json(msg):
@@ -146,6 +196,51 @@ def build_app(bridge, cameras, hub, *, msg_type, cmd_qos, chat_qos):
         bridge.publish(T_ESTOP, msg_type, m, cmd_qos)
         return JSONResponse({"ok": True, "action": action})
 
+    async def lock(request):
+        """Click-to-lock (W0.3): server-side hit-test of frame-pixel coords
+        against the latest snapshot's contacts[].bbox_xyxy, gated on the
+        server's newest camera frame stamp (the same 0.5 s rule the overlay
+        draws by). A unique hit publishes the lock op on /pilot/cmd; anything
+        else is a 409 with the legible reason (never a guessed contact)."""
+        body = await request.json()
+        try:
+            x, y = float(body["x"]), float(body["y"])
+        except (KeyError, TypeError, ValueError):
+            return JSONResponse(
+                {"ok": False, "error": "body must carry numeric x and y "
+                 "(frame pixels)"}, status_code=400)
+        snap = _snap_json(bridge.latest(T_DETECTIONS))
+        f = cameras.snapshot(I)
+        res = overlay.hit_test(snap, x, y, f.sim_stamp if f else None)
+        if res["contact"] is None:
+            print(f"[lock] rejected: {res['reason']}", flush=True)
+            return JSONResponse({"ok": False, "reason": res["reason"]},
+                                status_code=409)
+        print(f"[lock] {res['contact']}", flush=True)
+        m = msg_type()
+        m.data = json.dumps({"op": "lock", "contact": res["contact"]})
+        bridge.publish(T_CMD, msg_type, m, cmd_qos)
+        return JSONResponse({"ok": True, **res})
+
+    async def cmd(request):
+        """Locked-object operations (W3b, design v0.3 §5): the ops bar's raw
+        op payload, schema-validated and published VERBATIM on /pilot/cmd —
+        the pilot's W0.4 arbiter owns execution. 400 on anything malformed."""
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "body must be JSON"},
+                                status_code=400)
+        err = validate_op(body)
+        if err:
+            print(f"[cmd] rejected: {err}", flush=True)
+            return JSONResponse({"ok": False, "error": err}, status_code=400)
+        print(f"[cmd] {json.dumps(body)}", flush=True)
+        m = msg_type()
+        m.data = json.dumps(body)
+        bridge.publish(T_CMD, msg_type, m, cmd_qos)
+        return JSONResponse({"ok": True, "op": body["op"]})
+
     async def chat_feed(request):
         try:
             since = int(request.query_params.get("since", "0"))
@@ -160,6 +255,8 @@ def build_app(bridge, cameras, hub, *, msg_type, cmd_qos, chat_qos):
         Route("/chat", chat_feed),
         Route("/command", command, methods=["POST"]),
         Route("/estop", estop, methods=["POST"]),
+        Route("/api/lock", lock, methods=["POST"]),
+        Route("/api/cmd", cmd, methods=["POST"]),
         WebSocketRoute("/ws_cam", ws_cam),
         WebSocketRoute("/ws_detections", ws_detections),
         Mount("/static", app=StaticFiles(directory=os.path.join(HERE, "static"))),

@@ -229,3 +229,91 @@ def test_onnx_infer_end_to_end_with_fake_session():
     b._input_size = 640
     dets = b.infer(orange_frame(), 0.5)
     assert len(dets) == 1 and dets[0].cls == "target"
+
+
+# ---- W2: manifest-driven class names (design 2026-07-28 §4) ----
+
+def test_decode_seg_uses_manifest_class_names():
+    """The manifest's "classes" table names the decoded dets (the COCO
+    artifact ships 80); ids past the table fall back to cls_<k>."""
+    from agents.vision.backends import _decode_seg
+    coco = tuple(["person", "bicycle", "car"] + [f"c{i}" for i in range(3, 80)])
+    dets = _decode_seg(_fake_seg_outputs(cls=2, ncls=80), 0.5, 1.0, (0, 140),
+                       640, 360, names=coco)
+    assert dets[0].cls == "car"
+    dets = _decode_seg(_fake_seg_outputs(cls=0, ncls=80), 0.5, 1.0, (0, 140),
+                       640, 360, names=coco)
+    assert dets[0].cls == "person"
+    dets = _decode_seg(_fake_seg_outputs(cls=1, ncls=80), 0.5, 1.0, (0, 140),
+                       640, 360, names=("target",))
+    assert dets[0].cls == "cls_1"
+
+
+def test_onnx_infer_names_from_manifest_classes():
+    """OnnxBackend routes its _classes (the manifest table, set at load) into
+    decode; the mover manifest's absent table keeps the 2-class fallback
+    (pinned by test_onnx_infer_end_to_end_with_fake_session)."""
+    from agents.vision.backends import OnnxBackend
+
+    class FakeSession:
+        def run(self, _names, feed):
+            return _fake_seg_outputs(cls=2, ncls=80)
+
+        def get_inputs(self):
+            import numpy as np
+            return [type("I", (), {"shape": np.array([1, 3, 640, 640])})()]
+
+    b = OnnxBackend("unused", "unused")
+    b._session = FakeSession()
+    b._layout = "seg-v1"
+    b._input_size = 640
+    b._classes = tuple(["person", "bicycle", "car"]
+                       + [f"c{i}" for i in range(3, 80)])
+    assert b.infer(orange_frame(), 0.5)[0].cls == "car"
+
+
+def test_shipped_manifests_class_tables():
+    """The COCO manifests ship the 80-class table decode consumes (both
+    operating points identical); the mover manifest ships none."""
+    import json
+    from pathlib import Path
+    models = Path(__file__).resolve().parent.parent / "models"
+    coco = json.loads((models / "coco-nano-seg-v1.json").read_text())
+    assert len(coco["classes"]) == 80
+    assert coco["classes"][0] == "person" and coco["classes"][2] == "car"
+    coco640 = json.loads((models / "coco-nano-seg-v1-640.json").read_text())
+    assert coco640["classes"] == coco["classes"]
+    assert coco640["sha256"]
+    mover = json.loads((models / "mover-nano-seg-v1.json").read_text())
+    assert tuple(mover.get("classes") or ()) == ()
+
+
+def test_request_lock_default_tracker_none_consumes_seed():
+    """W0.2: the DEFAULT config (tracker `none`) must not ValueError on the
+    click path — the no-op tracker resolves the seed and stores it."""
+    dets = [Detection("target", 0.9, (20, 16, 30, 26)),
+            Detection("target", 0.7, (40, 30, 50, 40))]
+    cam = FakeCameras([orange_frame(seq=1)])
+    det = Detector(cam, ScriptBackend(dets), hz=200.0, conf=0.1)
+    det.request_lock(seed_xy=(25.0, 20.0))          # before start: no race
+    det.start()
+    res = det.wait_next(after_seq=0, timeout=2.0)
+    det.stop()
+    assert res is not None and res.designated_hit is not None
+    hit = res.designated_hit
+    assert hit.detection_index == 0 and hit.xyxy == (20, 16, 30, 26)
+    assert hit.aim_px == dets[0].footpoint
+    assert det._tracker is not None                  # no ValueError path
+    assert det._tracker._seed == ((25.0, 20.0), None)
+
+
+def test_request_lock_seed_index_is_preferred():
+    dets = [Detection("target", 0.9, (20, 16, 30, 26)),
+            Detection("target", 0.7, (40, 30, 50, 40))]
+    cam = FakeCameras([orange_frame(seq=1)])
+    det = Detector(cam, ScriptBackend(dets), hz=200.0, conf=0.1)
+    det.request_lock(seed_xy=(25.0, 20.0), seed_index=1)
+    det.start()
+    res = det.wait_next(after_seq=0, timeout=2.0)
+    det.stop()
+    assert res.designated_hit.detection_index == 1
