@@ -213,6 +213,10 @@ Recommended correction:
 
 Severity: **Medium**
 
+Status: **Addressed in the 2026-08-08 documentation update.** The finding below
+is retained as historical audit evidence; the root README and architecture now
+describe the single-drone system and link historical scope explicitly.
+
 The root README and `docs/architecture.md` describe the removed Commander
 system. `docs/PROJECT-STATE.md` describes the single-drone rebuild and is much
 closer to the source. Counts and milestone statements also vary within the
@@ -297,4 +301,3 @@ Recommended correction:
   records tool-level transcripts and uncertainty-aware aggregates.
 - Coordinate conversions and timestamped pose/attitude interpolation are
   centralized instead of being duplicated across perception and flight code.
-

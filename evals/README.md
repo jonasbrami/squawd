@@ -7,10 +7,12 @@ trades latency vs correctness. Distinct from `bench/` (sim/infra throughput).
   over a sampled `WorldTrack`. No LLM-judge.
 - **Tasks:** declarative YAML in `tasks/`, tagged on 4 difficulty axes (plan depth,
   coordination, ambiguity, spatial). Targets are spec-declared coordinates.
-- **Models:** `{opus, sonnet, haiku}` via per-role assignments (`drones=opus`).
+- **Models:** `{opus, sonnet, haiku, kimi, kimi3}` via per-role assignments
+  (`drones=opus`).
   Tier→id: `opus`=claude-opus-4-8, `sonnet`=claude-sonnet-5, `haiku`=claude-haiku-4-5.
-  Kimi subscription tiers are mapped but not yet run (M6): `kimi`=kimi-for-coding,
-  `kimi3`=k3 (design §5.2).
+  Kimi tiers use the backend recipe: `kimi`=kimi-for-coding and `kimi3`=k3
+  (design §5.2). The bounded S6 smoke has run; the three-rung M6 ladder remains
+  separate outstanding work. Check `docs/PROJECT-STATE.md` before spending quota.
 - **Repeats:** K per cell → success-rate + latency distribution.
 - **Reset:** RTL soft-reset between cells; health check escalates to a fresh sim.
 - **Flight link:** one MAVSDK `System` + telemetry sub is built once and reused across
@@ -42,7 +44,7 @@ then trips immediately and the drone never climbs, so navigation tasks fail spur
 Confirmed 2026-07-01: `reach_marker_single` PASSES on `default` (drone reached 0.5 m from
 the marker), FAILS on baylands for that reason.
 
-## Run (verified 2026-07-01, single-drone smoke)
+## Historical Claude run recipe (verified 2026-07-01)
 
 ```bash
 # 1) bring up a single-drone FLAT-world sim in the swarm container (host):
@@ -65,8 +67,9 @@ docker exec evals-sim bash -lc 'source /opt/ros/jazzy/setup.bash; source /opt/px
     --assignments "drones=opus;drones=haiku" --k 5'
 ```
 
-cpu render backend is fine for navigation tasks (no camera needed); use an Intel-GPU
-container (see `scripts/run_swarm_demo.sh`) only for tasks that need `look`/`scan`.
+CPU rendering is suitable only for tasks that do not require the camera. For
+camera/perception tasks, follow the current container setup in
+`docs/RUN-DEMO.md`; do not use the unsupported `run_swarm_demo.sh` agent path.
 
 Outputs `evals/out/<timestamp>/results.jsonl` + `RESULTS.md`. Re-running the same
 command resumes (cells already in `results.jsonl` are skipped).

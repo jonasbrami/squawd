@@ -1,215 +1,193 @@
-# squawd — LLM-piloted UAV swarm
+# squawd — LLM-piloted UAV simulation
 
-A swarm of drones you command in **plain language**. You are the *Commander*: you
-type into a browser ("everyone take off and spread out", "drone_1 climb to 20m",
-"all return and land") and an LLM **Commander agent** decomposes your intent into
-**directed per-drone tasks**. Each drone is its own LLM agent — its own onboard
-thinking, able to run on its own hardware — that carries out the task it is given
-and **reports back** to the Commander.
+Squawd is a research system for operating a simulated UAV with natural-language
+commands. The active implementation is a **single-drone** stack: one LLM pilot
+selects high-level flight and perception tools, while PX4 and classical
+controllers execute the real-time work.
 
-Everything runs self-contained in one Docker container: **Gazebo Harmonic** +
-**PX4 SITL** (N flight controllers) + **ROS 2 Jazzy** + per-drone **onboard
-cameras** + a web **Observatory**.
+The current runtime combines Gazebo Harmonic, PX4 SITL, ROS 2 Jazzy, MAVSDK, a
+forward camera and ToF rangefinder, a browser cockpit, deterministic evaluation,
+and Claude or Kimi through a backend seam. A fast ONNX perception lane tracks
+moving contacts continuously; an optional host-GPU sidecar adds open-vocabulary
+`look` and prompted `pinpoint` tools.
 
-![Swarm Observatory](docs/img/observatory.png)
+> **Project scope:** the Commander-led multi-drone system is historical. The
+> simulator can still start multiple PX4 instances, and swarm benchmarks remain
+> in the repository, but the active pilot, cockpit, and supported demo path are
+> single-drone. The old `scripts/run_swarm_demo.sh` path is not runnable because
+> its Commander/assembler modules were removed during the rebuild.
 
-The Observatory (above) shows, live: the selected drone's **onboard camera POV**
-with a heads-up overlay (left), a **PPI radar scope** of the whole swarm in the
-GPS frame — each blip projecting its camera's field-of-view cone (center) — and
-the **comms feed** where the Commander's dispatches and
-the drones' reports scroll by as flight strips (right). Click any blip or camera
-tile to focus a drone; type a command at the bottom and watch the Commander
-delegate.
+## Start here
 
----
+| Need | Read |
+|---|---|
+| Understand the current product | [Architecture](docs/architecture.md) |
+| Run the supported cockpit demo | [Demo runbook](docs/RUN-DEMO.md) |
+| See active work, blockers, and evidence | [Project state](docs/PROJECT-STATE.md) |
+| Navigate design and benchmark records | [Documentation index](docs/README.md) |
+| Review known engineering and safety gaps | [Codebase review](gpt-review/ISSUES.md) |
 
-## What you get
+## What works today
 
-- **Natural-language command** of an N-drone swarm — no waypoints, no scripting.
-- **Hierarchical agents**: one Commander that dispatches directed tasks to N
-  autonomous drone agents — each with its own thinking — which report back.
-- **Drones that see** — the onboard camera frame is fed to Claude's vision, so a
-  drone genuinely perceives what's below it (not just telemetry).
-- **Real-time target tracking** — a `track` tool where the LLM only *plans*
-  (which contact, `shadow` vs `intercept`) and a classical 10 Hz controller flies
-  the chase. This unlocks moving-target missions that are impossible with an LLM in
-  the fast loop at *any* model tier — see [the track benchmark](docs/benchmarks/EVALS-TRACK-2026-07-07.md).
-- **Per-drone onboard cameras** rendered on the GPU, streamed to the browser.
-- **A realistic "baylands" world** (PX4's coastal scene — road, grass, water,
-  trees) by default. `WORLD=city` swaps in a procedural building world (the only
-  world with building obstacle-`scan`).
-- **Scales with N** — `./scripts/run_swarm_demo.sh 5` just works; ports,
-  namespaces, camera tiles, and agents are all derived from the drone index.
+- Natural-language operation through one persistent pilot agent.
+- High-level flight tools for takeoff, relative and named-target movement,
+  orbiting, facing, hovering, landing, and moving-target pursuit.
+- A 10 Hz classical `track` controller: the LLM chooses the target and behavior;
+  the LLM is not in the fast control loop.
+- Continuous camera inference with ONNX segmentation, world projection,
+  CV-EKF contact tracking, and optional fixed-beam ToF fusion.
+- A browser cockpit with live POV video, detections/masks, telemetry, contact
+  locking, orbit/standoff controls, chat, and emergency hold/land.
+- Optional deep perception through a host-GPU sidecar: YOLO-World vocabulary
+  detection, SAM 2.1 pinpoint segmentation, and a low-rate advisory lane.
+- Declarative evaluation tasks with deterministic simulator-truth grading,
+  scripted no-LLM baselines, transcript capture, and statistical reports.
 
----
-
-## How it works
-
-squawd runs as one Docker container with three cooperating layers: the
-**simulation** (Gazebo + one PX4 flight controller per drone), the **agent layer**
-(a Commander and N drone agents, each its own Claude client), and the
-**Observatory** web UI.
-
-You type a command in the browser. The **Commander** reads it together with a live
-map of where every drone is and what's nearby, then breaks it into a **directed
-task for each drone that should act**. Each **drone agent** carries out its task
-with its own flight tools — take off, fly to a point, orbit, look through its
-camera — and **reports back**. The Commander reads the reports and only follows up
-if the goal isn't met. Drones never talk to each other; the Commander is the hub.
+## Runtime at a glance
 
 ```mermaid
-flowchart TD
-    Human([You / Observatory])
-    CMD{{Commander agent}}
-    D0[drone_0 agent]
-    D1[drone_1 agent]
-    D2[drone_N agent]
-    Human -- "command" --> CMD
-    CMD == "task" ==> D0
-    CMD == "task" ==> D1
-    CMD == "task" ==> D2
-    D0 == "report" ==> CMD
-    D1 == "report" ==> CMD
-    D2 == "report" ==> CMD
-    CMD -. "mirror to UI" .-> Human
+flowchart LR
+    Operator[Operator / browser]
+
+    subgraph Container[pilot-sim container]
+        GZ[Gazebo Harmonic]
+        PX4[PX4 SITL]
+        XRCE[uXRCE-DDS]
+        MAV[mavsdk_server]
+        Pilot[LLM pilot]
+        Fast[ONNX perception + tracking]
+        Cockpit[Cockpit server]
+    end
+
+    Deep[Optional host-GPU<br/>deep sidecar]
+    Model[Claude or Kimi]
+
+    Operator <-->|HTTP / WebSocket| Cockpit
+    Cockpit -->|ROS command topics| Pilot
+    GZ -->|camera + range| Fast
+    Fast -->|contacts / fusion| Pilot
+    Fast -->|detection snapshots| Cockpit
+    Pilot <-->|tool turns| Model
+    Pilot -->|MAVSDK| MAV
+    MAV <-->|MAVLink| PX4
+    PX4 <-->|DDS telemetry| XRCE
+    XRCE --> Pilot
+    XRCE --> Cockpit
+    Pilot <-->|look / pinpoint| Deep
 ```
 
-Agents talk **only over ROS 2 topics**, so a drone could run on its own onboard
-computer with no code change. And because each agent only thinks when something
-lands on its channel, an unaddressed drone costs nothing.
+## Prerequisites
 
-### Drones actually see
+This repository is not yet a clean-clone, one-command installation. The
+supported local setup currently requires:
 
-The `look` tool hands a drone's live camera frame to Claude as an image, so the
-same model that plans the flight also perceives the scene. A drone can `look` and,
-in its very next thought, write *"open parkland with paved paths and scattered
-trees, a parking lot to the south"* — real visual understanding, not OCR or a
-bolt-on detector.
+- Linux with Docker.
+- A local `PX4-Autopilot/` checkout containing a built
+  `build/px4_sitl_default/bin/px4`. The checkout is intentionally git-ignored;
+  the Docker image does **not** fetch or compile PX4.
+- The `squawd:dev` container image.
+- Intel or NVIDIA rendering for camera-dependent runs. The current CPU launcher
+  selects a camera-less PX4 model and therefore does not pass the demo camera
+  preflight.
+- Either a logged-in Claude CLI (`~/.claude/.credentials.json`) or
+  `SQUAWD_BACKEND=kimi` with `KIMI_API_KEY`.
+- Provisioned ONNX model artifacts in `models/`; see
+  [models/README.md](models/README.md).
 
-> **Go deeper:** [docs/architecture.md](docs/architecture.md) — the full module
-> map, data buses, the poll-based comms model, the vision pipeline, and the
-> wake/token dynamics that keep idle drones free.
+The cockpit binds to all container interfaces and the Docker launcher publishes
+port 8000 on all host interfaces. It has no authentication. Treat it as a
+**local trusted-workstation interface only**; do not expose it to an untrusted
+network or a real vehicle.
 
----
+## Build and run the supported demo
 
-## Quickstart
+Build the container image:
 
-### Prerequisites
-- **Docker** on Linux.
-- **Logged-in Claude CLI** on the host — the agents use your OAuth from `~/.claude`;
-  **no API key needed.** (Run `claude` once to log in.) The launcher copies your
-  creds to an isolated `/tmp/swarm-claude` and **never writes to the live
-  `~/.claude`.**
-- For cameras: a usable **GPU** (Intel iGPU works out of the box via `/dev/dri`).
-
-### 1. Build the image (once, slow — compiles PX4 + pulls Gazebo/ROS)
 ```bash
 docker build -f docker/Dockerfile.swarm -t squawd:dev .
 ```
 
-### 2. Launch the swarm
+The PX4 checkout and model artifacts are bind-mounted/runtime prerequisites;
+they are not produced by this image build.
+
+Then follow the complete [demo runbook](docs/RUN-DEMO.md). The short form is:
+
 ```bash
-# 3 drones, baylands world, GPU cameras (default)
-./scripts/run_swarm_demo.sh 3
-
-# more drones
-./scripts/run_swarm_demo.sh 5
-
-# procedural building world (adds building obstacle-scan)
-WORLD=city ./scripts/run_swarm_demo.sh 3
-
-# pick the render backend: intel iGPU (default) / nvidia dGPU / cpu (no cameras)
-RENDER_BACKEND=nvidia ./scripts/run_swarm_demo.sh 3
-```
-> First baylands launch downloads ~400MB of Gazebo Fuel terrain/water models
-> (cached in `/tmp/swarm-gz-fuel`, reused after that — needs internet once).
-
-Then open **http://localhost:8000** and command the swarm:
-> *"everyone take off and climb to 12m, then spread out and scout"*
-> *"drone_1 climb to 20m"* · *"all return and land"*
-
-The Commander decomposes each command, the drones carry it out and report back in
-the chat, and the camera tiles + map update live.
-
-### Logs & stop
-```bash
-docker exec swarm-multi tail -f /tmp/swarm.log   # agents
-docker exec swarm-multi tail -f /tmp/obs.log     # observatory / commands
-docker rm -f swarm-multi                          # stop everything
+set -a; . ./.env; set +a
+VISION_MODEL=coco-nano-seg-v2-640.onnx SQUAWD_BACKEND=kimi \
+  ./scripts/run_single_demo.sh demo
 ```
 
-### Ports
-| Port | Service |
-|------|---------|
-| `8000` | Observatory web UI |
-| `8888` | uXRCE-DDS Agent (UDP) |
-| `50051 + i` | `mavsdk_server` gRPC for drone *i* |
-| `14540 + i` | PX4 MAVLink (offboard) for drone *i* |
+`run_single_demo.sh` starts the simulator and pilot. The cockpit is a separate
+process; the runbook includes its command, readiness checks, deep-sidecar setup,
+logs, and teardown.
 
-> Camera rendering uses the Intel iGPU by default; `RENDER_BACKEND=nvidia|cpu`
-> selects the dGPU or software GL. All render paths, resolution knobs, and the
-> measured capacity ceilings are covered in [docs/rendering.md](docs/rendering.md).
+## Test lanes
 
----
+The repository has cheap host-side tests and expensive live simulation/eval
+lanes. Do not conflate them.
+
+```bash
+# Host-side suite. Some integration tests need local sockets or a live sidecar.
+uv run --extra dev --with pyyaml --with numpy \
+  pytest tests/ --ignore=tests/integration -q
+
+# Integration lane: may need loopback sockets, Docker context, weights, or a
+# running deep sidecar. Run deliberately, not as an implicit unit prerequisite.
+uv run --extra dev --with pyyaml --with numpy pytest tests/integration -q
+
+# Fast syntax/whitespace checks.
+git diff --check
+bash -n scripts/*.sh sim/launch/*.sh evals/scripts/*.sh
+```
+
+The current worktree is under active development; consult
+[PROJECT-STATE.md](docs/PROJECT-STATE.md) for the last verified result instead
+of assuming every historical “green” count describes HEAD. Live Gazebo, PX4,
+GPU, and LLM evaluations are intentionally run as explicit bounded campaigns.
 
 ## Project layout
 
-```
-agents/                     # one package per responsibility; deps flow downward
-  core/                     # RosBridge + QoS, GPS offset math, GzCameras (the one camera reader)
-  world/                    # World: loads city_boxes.json, maps PX4 NED -> world ENU, resolves targets
-  perception/               # pure trig/text: scan + situation readouts over a World
-  flight/                   # FlightOps (take_off/goto/orbit/...) + their MCP tool bindings
-  swarm/run.py              # thin assembler: build the agents + gather their run() loops
-  swarm/commander.py        # CommanderAgent: user/report channels, dispatch(), run()
-  swarm/drone.py            # DroneAgent: MAVSDK link, cmd inbox, report(), connect(), run()
-  observatory/server.py     # web UI backend: state, cameras (MJPEG/WS), command intake
-  observatory/static/       # the Observatory single-page UI
-sim/
-  launch/swarm_sim.sh       # in-container launch: gz + N×PX4 + uXRCE + N×mavsdk
-  worlds/make_city_world.py # generate the 'city' world (buildings) from default.sdf
-scripts/
-  run_swarm_demo.sh         # one-command host launcher (build args, creds, GPU)
-docker/Dockerfile.swarm     # Ubuntu 24.04 + Gazebo Harmonic + ROS2 Jazzy + PX4 + uXRCE
-docs/                       # architecture, rendering, design specs (see Learn more)
+```text
+agents/
+  core/          ROS bridge, stores, camera/range inputs, telemetry history
+  world/         world geometry, coordinate conversion, trajectories
+  perception/    scan text and camera/world projection geometry
+  vision/        detector backends, tracking, ToF fusion, deep sidecar
+  flight/        MAVSDK operations, pursuit controller, tools, safety envelope
+  pilot/         active single-drone assembly, LLM loop, estop, operator arbiter
+  observatory/   cockpit server, video, state shaping, overlays, static UI
+  swarm/         legacy residue; no supported Commander assembly
+sim/             PX4/Gazebo launcher, models, worlds, mover plug-in
+evals/           task specs, runners, truth sampler/oracle, reports
+bench/           historical simulator/render-capacity benchmark
+models/          manifests and local git-ignored model weights
+docs/            current guides plus design and benchmark evidence
+gpt-review/      2026-08-01 static review and prioritized engineering findings
 ```
 
-> Dependencies form a clean DAG: `core <- world <- perception <- flight <- swarm`,
-> and `observatory -> core`. Each package is importable and testable on its own.
+## Known boundaries
 
----
+- Single-drone operation is the supported product; swarm orchestration is not.
+- Fixed-beam ToF availability is physically intermittent for small, distant,
+  moving targets. Vision-only tracking remains the normal fallback.
+- PX4 SITL estimator drift and preflight behavior are sensitive to host load and
+  long-lived containers; use fresh containers for controlled gates.
+- `run_mission` executes model-authored Python inside the pilot process and is
+  outside the fixed-tool software envelope. It is an experimental escape hatch,
+  not a safe production interface.
+- Some envelope validators are not yet connected to every movement tool. PX4's
+  own geofence is not a substitute for completing that integration.
+- Model weights and the PX4 checkout are local prerequisites rather than
+  reproducibly bootstrapped dependencies.
 
-## Roadmap / known limitations
+For the complete list, rationale, and recommended remediations, see
+[gpt-review/ISSUES.md](gpt-review/ISSUES.md).
 
-- **Drones are commander-driven only.** Each drone acts when the Commander tasks it
-  and holds its last command in between — it has its own thinking but no autonomous
-  loop. A future option is letting a drone send an *unsolicited* report (e.g. on
-  spotting something) that the Commander can react to.
-- **Run drones on separate hardware.** The agents already talk only over ROS topics
-  and are self-contained objects, so a per-process entrypoint that constructs a single
-  `DroneAgent(i)` (or the `CommanderAgent`) and awaits its `run()` would put a drone's
-  agent on its own onboard computer with no protocol change.
-- Higher-level behaviors as composable tools — moving-target `track`
-  (shadow/intercept) has shipped; search patterns and reactive obstacle avoidance
-  (a velocity-space repulsion term in the same 10 Hz control loop) are next.
+## Historical swarm material
 
----
-
-## Learn more
-
-- **[Architecture](docs/architecture.md)** — module map, runtime data flow, the
-  data buses + QoS, the poll-based comms model, the vision pipeline, and wake/token
-  dynamics.
-- **[Rendering & GPU](docs/rendering.md)** — the `RENDER_BACKEND` switch
-  (Intel iGPU / NVIDIA dGPU / software GL), resolution knobs, and why the launcher
-  is set up the way it is; measured drone-count ceilings in
-  [docs/benchmarks/RESULTS.md](docs/benchmarks/RESULTS.md).
-- **[Experiment summary](docs/benchmarks/EXPERIMENTS-SUMMARY.md)** — the full
-  eval program: which Claude tier flies which missions, how tooling (not model
-  size) unlocked most capacity, the swarm role-mix inversion (*intelligence
-  belongs in the cockpit*), and the LLM-plans/classical-executes tracking split.
-  Deep dives: [screening](docs/benchmarks/EVALS-SCREEN-2026-07-02.md) ·
-  [dynamic targets](docs/benchmarks/EVALS-DYNAMIC-2026-07-04.md) ·
-  [swarms](docs/benchmarks/EVALS-SWARM-2026-07-05.md) ·
-  [tracking](docs/benchmarks/EVALS-TRACK-2026-07-07.md).
-- **[Design specs & plans](docs/superpowers/)** — how the system was designed, decision by decision.
+The repository name, `agents/swarm/`, `bench/`, several task files, and older
+benchmark reports preserve the earlier Commander-plus-N-drones research path.
+They remain useful evidence, but they are not current run instructions. Restore
+or redesign the missing Commander and assembly entry point before presenting
+the swarm launcher as supported again.

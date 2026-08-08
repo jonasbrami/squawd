@@ -1,17 +1,43 @@
 # RUN-DEMO — Demo Cockpit Prototype runbook
 
 One drone, one pilot agent, the `demo` world (3 cars + 2 walkers on loops),
-COCO-v2 detector at 640×360@10, the cockpit web UI on :8000. Headless
-(LLM-free) by default here.
+COCO-v2 detector at 640×360@10, and the cockpit web UI on :8000. Structured
+cockpit operations are LLM-free; natural-language `/command` requests invoke
+the configured Claude or Kimi backend.
 
 ## Prereqs
 
-- Repo at `/home/quenouille/drone`, `.env` containing `KIMI_API_KEY`.
+- Repo at `/home/quenouille/drone`.
+- A local, built `PX4-Autopilot/` checkout. It is git-ignored and is not built
+  by the Dockerfile; `build/px4_sitl_default/bin/px4` must already exist.
+- A prebuilt `squawd:dev` image:
+
+  ```bash
+  docker build -f docker/Dockerfile.swarm -t squawd:dev .
+  ```
+
+- `models/coco-nano-seg-v2-640.onnx` plus its JSON manifest. V2 remains an
+  explicit demo override rather than the launcher's default.
+- For Kimi, `.env` containing `KIMI_API_KEY`; for Claude, a logged-in host CLI
+  with `~/.claude/.credentials.json`.
 - Docker. A reasonably quiet host at boot time (load < ~15 on 20 cores;
   PX4's EKF fails to converge yaw under load ≥ ~30 — "blind land"
   failsafes; check `Ready for takeoff!` in the PX4 log if arming is denied).
+  M4 note (2026-08-03): with ~5 GB swap pressure the yaw/height/GPS-drift
+  preflight flap already appeared at load ~20 and lasted ~90 min — if
+  `takeoff` keeps getting silently refused while MAVLink
+  `telemetry.health_all_ok` reads true, send **`arm()` first, then
+  `takeoff()`** (arm catches a clean EKF window; the takeoff command
+  re-runs the failing check). Details: docs/benchmarks/deep-perception-m4.md §8.
 
-## Launch
+- Intel or NVIDIA rendering. `RENDER_BACKEND=cpu` currently selects the
+  camera-less `gz_x500` model and cannot pass the demo's camera preflight.
+
+> **Network boundary:** the cockpit has no authentication and is published on
+> host port 8000. Use it only on a trusted local simulation workstation; do not
+> expose it to an untrusted network or real vehicle.
+
+## Launch the simulator and pilot
 
 ```bash
 cd /home/quenouille/drone
@@ -20,9 +46,9 @@ VISION_MODEL=coco-nano-seg-v2-640.onnx SQUAWD_BACKEND=kimi \
   ./scripts/run_single_demo.sh demo
 ```
 
-The script builds/starts the container, gates on `scripts/doctor_sim.sh`,
-and starts the pilot agent. Then start the cockpit server (once per
-container):
+The script starts a fresh container from the existing image, gates on
+`scripts/doctor_sim.sh`, and starts the pilot agent. It does not build the image
+and it does not start the cockpit. Start the cockpit once per container:
 
 ```bash
 docker exec -d pilot-sim bash -lc 'source /opt/ros/jazzy/setup.bash; \
@@ -31,6 +57,38 @@ docker exec -d pilot-sim bash -lc 'source /opt/ros/jazzy/setup.bash; \
   uv run --no-project python -m agents.observatory.server \
   > /tmp/cockpit.log 2>&1'
 ```
+
+Readiness checks:
+
+```bash
+curl -fsS http://localhost:8000/state >/dev/null
+docker exec pilot-sim tail -n 30 /tmp/pilot.log
+docker exec pilot-sim tail -n 30 /tmp/cockpit.log
+```
+
+## Optional deep-perception sidecar
+
+The fast COCO lane and cockpit work without the sidecar. To enable
+open-vocabulary `look`, prompted `pinpoint`, and slow-lane annotations, provision
+the pinned weights once and start the host service before or after the demo:
+
+```bash
+./scripts/provision_deep_models.sh
+uv venv .venv-train-gpu
+uv pip install -p .venv-train-gpu -e '.[deep]'
+./scripts/deep_perception.sh
+```
+
+In another shell:
+
+```bash
+./scripts/deep_perception.sh --selftest
+```
+
+If `.deep_token` exists before `run_single_demo.sh` starts, the launcher passes
+the token and `http://host.docker.internal:8100` endpoint into the container and
+prints a reachability result. If the token is created afterward, restart the
+demo container so the pilot receives those environment variables.
 
 ## Fly it
 
@@ -52,7 +110,19 @@ docker exec -d pilot-sim bash -lc 'source /opt/ros/jazzy/setup.bash; \
   after an estop needs a fresh container if the latch persists.
 - **Logs**: `docker exec pilot-sim tail -f /tmp/pilot.log` — in headless
   use it should stay boot-lines only (LLM idle, zero requests).
+- **Deep layer (M3)**: the host-GPU sidecar (bearer in `.deep_token`) serves the
+  `look`/`pinpoint` LLM tools and the gated slow-lane annotator
+  (`agents/vision/slowlane.py`). Slow-lane annotations (magenta boxes) and
+  the pinpoint mask (translucent silhouette) render in the cockpit,
+  frame-age-gated ≤0.5 s; `fp_suspect` advisories flag contacts in /state.
+  Gate: default OFF only when `RENDER_BACKEND=nvidia` (the armed gate was
+  lifted for intel after the M3 A/B — docs/benchmarks/deep-perception-m3.md);
+  `DEEP_SLOWLANE=on|off` forces; `DEEP_SLOWLANE_HZ/VOCAB/CONF` tune
+  (defaults 0.3 Hz, `building,house,tree,pole,tower`, conf 0.05).
 - **Teardown**: `docker rm -f pilot-sim`.
+
+Stop the sidecar with `Ctrl-C` in its host terminal. `.deep_token` and model
+weights are local, git-ignored artifacts.
 
 ## Demo-world geometry (learned the hard way)
 

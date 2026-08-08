@@ -1,5 +1,11 @@
 # GPT codebase review
 
+> **Post-review documentation update (2026-08-08):** the root README,
+> `docs/architecture.md`, demo/model/eval guides, and living project state were
+> aligned around the single-drone implementation. R9's documentation-coherence
+> remediation is therefore addressed in the working tree. This folder remains
+> the dated 2026-08-01 audit; revalidate all other findings against current code.
+
 This folder documents the repository as it exists on the `rebuild-single-drone`
 branch, not only the product described by the top-level README.
 
@@ -50,4 +56,3 @@ clean clone lacks the ignored, prebuilt PX4 tree required by the launch scripts.
 - This is a static code and structure review. Runtime simulation, Docker build,
   live flight behavior, model accuracy, and published benchmark claims were not
   independently revalidated for this deliverable.
-
