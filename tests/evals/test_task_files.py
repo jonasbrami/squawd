@@ -141,3 +141,15 @@ def test_s6_kimi_spike_loads_as_a_four_step_perceive_smoke():
     assert [c["check"] for c in t.oracle] == ["alive", "within_step_budget"]
     budget_chk = t.oracle[1]
     assert int(budget_chk["max_steps"]) == t.budget.max_steps
+
+
+def test_backend_switch_smoke_has_identical_bounded_pilot_sequence():
+    from evals.spec import load_task
+
+    t = load_task("evals/tasks/smoke/backend_switch.yaml")
+    assert t.setup.world == "default" and t.setup.n_drones == 1
+    assert t.budget.max_steps == 4
+    assert [s["tool"] for s in t.pilot] == [
+        "take_off", "scan", "report", "land"]
+    assert [c["check"] for c in t.oracle] == [
+        "alive", "final_pos", "landed", "within_step_budget"]

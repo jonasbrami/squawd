@@ -60,6 +60,17 @@ def test_pilot_rejects_unknown_or_private_tool():
         _run(ScriptedClient(provider, [{"tool": "_halt"}]))
 
 
+def test_pilot_supports_provider_catalog_report_sink():
+    async def provider():
+        return FakeOps()
+
+    tr = _run(ScriptedClient(
+        provider, [{"tool": "report", "args": {"message": "done"}}]))
+    call = next(e for e in tr.events if e["type"] == "tool_call")
+    assert call["name"] == "pilot__report"
+    assert call["result"] == "reported"
+
+
 def test_spec_parses_optional_pilot(tmp_path):
     from evals.spec import load_task
     p = tmp_path / "t.yaml"

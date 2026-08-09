@@ -101,6 +101,9 @@
   .strip b{color:var(--txt);font-size:13px;display:block}
   .fresh{bottom:38px;left:14px;font-size:10px;color:var(--faint)}
   .fresh.a{color:var(--amber)}
+  .legend{bottom:38px;right:14px;font-size:9.5px;color:var(--faint)}
+  .legend .lg-ann{color:#e040fb} .legend .lg-mask{color:var(--accent)}
+  .legend .lg-fp{color:var(--amber)}
   .novid{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);
     font-family:var(--mono);font-size:12px;text-align:center;padding:20px}
 
@@ -171,6 +174,7 @@
       <div class="hud-dom xh">+</div>
       <div class="hud-dom beam" id="beam"><span class="chip" id="beam-chip">ToF —</span></div>
       <div class="hud-dom fresh" id="fresh"></div>
+      <div class="hud-dom legend" id="legend">deep&nbsp;<span class="lg-ann">▯ slow-lane annotation</span>&nbsp;·&nbsp;<span class="lg-mask">▮ pinpoint mask</span>&nbsp;·&nbsp;<span class="lg-fp">FP? advisory</span></div>
       <div class="hud-dom strip">
         <div>ALT<b id="s-alt">—</b></div>
         <div>SPD<b id="s-spd">—</b></div>
@@ -222,10 +226,13 @@
  *   WS /ws_cam        -> H.264 AU via WebCodecs; per-AU [seq:u32, stamp:f64] header
  *   WS /ws_detections -> verbatim PerceptionSnapshot v1 JSON (authoritative fusion)
  *   GET /state (2 Hz) -> pose/attitude/mode/battery/health + server-side banner
+ *                        + M3: annotations / pinpoint_mask / slowlane health /
+ *                        fp_suspect contact flags (server-expired ≤0.5 s frame age)
  *   GET /chat (1 Hz)  -> feed; POST /command; POST /estop
  *   POST /api/lock    click {x,y} frame px -> server hit-test -> /pilot/cmd (W0.3)
  *   POST /api/cmd     locked-object ops (orbit/standoff/stop/resume) -> /pilot/cmd (W3b)
  * The 0.5 s overlay match rule mirrors agents/observatory/overlay.py — keep in sync.
+ * rleDecode mirrors agents/vision/types.py rle_decode (box-local pinpoint mask).
  */
 const OVERLAY_MAX_AGE_S = 0.5;              // mirror of overlay.py OVERLAY_MAX_AGE_S
 const HFOV_DEG = 69.0;                      // camera SDF hfov (perception/projection.py)
@@ -396,6 +403,8 @@ function drawHUD() {
   updateBeam(fresh ? snap : null);
   updateTrackBanner(fresh ? snap : null);
   updateLockUI(fresh ? snap : null);
+  drawAnnotations(ctx);                    // M3: own frame-age gate (below),
+  drawPinpointMask(ctx);                   // independent of snap freshness
   if (!fresh) return;
 
   const sx = hud.width / (snap.frame_w || hud.width);
@@ -417,7 +426,7 @@ function drawDet(ctx, d, snap, sx, sy) {
   ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
   ctx.setLineDash([]);
 
-  const label = `${c ? c.name : "det"} · ${d.cls} · ${(d.conf ?? 0).toFixed(2)}`;
+  const label = `${c ? c.name : "det"} · ${d.cls} · ${(d.conf ?? 0).toFixed(2)}${c && fpSuspect(c.name) ? " · FP?" : ""}`;
   ctx.font = "11px ui-monospace, Menlo, monospace";
   const lw = ctx.measureText(label).width + 10;
   ctx.fillStyle = "#041a10d0";
@@ -445,6 +454,98 @@ function drawDet(ctx, d, snap, sx, sy) {
   ctx.fillRect(x1 + 5, y2 + 18, (Math.max(rw, 46) - 10) * conf, 3);
 
   if (designated) drawReticle(ctx, x1, y1, x2, y2, color);
+}
+
+/* ---------------- M3 deep layer: annotations + pinpoint mask + fp flags ---------------- */
+
+function rleDecode(b64, w, h) {
+  /* Mirror of agents/vision/types.py rle_decode: base64 varint run counts,
+   * leading-ZERO run first, alternating, row-major w x h -> Uint8Array. */
+  const bin = atob(b64), counts = [];
+  let n = 0, shift = 0;
+  for (let i = 0; i < bin.length; i++) {
+    const b = bin.charCodeAt(i);
+    n |= (b & 0x7f) << shift;
+    if (b & 0x80) { shift += 7; } else { counts.push(n); n = 0; shift = 0; }
+  }
+  const grid = new Uint8Array(w * h);
+  let idx = 0, cur = 0;
+  for (const c of counts) {
+    if (cur) grid.fill(1, idx, Math.min(idx + c, grid.length));
+    idx += c; cur ^= 1;
+    if (idx >= grid.length) break;
+  }
+  return grid;
+}
+
+function fpSuspect(name) {
+  /* M3 advisory: the server marks /state contacts fp_suspect (slowlane
+   * overlap ≥0.6 with a building/house annotation, exact-frame). */
+  const cs = (S.state && S.state.contacts) || [];
+  const c = cs.find(c => c.name === name);
+  return !!(c && c.fp_suspect);
+}
+
+function drawAnnotations(ctx) {
+  /* Slow-lane annotation boxes (magenta family — distinct from det boxes):
+   * /state already expires them at 0.5 s frame age; the client re-gates on
+   * the video stamp so a stale /state poll never draws. Frame px are 1:1
+   * with the native video frame (same camera, full-frame encode). */
+  const anns = (S.state && S.state.annotations) || [];
+  if (!anns.length || !S.lastStamp) return;
+  const stamp = anns[0].sim_stamp;
+  if (!stamp || Math.abs(S.lastStamp - stamp) > OVERLAY_MAX_AGE_S) return;
+  ctx.lineWidth = 1.4;
+  ctx.font = "10px ui-monospace, Menlo, monospace";
+  for (const a of anns) {
+    if (!a.xyxy || a.xyxy.length !== 4) continue;
+    const [x1, y1, x2, y2] = a.xyxy;
+    ctx.strokeStyle = "#e040fb";
+    ctx.setLineDash([2, 3]);
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.setLineDash([]);
+    const label = `${a.cls} ${(a.conf ?? 0).toFixed(2)} · deep`;
+    const lw = ctx.measureText(label).width + 8;
+    ctx.fillStyle = "#2a0a30d0";
+    ctx.fillRect(x1, y2 + 2, lw, 14);
+    ctx.fillStyle = "#e040fb";
+    ctx.fillText(label, x1 + 4, y2 + 12);
+  }
+}
+
+function drawPinpointMask(ctx) {
+  /* The latest pinpoint mask as a translucent silhouette: box-local RLE
+   * decoded and pasted at xyxy (resized to the box if dims differ — the
+   * w3_capture.py rule), frame_seq-joined and freshness-gated like the
+   * annotations. */
+  const m = S.state && S.state.pinpoint_mask;
+  if (!m || !m.xyxy || !m.mask || !S.lastStamp) return;
+  if (!m.sim_stamp || Math.abs(S.lastStamp - m.sim_stamp) > OVERLAY_MAX_AGE_S) return;
+  const [x1, y1, x2, y2] = m.xyxy;
+  const w = m.mask.w, h = m.mask.h;
+  const grid = rleDecode(m.mask.rle, w, h);
+  const sxr = Math.max(1, x2 - x1) / w, syr = Math.max(1, y2 - y1) / h;
+  ctx.fillStyle = "rgba(76,195,255,0.35)";
+  for (let r = 0; r < h; r++) {                // row runs of 1-cells
+    let c0 = -1;
+    for (let c = 0; c <= w; c++) {
+      const on = c < w && grid[r * w + c];
+      if (on && c0 < 0) c0 = c;
+      if (!on && c0 >= 0) {
+        ctx.fillRect(x1 + c0 * sxr, y1 + r * syr, (c - c0) * sxr, Math.max(1, syr));
+        c0 = -1;
+      }
+    }
+  }
+  ctx.strokeStyle = "#4cc3ff";
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  ctx.setLineDash([]);
+  ctx.font = "10px ui-monospace, Menlo, monospace";
+  const label = `pinpoint ${m.cls || "unlabeled"} · ${m.area_px ?? "?"}px`;
+  ctx.fillStyle = "#4cc3ff";
+  ctx.fillText(label, x1 + 4, Math.max(10, y1 - 6));
 }
 
 function drawReticle(ctx, x1, y1, x2, y2, color) {
@@ -591,6 +692,7 @@ function drawContacts() {
     const sel = c.name === tgt ? " sel" : "";
     return `<div class="citem${sel}" data-name="${c.name}" title="click to lock"><span class="id">${c.name}</span>
       <span class="pill ${pc}">${c.health || "?"}</span>
+      ${fpSuspect(c.name) ? '<span class="pill a" title="slow-lane advisory: ≥60% covered by a building/house annotation">FP?</span>' : ""}
       <div class="row"><span>${rng}</span><span>conf ${(c.conf ?? 0).toFixed(2)}</span></div></div>`;
   }).join("");
 }

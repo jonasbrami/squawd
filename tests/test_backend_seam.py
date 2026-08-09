@@ -15,7 +15,8 @@ import pytest
 from agents.flight import FlightOps, make_pilot_options
 from agents.flight.backend import (BackendClient, Result, Text, ToolCall,
                                    ToolResult, agent_env, is_kimi_tier,
-                                   is_quota_error, kimi_recipe, normalize)
+                                   is_quota_error, kimi_recipe, normalize,
+                                   resolve_backend, resolve_model)
 
 
 # ---------- ① seam emits typed events ----------
@@ -260,3 +261,15 @@ def test_agent_env_claude_tier_has_no_kimi_vars(monkeypatch, tmp_path):
     env = agent_env("pilot")
     assert "ANTHROPIC_BASE_URL" not in env
     assert env["CLAUDE_CONFIG_DIR"].endswith(".claude-pilot")
+
+
+def test_backend_selection_and_model_defaults(monkeypatch):
+    monkeypatch.delenv("SQUAWD_MODEL", raising=False)
+    assert resolve_backend("codex") == "codex"
+    assert resolve_backend("KIMI") == "kimi"
+    assert resolve_model("codex") == "gpt-5.6-terra"
+    assert resolve_model("kimi") == "kimi-for-coding"
+    assert resolve_model("claude") is None
+    assert resolve_model("codex", "gpt-custom") == "gpt-custom"
+    with pytest.raises(ValueError, match="invalid SQUAWD_BACKEND"):
+        resolve_backend("responses")

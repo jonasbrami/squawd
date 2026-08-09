@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.deep_token
 *.log
 flight_logs/
 .pytest_cache/

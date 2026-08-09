@@ -1,0 +1,30 @@
+{
+ "type": "pinpoint_mask",
+ "frame_seq": 16540,
+ "sim_stamp": 4060.8,
+ "frame_w": 640,
+ "frame_h": 360,
+ "xyxy": [
+  258.0,
+  220.0,
+  406.0,
+  309.0
+ ],
+ "mask": {
+  "rle": "PweLAQ+EARR9GHgddSByI3AmbClqK2gtZjBkMWMzYTNhNGA2AwFaPFg9OxIJPzpbOF02XzVhMmQwZS5nLWkqaylsJ28lcCNzIHUfdxx5G3oZfBh9Fn4WfhZ9Fn4WfhV/FIABFIABFIABE4EBFIABFIABFX8VfxZ+Fn4WfhV/Fn4WfhZ+FYABFIEBE4EBE4UBD4oBAQUEkQEDkgECkQEDkAEEjgEGjAEIiwEJiwEJigEKigELhgEOggEHAQ5+BwETeQcCHW0IAiRLAhQNAytBBA0UBDI5AhQPBDgzARgFAQcDQCsBFgcBBgNHJwERCgEGAk4hAQQBCxICVx0BCn0FAQMEBwECGw==",
+  "w": 148,
+  "h": 89
+ },
+ "centroid": [
+  326.5,
+  269.4
+ ],
+ "area_px": 8843,
+ "score": 0.955,
+ "cls": "house",
+ "color_rgb": [
+  111,
+  106,
+  100
+ ]
+}

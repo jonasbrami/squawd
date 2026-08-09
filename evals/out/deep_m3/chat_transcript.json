@@ -1,0 +1,11 @@
+[
+ "you: use your pinpoint tool on the house you can see ahead (aim at its center). Do not move.",
+ "pilot: Stayed in place. Located the house ahead with look() (deep_house_0, conf 0.12, ~57m ahead, ~E18 N-54) and ran pinpoint on its centroid: mask centered at pixel (170,284), box [118,245,227,314], area 6327px, mask score 0.95, centroid bearing dead ahead. Advisory only; no movement.",
+ "you: pinpoint the house centroid again, same as just before. Do not move.",
+ "pilot: Pinpointed the house centroid again (no movement): mask centroid at pixel (170,284), bearing dead ahead, box [119,240,228,303], area 5732px, score 0.94 on fresh frame #1746. Consistent with previous hit.",
+ "you: pinpoint the house centroid one more time. Do not move.",
+ "pilot: Pinpointed the house centroid a third time (no movement): centroid at pixel (170,284), bearing dead ahead, box [118,239,228,303], area 5787px, score 0.95 on frame #2109. Stable across all three pinpoints.",
+ "you: pinpoint the house centroid one final time. Do not move.",
+ "pilot: Final pinpoint of the house centroid (no movement): centroid at pixel (170,284), bearing dead ahead, box [113,246,224,314], area 6074px, score 0.94 on frame #3074. Consistent with all prior pinpoints.",
+ "you: land"
+]

@@ -29,7 +29,7 @@ flowchart LR
         Cockpit[Cockpit process<br/>agents/observatory/server.py]
     end
 
-    Model[Claude or Kimi backend]
+    Model[Codex, Claude, or Kimi backend]
 
     Human <-->|HTTP + WebSocket| Cockpit
     Cockpit -->|/pilot/user_input<br/>/pilot/cmd<br/>/pilot/estop| Pilot
@@ -166,9 +166,12 @@ change without rewriting pursuit, fusion, or the cockpit.
 - `track.py` contains target estimation and 10 Hz shadow/intercept references.
 - `contacts.py` defines protocols between flight and contact providers.
 - `envelope.py` defines altitude, speed, and radial-geofence checks.
-- `tools.py` exposes flight operations as MCP tools and stable textual errors.
-- `backend.py` normalizes SDK messages to internal `Text`, `ToolCall`,
-  `ToolResult`, and `Result` events.
+- `tools.py` owns provider-neutral tool specifications (name, description,
+  JSON schema, async handler) and adapts them to Claude/Kimi's in-process MCP.
+- `codex_backend.py` serves the same catalog over bearer-authenticated
+  Streamable HTTP MCP on an ephemeral `127.0.0.1` port.
+- `backend.py` selects the provider and normalizes SDK messages to internal
+  `Text`, `ToolCall`, `ToolResult`, and `Result` events.
 - `errors.py` defines stable failure categories.
 
 The LLM chooses a primitive and its parameters. PX4/MAVSDK handles ordinary
@@ -176,7 +179,7 @@ maneuvers; `track()` streams the moving-target control loop without model calls.
 
 ### `agents.pilot`
 
-`PilotAgent` owns one backend session, the natural-language command inbox, the
+`PilotAgent` owns one persistent backend session, the natural-language command inbox, the
 report publisher, and the active-tool registry. `cmd.py` arbitrates structured
 cockpit operations above LLM tools. `estop.py` independently cancels the active
 tool and commands hold or land through the same `FlightOps` owner.
@@ -230,7 +233,7 @@ is for a trusted local simulation workstation, not an untrusted network.
 
 ### Model tool interface
 
-`make_pilot_options()` assembles the available tools. The normal path is:
+`make_pilot_tools()` assembles one provider-neutral catalog. The normal path is:
 
 ```text
 JSON arguments -> tool validation -> FlightOps -> stable text/error result
@@ -241,11 +244,20 @@ the current operation without destroying the model session. `detect` is included
 when the fast pipeline is available. `look` and `pinpoint` remain registered in
 degraded mode and return `UNAVAILABLE` when the optional sidecar is not usable.
 
+Claude and the Anthropic-compatible Kimi route adapt the catalog to the
+Claude SDK's in-process MCP server. Codex adapts it to a loopback-only
+Streamable HTTP server with a per-process bearer token, `required=true`, and an
+exact `enabled_tools` allowlist. Codex runs in a fresh empty working directory
+with read-only sandboxing, denied approvals, shell/web/image tools disabled,
+and no inherited shell environment. Its writable `CODEX_HOME` starts with only
+a runtime copy of `auth.json`; host MCP, plugin, skill, and workspace settings
+are not imported (the Codex runtime may create its own cache/state afterward).
+
 ## 5. Data flow for one command
 
 1. The browser publishes natural language to `/pilot/user_input`.
 2. `PilotAgent` reads the new line and starts a backend turn.
-3. `BackendClient` emits normalized text/tool/result events.
+3. The selected backend client emits normalized text/tool/result events.
 4. An MCP wrapper validates the call and invokes shared `FlightOps`.
 5. Flight commands reach PX4 through MAVSDK; telemetry returns over ROS 2.
 6. Independently, frames feed the detector and `VisionPipeline`.

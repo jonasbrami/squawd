@@ -28,6 +28,7 @@ TIERS = {
     # enforces cli_path=which("claude") on the tier (R5).
     "kimi": "kimi-for-coding",
     "kimi3": "k3",
+    "codex": "gpt-5.6-terra",
     "pilot": None,        # scripted reference pilot (no LLM) — see evals/pilot.py
     "pilot_null": None,   # must-FAIL baseline (e.g. naive chaser) — same machinery
 }
@@ -281,8 +282,7 @@ class FleetHarness:
         if n_drones > 1:
             raise ValueError("operator/commander eval layers were dropped "
                              "(single-drone rebuild); use n_drones=1")
-        from agents.flight.backend import BackendClient, kimi_recipe
-        from agents.flight.tools import make_pilot_options
+        from agents.flight.backend import kimi_recipe, make_backend_client
         from agents.pilot.detect_text import make_detect_text
         # detect wired exactly like the production pilot (agents/pilot/run.py):
         # the live VisionPipeline feeds make_detect_text; no pipeline (the
@@ -291,11 +291,13 @@ class FleetHarness:
         detect = (make_detect_text(self._deps.world, self._deps.bridge,
                                    self._deps.pipeline)
                   if self._deps.pipeline is not None else None)
-        opts = make_pilot_options(
+        backend = ("codex" if model == "gpt-5.6-terra" else
+                   "kimi" if model in KIMI_MODELS else "claude")
+        return make_backend_client(
             self._make_ops(), detect_text=detect, report=lambda _m: None,
-            env=(kimi_recipe() if model in KIMI_MODELS else None), model=model,
+            backend=backend,
+            env=(kimi_recipe() if backend == "kimi" else None), model=model,
             extra_prompt=self.prompt_append)
-        return BackendClient(opts)
 
 
 DroneHarness = FleetHarness  # back-compat alias for older imports/tests
@@ -384,6 +386,33 @@ async def _settle(world, bridge, n: int, deadline: float,
         await asyncio.sleep(poll)
 
 
+def _completed_land(trace: Trace) -> bool:
+    """True only when the final tool call is a successful, completed land.
+
+    A started/cancelled land must still take the emergency-hold path below.
+    Provider prefixes differ, so compare the final MCP component only.
+    """
+    call = next((event for event in reversed(trace.events)
+                 if event.get("type") == "tool_call"), None)
+    return bool(call and call["name"].split("__")[-1] == "land"
+                and call.get("result") is not None
+                and call.get("is_error") is False)
+
+
+async def _wait_disarmed(system, timeout_s: float = 15.0) -> bool:
+    """Wait for PX4 auto-disarm after a completed landing command."""
+    async def wait():
+        async for armed in system.telemetry.armed():
+            if not armed:
+                return True
+        return False
+
+    try:
+        return bool(await asyncio.wait_for(wait(), timeout=timeout_s))
+    except Exception:
+        return False
+
+
 def reset_per_cell(deps: Deps) -> None:
     """Per-cell clean slate (design §3.8): `VisionContacts.reset()` on the flight
     contacts so no EKF filter state or `vis_*` ID leaks across anchored repeats.
@@ -462,16 +491,21 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
                 client, render_task_prompt(spec),
                 spec.budget.wall_clock_s, spec.budget.max_steps,
                 on_msg=lock_hook)
-        # HALT before settling: if the deadline cancelled a blocking goto mid-flight,
-        # the PX4 setpoint keeps flying with nothing to stop it — drones ended cells
-        # 150-770m out, RTL couldn't recover in the reset window, and the infra fuse
-        # tripped on healthy sims. Same hazard run_mission guards with ops._halt.
-        # Per-system isolation: one dead link must not skip the others' halt.
-        for s in systems:
-            try:
-                await asyncio.wait_for(s.action.hold(), timeout=5)
-            except Exception:
-                pass
+        # HALT before settling when flight is still active: if the deadline
+        # cancelled a blocking goto, its setpoint otherwise keeps flying.  A
+        # successfully completed final `land` is the one exception: HOLD would
+        # interrupt PX4's touchdown/auto-disarm sequence and leave the vehicle
+        # armed in LOITER (caught by the backend-switch smoke, 2026-08-08).
+        landed = False
+        if _completed_land(trace):
+            landed = all([await _wait_disarmed(s) for s in systems])
+        else:
+            # Per-system isolation: one dead link must not skip the others.
+            for s in systems:
+                try:
+                    await asyncio.wait_for(s.action.hold(), timeout=5)
+                except Exception:
+                    pass
         # Settle gets its OWN allowance, not the tail of the turn budget: sharing one
         # deadline gave slower-thinking tiers less real-time flight before grading —
         # a structural bias against exactly the tiers being compared. With blocking
@@ -499,7 +533,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     track = sampler.track()
     # Crash is inferred by the oracle's `alive` check (geofence breach); the deadline/
     # step-budget note lives in `reason`. So run_meta only carries steps + a False crash flag.
-    run_meta = {"steps": trace.steps, "crashed": False}
+    run_meta = {"steps": trace.steps, "crashed": False, "landed": landed}
     if "target_lock" in trace.meta:   # TargetLockEvent → identified_target (§3.8)
         run_meta["target_lock"] = trace.meta["target_lock"]
     g = grade(track, spec.oracle, run_meta)

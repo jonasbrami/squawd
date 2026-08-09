@@ -1,12 +1,14 @@
 # PROJECT STATE — single-drone system (living document)
 
-> **CURRENT WORKTREE — 2026-08-08.** The supported product is the single-drone
+> **CURRENT CHECKPOINT — 2026-08-09.** The supported product is the single-drone
 > pilot/cockpit stack. The demo prototype W0–W5 is implemented, and the optional
 > deep-perception follow-on M1–M4 is documented as shipped with quantified
 > limits (`docs/benchmarks/deep-perception-m1.md` through `-m4.md`). The
-> worktree is intentionally dirty and contains that follow-on plus a pursuit
-> altitude adjustment. Treat the verification note below as authoritative for
-> the current tree; older milestone test counts are dated evidence only.
+> checkpoint includes that follow-on, the Codex/Kimi/Claude provider switch,
+> and a reviewed COASTING position-latch correction. The rejected 5.5 m
+> pursuit-altitude/range experiment was discarded; its review and telemetry
+> remain as dated evidence. Treat the verification note below as authoritative
+> for the current tree; older milestone test counts are dated evidence only.
 
 > **HISTORICAL GOAL SWITCH 2026-07-28 (owner):** the M0→M6 rebuild goal was
 > parked at
@@ -22,7 +24,7 @@
 > PAUSE, an **independent agent** (fresh context — e.g. `claude -p --model
 > fable` or `codex exec -m gpt-5.6-sol`) can read it cold, look at the repo
 > and the evidence, and advise a way forward. Keep it honest and current;
-> update it at every pause. Last updated: **2026-08-08**.
+> update it at every pause. Last updated: **2026-08-09**.
 
 ---
 
@@ -30,16 +32,15 @@
 
 A single UAV agent: PX4 SITL + Gazebo Harmonic (single x500 with a fixed
 forward 640×360 camera + a single-point forward ToF lidar), a custom
-ROS 2 application bus, an **LLM pilot** (Claude or Kimi via
-claude-agent-sdk behind a backend
-seam) that flies the drone in plain language through **classical
-perception+flight primitives** (YOLO-seg detection → CV-EKF contact
+ROS 2 application bus, an **LLM pilot** (Codex via `openai-codex`, or Claude /
+Kimi via `claude-agent-sdk`, behind one backend seam) that flies the drone in
+plain language through **classical perception+flight primitives** (YOLO-seg
+detection → CV-EKF contact
 tracking → ToF beam fusion → offboard pursuit), plus a **cockpit web UI**
 (POV video + sensor-fusion HUD) and an **eval harness**. The rebuild is
 specified in `docs/superpowers/specs/2026-07-18-single-drone-rebuild-design.md`
 (v4.2) + `2026-07-19-interface-specification.md` (v3.1), milestone-gated
-M0→M6. Branch: `rebuild-single-drone` (uncommitted working tree by policy —
-no commits without the owner).
+M0→M6. Branch: `rebuild-single-drone`.
 
 ## 2. Milestone map (dated status + evidence)
 
@@ -54,22 +55,38 @@ no commits without the owner).
 | M4 cockpit observatory | **DONE (data plane)** | `/state` + cam + `/ws_detections` live; beam/track SM transitions live; estop holds mid-tool; 3 ICD tests |
 | M5 evals + perception grading | **DONE** | 509-unit green; perceive gates + accuracy JSONs + A/B infra; d2_shadow regression found→codex-reviewed→fixed→validated (dwell 69.1 s vs 45 gate); d1–d5 truth-fed re-confirmation **9/9 cells match pre-M5 behavior** (`evals/out/m5_d1d5_confirm_20260728/`, `docs/benchmarks/m5-gate-results.md`) |
 | M6 Kimi switch + backend seam | **PARTIAL** | backend seam and S6 smoke done; the three-rung Kimi ladder (`d2_shadow` + perceive + obstacle) and quota report remain outstanding |
+| Codex/Kimi/Claude provider switch | **IMPLEMENTED; KIMI LIVE GATE QUOTA-BLOCKED (2026-08-08)** | neutral tool catalog; authenticated Codex/Terra two-turn MCP spike; required-server fail-closed check; fresh image; scripted and Codex flight smoke pass. Kimi returned a classified billing-cycle quota error before tool use; see `docs/benchmarks/backend-switch-smoke-2026-08-08.md` |
 | Demo cockpit W0–W5 | **DONE (2026-08-02 evidence)** | `docs/superpowers/specs/2026-07-28-demo-prototype-design.md`, `docs/benchmarks/w5-golden-path.md` |
 | Deep perception M1–M4 | **SHIPPED WITH QUANTIFIED LIMITS (2026-08-03 evidence)** | sidecar, `look`/`pinpoint`, slow lane, cockpit layer, and metrics in `docs/benchmarks/deep-perception-m1.md` … `-m4.md` |
 
-### Current verification (2026-08-08 documentation audit)
+### Current verification (2026-08-09 combined checkpoint)
 
-- `755` tests collect in the local environment.
 - `git diff --check` passes.
 - `bash -n scripts/*.sh sim/launch/*.sh evals/scripts/*.sh` passes.
-- The complete suite is **not currently green**: three
-  `tests/test_cmd_supervisor.py` expectations omit the new `alt=5.5` orbit
-  argument emitted by `agents/pilot/cmd.py`, and
-  `test_pipeline_keeps_publishing_while_the_agent_turn_is_held_open` did not
-  finish within 15 seconds in the local Python 3.13 environment.
-- `tests/integration/test_deep_sidecar.py::test_hung_sidecar_estop_latency`
-  could not open a loopback socket inside the review sandbox; that is an
-  environmental restriction, not evidence of an application regression.
+- Focused backend/tool/doctor/eval tests on the final implementation:
+  **96 passed in 44.63 s**.
+- Authenticated Codex SDK/MCP spike: **2 passed in 29.52 s**. It proved tool
+  discovery, a tool call/result on each of two turns on one persistent thread,
+  usage reporting, and required-MCP fail-closed behavior. It used the Codex
+  login/subscription path, not `OPENAI_API_KEY` or the Responses API.
+- Full host unit lane (`uv run --extra dev --with pyyaml --with numpy pytest
+  tests/ --ignore=tests/integration -q`): **766 passed in 160.07 s**. Two
+  non-failing warnings remain: Starlette's `httpx` TestClient deprecation and
+  the existing frame-store hammer test's background-writer integer overflow.
+- Pursuit command/projection/track regression lane after discarding the rejected
+  altitude/range experiment: **45 passed**. The independent COASTING latch fix
+  is pinned for both geometric and ToF branches in `tests/test_track_ops.py`.
+- Fresh `squawd:dev` rebuilt successfully and contains pinned
+  `openai-codex==0.144.4` / matching CLI runtime `0.144.4`.
+- Fresh-container bounded flight smoke (`take_off → scan → report → land`):
+  scripted pilot **PASS** and Codex/Terra-low **PASS**, both exactly four calls,
+  all oracle checks green, and final PX4 state disarmed near home. Codex used
+  one request, 16,379 input + 4 output tokens (16,128 cached input), with zero
+  quota errors and 36.783 s backend wall time.
+- The identical Kimi cell was attempted once and is **quota-blocked**: classified
+  HTTP 403 billing-cycle usage limit, zero tool calls, `quota_errors=1`; vehicle
+  remained disarmed at home. Full evidence is in
+  `docs/benchmarks/backend-switch-smoke-2026-08-08.md`.
 
 Historical claims such as “490 green”, “509 green”, “638+ green”, or “753
 green” identify the milestone snapshot in which they were recorded. Do not use
@@ -123,23 +140,20 @@ noisy physical setup is not a linear bug-fix ladder — know when to stop.**
 
 ## 5. Next steps (ordered, bounded)
 
-1. **Restore cheap-suite coherence.** Decide whether operator `orbit` should
-   command the band-aligned pursuit altitude. Make `agents/pilot/cmd.py`, its
-   module contract, and `tests/test_cmd_supervisor.py` agree; then diagnose the
-   pipeline shutdown hang under the supported Python environment.
-2. **Re-run and record the host-side lane.** Separate unit tests from
-   socket/live-sidecar integration tests, record the Python/dependency
-   environment, and replace the current verification note only with completed
-   evidence.
-3. **Owner checkpoint decision for the deep-perception worktree.** M1–M4 have
-   dated acceptance reports, but the implementation, manifests, scripts, tests,
-   and lockfile are still uncommitted. Review the diff and decide whether it is
-   one checkpoint or should be split.
-4. **Resume M6 only as a separate bounded campaign.** Preserve the original
-   three-rung plan: `d2_shadow`, one perceive task, and one obstacle task, K=1
-   with an owner pause between rungs and explicit quota accounting. Re-prove
-   each scripted pilot baseline before spending model quota.
-5. **Tracked follow-ups, not hidden blockers:** fixed-beam ToF availability;
+1. **Close the Kimi half of the provider-switch live gate after quota reset.**
+   Re-run only `evals/tasks/smoke/backend_switch.yaml`, K=1, in a fresh
+   container. Do not repeat the already-green scripted or Codex cells. Append
+   the result to `docs/benchmarks/backend-switch-smoke-2026-08-08.md`.
+2. **Redesign pursuit altitude as a separate bounded change.** The 5.5 m
+   command/range patch failed review and was discarded. If revisited, address
+   staging, orbit/standoff semantics, finite bounds, and the qualified detector
+   band together; see `docs/benchmarks/pursuit-alt-fix-codex-r1.md`.
+3. **Resume the remaining M6 ladder only as a separate bounded campaign.**
+   Preserve the original three-rung plan: `d2_shadow`, one perceive task, and
+   one obstacle task, K=1 with an owner pause between rungs and explicit quota
+   accounting. Re-prove each scripted pilot baseline before spending model
+   quota.
+4. **Tracked follow-ups, not hidden blockers:** fixed-beam ToF availability;
    camera-fed d2 acquisition from home; co-altitude pilot commitment; sim-time
    versus wall-time deadlines; incomplete movement-envelope wiring; clean-clone
    PX4/model provisioning; cockpit authentication/network binding.

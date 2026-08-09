@@ -23,3 +23,13 @@ def test_launcher_refuses_to_start_when_doctor_fails():
     assert "doctor_sim.sh" in src
     assert "refusing to start the pilot" in src
     assert "exit 1" in src
+
+
+def test_launcher_copies_only_codex_auth_into_isolated_runtime_home():
+    src = open("scripts/run_single_demo.sh").read()
+    assert 'cp "$HOME/.codex/auth.json" "$CODEX_CRED/auth.json"' in src
+    assert '"$CODEX_CRED:/root/.codex"' in src
+    assert "CODEX_HOME=/root/.codex" in src
+    assert ".codex/config.toml" not in src
+    assert ".codex/plugins" not in src
+    assert "cp -r" not in src and "cp -R" not in src

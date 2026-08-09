@@ -352,6 +352,15 @@ class ScriptedClient:
             else:
                 target = ops
             fn = getattr(target, tool, None)
+            # ``report`` belongs to the neutral provider tool catalog rather
+            # than FlightOps.  The eval harness installs a no-op report sink,
+            # so mirror that exact observable result for no-LLM pilot gates.
+            if tool == "report" and fn is None:
+                out = "reported"
+                yield ToolResult(tool_use_id=f"pilot{seq}", content=out,
+                                 is_error=False)
+                seq += 1
+                continue
             if fn is None or tool.startswith("_"):
                 raise ValueError(f"pilot step {i}: unknown tool '{tool}'")
             out = fn(**args)

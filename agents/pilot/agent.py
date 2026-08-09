@@ -15,8 +15,7 @@ from px4_msgs.msg import VehicleLocalPosition
 
 from agents.core.bus import CMD_QOS, publish_str
 from agents.core.store import TopicLog
-from agents.flight.backend import BackendClient
-from agents.flight.tools import make_pilot_options
+from agents.flight.backend import make_backend_client
 from agents.pilot.arbiter import CommandArbiter
 from agents.pilot.cmd import cmd_supervisor, make_run_op
 from agents.pilot.estop import ActiveToolRegistry, estop_supervisor
@@ -26,7 +25,8 @@ class PilotAgent:
     """drone_0: shared System + shared FlightOps + inbox + Claude client + loop."""
 
     def __init__(self, system: System, ops, bridge, env=None, model=None,
-                 cli_path=None, detect_text=None) -> None:
+                 cli_path=None, detect_text=None, deep_tools=None,
+                 backend=None, codex_effort=None) -> None:
         self._system = system
         self._ops = ops
         self._bridge = bridge
@@ -35,10 +35,12 @@ class PilotAgent:
         bridge.subscribe("/px4_0/fmu/out/vehicle_local_position",
                          VehicleLocalPosition)
         self._inbox = TopicLog(bridge, "/pilot/user_input", String, CMD_QOS)
-        self.client = BackendClient(make_pilot_options(
-            ops, detect_text=detect_text, report=self.report,
+        self.client = make_backend_client(
+            ops, backend=backend, detect_text=detect_text, deep_tools=deep_tools,
+            report=self.report,
             registry=self.registry, guard=self.arbiter.guard_llm,
-            env=env, model=model, cli_path=cli_path))
+            env=env, model=model, cli_path=cli_path,
+            codex_effort=codex_effort)
         self._seen = 0
 
     def report(self, message: str) -> None:

@@ -1,13 +1,20 @@
 """Single-drone pilot entrypoint (ICD §7.2 assembly).
 
 Assembly: bridge → world → cameras → recorder → perception(detector+pipeline)
-→ system → envelope → ops → agent → bridge.start() → connect() → run().
+→ deep client → deep tools(sidecar) + slowlane(gated) → system → envelope →
+ops → agent → bridge.start() → connect() → run().
 At M2 the camera side is wired: GzCameras → Detector (VisionConfig-selected
 backend, blob default) → VisionPipeline (raw snapshots, contacts=None) →
 /pilot/detections + the `detect` tool; Px4StateRecorder feeds the W1 buffers
-(pose/attitude at any sim-time) for the projection path.
+(pose/attitude at any sim-time) for the projection path. Deep-perception M2:
+the host-GPU sidecar's `look`/`pinpoint` tools are env-gated (DEEP_TOKEN /
+DEEP_PERCEPTION_URL) and answer UNAVAILABLE when the sidecar is down — the
+pilot never blocks on them. M3: the gated slowlane (agents/vision/slowlane.py)
+samples the same frame source at ~0.3 Hz and publishes annotations + the
+fp_suspect advisory on /pilot/slowlane for the cockpit.
 """
 import asyncio
+import json
 import os
 
 from mavsdk import System
@@ -89,6 +96,93 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
         return None, None, None
 
 
+def build_deep_client():
+    """The M2/M3 shared DeepClient (deep-perception plan §3): env-configured
+    (DEEP_PERCEPTION_URL, default http://host.docker.internal:8100;
+    DEEP_TOKEN). A missing token or an unreachable sidecar at boot logs ONE
+    line; the tools/slowlane still get a client that answers UNAVAILABLE —
+    the pilot never blocks on the sidecar (bounded ~2 s health probe only).
+    With a token present the real client is kept even when the probe fails,
+    so consumers self-heal when the sidecar comes up."""
+    from agents.perception.deep_client import DeepClient, DeepResult, UNAVAILABLE
+
+    if os.environ.get("DEEP_TOKEN"):
+        client = DeepClient()          # picks up both env vars itself
+        try:
+            health = client.health()
+        except Exception as e:
+            health, detail = None, str(e)
+        else:
+            detail = health.detail
+        if health is not None and health.ok:
+            models = ",".join(health.data.get("models_loaded", []))
+            print(f"deep perception online ({models})", flush=True)
+        else:
+            print(f"deep perception unreachable at boot ({detail}) — "
+                  "look/pinpoint answer UNAVAILABLE until it recovers",
+                  flush=True)
+        return client
+
+    print("deep perception disabled: DEEP_TOKEN not set — "
+          "look/pinpoint answer UNAVAILABLE", flush=True)
+
+    class _OfflineClient:
+        """No token configured: every call answers UNAVAILABLE (the tools
+        stay bound per plan M2 §3, never raise)."""
+
+        def detect(self, *a, **k):
+            return DeepResult(UNAVAILABLE, detail="DEEP_TOKEN not set")
+
+        def segment(self, *a, **k):
+            return DeepResult(UNAVAILABLE, detail="DEEP_TOKEN not set")
+
+    return _OfflineClient()
+
+
+def build_deep_tools(world, bridge, pipeline, cameras, client):
+    """M2 deep-perception tools (deep-perception plan §4): look/pinpoint over
+    the injected shared client. The pinpoint mask publisher rides the pilot's
+    /pilot/deep channel (detections-adjacent, String JSON on STATE_QOS; the
+    cockpit frame_seq join lands in M3)."""
+    from agents.pilot.deep_tools import make_deep_tools
+
+    def publish_mask(payload):
+        from std_msgs.msg import String
+        from agents.core.bus import STATE_QOS
+        m = String()
+        m.data = json.dumps(payload)
+        bridge.publish("/pilot/deep", String, m, STATE_QOS)
+
+    return make_deep_tools(world, bridge, pipeline,
+                           lambda: cameras.snapshot(0), client,
+                           mask_publisher=publish_mask)
+
+
+def build_slowlane(bridge, cameras, detector, client, armed_ref):
+    """M3 slow-lane annotator (deep-perception plan §5): the gated 0.3 Hz
+    sidecar sampler. armed_ref is a zero-arg callable returning the live
+    armed state (main() feeds it from vehicle_status); the gate also reads
+    DEEP_SLOWLANE / RENDER_BACKEND from env at each tick. Its state rides
+    /pilot/slowlane (String JSON on STATE_QOS, the /pilot/deep precedent —
+    the observatory consumes topics only, ICD §0.1)."""
+    from agents.vision.slowlane import SlowLane, gate_decision
+
+    def publish_state(payload):
+        from std_msgs.msg import String
+        from agents.core.bus import STATE_QOS
+        m = String()
+        m.data = json.dumps(payload)
+        bridge.publish("/pilot/slowlane", String, m, STATE_QOS)
+
+    lane = SlowLane(
+        lambda: cameras.snapshot(0), client,
+        detector=detector, publisher=publish_state,
+        gate=lambda: gate_decision(os.environ.get("DEEP_SLOWLANE"),
+                                   os.environ.get("RENDER_BACKEND", "intel"),
+                                   bool(armed_ref())))
+    return lane
+
+
 async def main() -> None:
     bridge = RosBridge()
     world = World()
@@ -101,24 +195,46 @@ async def main() -> None:
                                 sim_time_ref=clock.sim_time)
     detector, pipeline, contacts = build_perception(bridge, cameras, world,
                                                     clock.sim_time)
+    deep_client = build_deep_client()
+    deep_tools = build_deep_tools(world, bridge, pipeline, cameras,
+                                  deep_client)
+    # M3 slowlane gate input: the live armed state off vehicle_status (the
+    # recorder's subscribe-with-callback pattern; arming_state 2 == ARMED,
+    # PX4-Autopilot/msg/VehicleStatus.msg).
+    flight = {"armed": False}
+
+    def _on_status(m) -> None:
+        flight["armed"] = getattr(m, "arming_state", None) == 2
+
+    slowlane = build_slowlane(bridge, cameras, detector, deep_client,
+                              lambda: flight["armed"])
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
     envelope = Envelope()
     ops = FlightOps(system, world, bridge, 0, 1, contacts=contacts,
                     envelope=envelope)
+    backend = os.environ.get("SQUAWD_BACKEND", "claude")
     agent = PilotAgent(
         system, ops, bridge,
-        env=agent_env("pilot"),
+        backend=backend,
+        env=agent_env("pilot", backend),
         model=os.environ.get("SQUAWD_MODEL") or None,
+        codex_effort=os.environ.get("SQUAWD_CODEX_EFFORT") or None,
         detect_text=(make_detect_text(world, bridge, pipeline)
-                     if pipeline is not None else None))
+                     if pipeline is not None else None),
+        deep_tools=deep_tools)
     bridge.start()
     recorder.start()
+    from px4_msgs.msg import VehicleStatus      # lazy: ROS at runtime
+    bridge.subscribe("/px4_0/fmu/out/vehicle_status", VehicleStatus,
+                     callback=_on_status)
     await agent.connect()
     if pipeline is not None:
         pipeline.start()
+    slowlane.start()
     print("pilot online: drone_0 — waiting for commands on /pilot/user_input.",
           flush=True)
     await agent.run()
+    slowlane.stop()
 
 
 if __name__ == "__main__":

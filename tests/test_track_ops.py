@@ -1504,12 +1504,13 @@ class CoastBeamContacts(FakeContacts):
     (sim_t, predicted) per call for the per-tick assertions."""
 
     def __init__(self, meas=(50.0, 0.0), vel=(0.0, 3.0), coast_age0=1.0,
-                 sim_per_tick=0.1):
+                 sim_per_tick=0.1, range_src="geom"):
         super().__init__(poses={})
         self.meas = meas
         self.vel = vel
         self.coast_age0 = coast_age0
         self.sim_per_tick = sim_per_tick
+        self.range_src = range_src
         self.ticks = []                        # (sim_t, (e, n)) per call
 
     def age(self):
@@ -1536,8 +1537,47 @@ class CoastBeamContacts(FakeContacts):
         p = self.predicted()
         return SimpleNamespace(
             bearing_deg=math.degrees(math.atan2(self.meas[0], self.meas[1])),
-            range_src="geom", e=p[0], n=p[1],
+            range_src=self.range_src, e=p[0], n=p[1],
             ve=self.vel[0], vn=self.vel[1], age_s=self.age())
+
+
+class MovedCoastWorld(FakeWorld):
+    """Starts at the engagement origin, then reports an advanced vehicle."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def world_xy(self, bridge, i):
+        self.reads += 1
+        return (0.0, 0.0, 6.0) if self.reads == 1 else (12.0, -7.0, 6.0)
+
+
+@pytest.mark.parametrize("range_src, want_ve, want_vn", [
+    ("geom", 0.0, 0.0),
+    ("tof", 0.0, 2.0),
+])
+def test_coast_latches_current_vehicle_position_not_engagement_start(
+        monkeypatch, range_src, want_ve, want_vn):
+    """A coast after pursuit must not command a return to the start point."""
+    from agents.flight import track as trk
+    monkeypatch.setattr(trk, "CTRL_HZ", 100.0)
+    contacts = CoastBeamContacts(range_src=range_src)
+    drone = FakeDrone()
+    drone.offboard = TaggingOffboard()
+    ops = FlightOps(drone, MovedCoastWorld(), FakeBridge(), 0, 1,
+                    contacts=contacts)
+
+    result = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=4.0,
+                                   duration_s=0.2, hold_altitude=True))
+
+    assert "shadowed" in result
+    pursuit = [(p, v) for started, p, v in drone.offboard.streamed if started]
+    assert pursuit
+    for pos, vel in pursuit:
+        assert pos.east_m == pytest.approx(12.0, abs=1e-6)
+        assert pos.north_m == pytest.approx(-7.0, abs=1e-6)
+        assert vel.east_m_s == pytest.approx(want_ve, abs=1e-6)
+        assert vel.north_m_s == pytest.approx(want_vn, abs=1e-6)
 
 
 def test_demo_coast_yaw_follows_predicted_contact_without_translating(

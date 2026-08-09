@@ -1,9 +1,17 @@
-"""Bind a pilot's FlightOps to Claude-Agent-SDK MCP tools (ICD §5.5).
+"""Provider-neutral pilot tool catalog plus backend adapters (ICD §5.5).
 
 `make_pilot_options` takes THE one FlightOps (built by the assembler — estop and
 tools share the instance, Fable-B1) and binds the 12 M1 tools (13 once
-`detect_text` is supplied at M2). The wrappers are deliberately thin: parse args
+`detect_text` is supplied at M2, 15 once a `deep_tools` (look, pinpoint) pair
+is supplied). The wrappers are deliberately thin: parse args
 -> envelope check -> call FlightOps -> wrap text/typed errors (ICD §9).
+
+Deep-perception tools (deep-perception plan §4 / codex B2): `look`/`pinpoint`
+are SYNC text producers from agents/pilot/deep_tools.py; every binding wraps
+the call in `await asyncio.to_thread(...)` so a slow/hung sidecar never stalls
+the pilot loop the estop shares — a cancelled await still returns ESTOPPED via
+the _handler mapping (it does not kill the worker thread, which the client
+timeouts bound).
 
 `extra_prompt` appends a strategy snippet to the system prompt for ONE options
 instance — the evals strategy-snippet A/B path (design §13 item 6); production
@@ -16,8 +24,12 @@ make_pilot_options directly.
 import asyncio
 import shutil
 import traceback
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
-from claude_agent_sdk import tool, create_sdk_mcp_server, ClaudeAgentOptions
+from claude_agent_sdk import (ClaudeAgentOptions, create_sdk_mcp_server,
+                              tool as claude_tool)
 
 from agents.flight import envelope as envmod
 from agents.flight.backend import is_kimi_tier
@@ -71,6 +83,24 @@ def _schema(properties: dict, required: list[str] | None = None) -> dict:
 _N = {"type": "number"}
 _S = {"type": "string"}
 _B = {"type": "boolean"}
+_I = {"type": "integer"}
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    """One provider-neutral MCP tool definition and its async implementation."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+def tool(name: str, description: str, input_schema: dict[str, Any]):
+    """Small catalog decorator matching the old Claude SDK declaration shape."""
+    def bind(handler):
+        return ToolSpec(name, description, input_schema, handler)
+    return bind
 
 PILOT_SYSTEM_PROMPT = (
     "You are drone_0, an autonomous drone with your own onboard thinking. The "
@@ -120,9 +150,13 @@ PILOT_SYSTEM_PROMPT = (
 )
 
 
-def _pilot_server(ops: FlightOps, detect_text, report, registry, guard=None):
-    """The 12 M1 tools (13 with `detect`) bound to one FlightOps. `guard` is
-    the W3a arbiter's guard_llm — see _handler."""
+def make_pilot_tools(ops: FlightOps, *, detect_text=None, deep_tools=None,
+                     report, registry=None, guard=None) -> tuple[ToolSpec, ...]:
+    """Bind the provider-neutral pilot catalog to one shared ``FlightOps``.
+
+    Every backend receives these exact names, descriptions, JSON schemas, and
+    handlers. ``guard`` is the W3a arbiter's guard_llm — see :func:`_handler`.
+    """
     name = "drone_0"
     T = lambda n, fn: _handler(n, registry, fn, guard)
 
@@ -270,16 +304,67 @@ def _pilot_server(ops: FlightOps, detect_text, report, registry, guard=None):
                  "position when computable. Optional `classes` filter "
                  "(comma-separated).",
                  _schema({"classes": _S}))(T("detect", _detect)))
+    if deep_tools is not None:
+        look, pinpoint = deep_tools
 
+        async def _look(args):
+            # to_thread: the sidecar HTTP call must never stall the loop the
+            # estop shares (codex B2); cancellation still maps to ESTOPPED.
+            return _ok(await asyncio.to_thread(
+                look, args.get("what", ""), args.get("conf", 0.05)))
+
+        async def _pinpoint(args):
+            return _ok(await asyncio.to_thread(
+                pinpoint, args.get("x"), args.get("y"), args.get("label")))
+
+        tools.append(
+            tool("look",
+                 "ADVISORY deep scan (host-GPU open-vocabulary detector) of "
+                 "the CURRENT camera frame for whatever you name — `what` is "
+                 "comma-separated concepts, e.g. 'building,house' or 'truck'. "
+                 "Use it to identify things the fast `detect` tool cannot "
+                 "name (buildings, trees, poles, unusual objects). LOW "
+                 "CONFIDENCE on this sim's flat renders: scores run "
+                 "0.05-0.25 and labels can be plain wrong (a red car once "
+                 "read as 'person'), so treat every result as a hint to "
+                 "reason over — NEVER a flight target; the fast COCO "
+                 "`detect` tool remains the authority for movers/vehicles. "
+                 "Returns one line per hit: id, class, confidence, relative "
+                 "bearing, and a ground_intersection estimate ONLY when the "
+                 "object's bottom edge is visible in frame. `conf` defaults "
+                 "to 0.05 (deliberately low — raise it only to cut noise).",
+                 _schema({"what": _S, "conf": _N}, ["what"]))(T("look", _look)))
+        tools.append(
+            tool("pinpoint",
+                 "ADVISORY deep mask (host-GPU SAM segmentation) of ONE "
+                 "point in the CURRENT camera frame: pass pixel `x`,`y` "
+                 "(integers, origin top-left) OR `label` to re-use the "
+                 "centroid of a hit from a previous look() call. Returns the "
+                 "mask's centroid bearing, pixel area and tight box. The "
+                 "mask is UNLABELED — SAM segments but does not identify — "
+                 "unless it was seeded from a look() label. Advisory only, "
+                 "never a flight target; the fast `detect` tool remains the "
+                 "mover authority.",
+                 _schema({"x": _I, "y": _I, "label": _S}))(T("pinpoint", _pinpoint)))
+
+    return tuple(tools)
+
+
+def _claude_pilot_server(specs: tuple[ToolSpec, ...]):
+    """Adapt the neutral catalog to Claude SDK's in-process MCP server."""
+    tools = [claude_tool(s.name, s.description, s.input_schema)(s.handler)
+             for s in specs]
     server = create_sdk_mcp_server(name="pilot", tools=tools)
-    allowed = [f"mcp__pilot__{t.name}" for t in tools]
-    return server, allowed
+    return server, [f"mcp__pilot__{s.name}" for s in specs]
 
 
-def make_pilot_options(ops: FlightOps, *, detect_text=None, report, registry=None,
+def make_pilot_options(ops: FlightOps, *, detect_text=None, deep_tools=None,
+                       report, registry=None,
                        env=None, model=None, cli_path=None,
                        extra_prompt=None, guard=None) -> ClaudeAgentOptions:
     """ICD §5.5: bind THE ONE FlightOps (shared with the estop arbiter).
+    deep_tools: the (look, pinpoint) pair from agents.pilot.deep_tools
+    (deep-perception M2) — bound ONLY when supplied, like detect_text.
     extra_prompt: a validated strategy snippet appended to the system prompt
     (evals A/B cells only — activation requires measured lift, §13 item 6).
     guard: the W3a CommandArbiter's guard_llm — every tool call is rejected
@@ -299,7 +384,10 @@ def make_pilot_options(ops: FlightOps, *, detect_text=None, report, registry=Non
                 "agent would silently hit Anthropic instead of "
                 "api.kimi.com/coding. Install the CLI (npm i -g "
                 "@anthropic-ai/claude-code) or pass cli_path explicitly.")
-    server, allowed = _pilot_server(ops, detect_text, report, registry, guard)
+    specs = make_pilot_tools(
+        ops, detect_text=detect_text, deep_tools=deep_tools, report=report,
+        registry=registry, guard=guard)
+    server, allowed = _claude_pilot_server(specs)
     prompt = PILOT_SYSTEM_PROMPT + (f"\n\n{extra_prompt}" if extra_prompt else "")
     return ClaudeAgentOptions(
         mcp_servers={"pilot": server},

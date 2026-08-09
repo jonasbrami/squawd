@@ -7,7 +7,7 @@ controllers execute the real-time work.
 
 The current runtime combines Gazebo Harmonic, PX4 SITL, ROS 2 Jazzy, MAVSDK, a
 forward camera and ToF rangefinder, a browser cockpit, deterministic evaluation,
-and Claude or Kimi through a backend seam. A fast ONNX perception lane tracks
+and Codex, Claude, or Kimi through a backend seam. A fast ONNX perception lane tracks
 moving contacts continuously; an optional host-GPU sidecar adds open-vocabulary
 `look` and prompted `pinpoint` tools.
 
@@ -60,7 +60,7 @@ flowchart LR
     end
 
     Deep[Optional host-GPU<br/>deep sidecar]
-    Model[Claude or Kimi]
+    Model[Codex, Claude, or Kimi]
 
     Operator <-->|HTTP / WebSocket| Cockpit
     Cockpit -->|ROS command topics| Pilot
@@ -89,7 +89,9 @@ supported local setup currently requires:
 - Intel or NVIDIA rendering for camera-dependent runs. The current CPU launcher
   selects a camera-less PX4 model and therefore does not pass the demo camera
   preflight.
-- Either a logged-in Claude CLI (`~/.claude/.credentials.json`) or
+- One configured model backend: a logged-in Codex CLI
+  (`SQUAWD_BACKEND=codex`, `~/.codex/auth.json`), a logged-in Claude CLI
+  (`SQUAWD_BACKEND=claude`, `~/.claude/.credentials.json`), or
   `SQUAWD_BACKEND=kimi` with `KIMI_API_KEY`.
 - Provisioned ONNX model artifacts in `models/`; see
   [models/README.md](models/README.md).
@@ -110,13 +112,27 @@ docker build -f docker/Dockerfile.swarm -t squawd:dev .
 The PX4 checkout and model artifacts are bind-mounted/runtime prerequisites;
 they are not produced by this image build.
 
-Then follow the complete [demo runbook](docs/RUN-DEMO.md). The short form is:
+Then follow the complete [demo runbook](docs/RUN-DEMO.md). The short form with
+the existing Kimi route is:
 
 ```bash
 set -a; . ./.env; set +a
 VISION_MODEL=coco-nano-seg-v2-640.onnx SQUAWD_BACKEND=kimi \
   ./scripts/run_single_demo.sh demo
 ```
+
+For Codex subscription login and the default Terra/low-latency profile:
+
+```bash
+codex login  # once on the host
+VISION_MODEL=coco-nano-seg-v2-640.onnx SQUAWD_BACKEND=codex \
+  ./scripts/run_single_demo.sh demo
+```
+
+`SQUAWD_MODEL` overrides the backend model. Codex defaults to
+`gpt-5.6-terra` with `SQUAWD_CODEX_EFFORT=low`; Kimi and Claude retain their
+existing Claude-SDK routes and defaults. The image pins `openai-codex==0.144.4`,
+whose package includes its matching Codex runtime.
 
 `run_single_demo.sh` starts the simulator and pilot. The cockpit is a separate
 process; the runbook includes its command, readiness checks, deep-sidecar setup,

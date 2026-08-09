@@ -15,11 +15,31 @@ PY=python3
 command -v uv >/dev/null 2>&1 && PY="uv run --no-project python"
 
 # 1. gz + ROS + project deps in the python env the agents will actually use
-$PY - <<'EOF' && ok "python deps (mavsdk, claude_agent_sdk, websockets, rclpy, px4_msgs)" || bad "python deps missing (mavsdk/claude_agent_sdk/websockets/rclpy/px4_msgs)"
+$PY - <<'EOF' && ok "python deps (mavsdk, claude_agent_sdk, openai_codex, websockets, rclpy, px4_msgs)" || bad "python deps missing (mavsdk/claude_agent_sdk/openai_codex/websockets/rclpy/px4_msgs)"
 import importlib.util, sys
 sys.exit(0 if all(importlib.util.find_spec(m) for m in
-    ("mavsdk", "claude_agent_sdk", "websockets", "rclpy", "px4_msgs")) else 1)
+    ("mavsdk", "claude_agent_sdk", "openai_codex", "websockets", "rclpy", "px4_msgs")) else 1)
 EOF
+
+# 1b. Backend credentials and runtime contract (presence only; never print data)
+case "${SQUAWD_BACKEND:-claude}" in
+  codex)
+    [ -f "${CODEX_HOME:-/root/.codex}/auth.json" ] \
+      && ok "Codex subscription login present (model=${SQUAWD_MODEL:-gpt-5.6-terra}, effort=${SQUAWD_CODEX_EFFORT:-low})" \
+      || bad "Codex auth missing at CODEX_HOME/auth.json"
+    ;;
+  kimi)
+    [ -n "${KIMI_API_KEY:-}" ] && ok "Kimi subscription key present" \
+      || bad "KIMI_API_KEY missing"
+    command -v claude >/dev/null 2>&1 && ok "external Claude CLI present for Kimi route" \
+      || bad "external Claude CLI missing for Kimi route"
+    ;;
+  claude)
+    [ -f /root/.claude/.credentials.json ] && ok "Claude OAuth login present" \
+      || bad "Claude OAuth credentials missing"
+    ;;
+  *) bad "invalid SQUAWD_BACKEND=${SQUAWD_BACKEND}" ;;
+esac
 
 # 2. ROS_DOMAIN_ID set (avoid cross-talk with stray ROS graphs)
 if [ -n "${ROS_DOMAIN_ID:-}" ]; then ok "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"

@@ -58,7 +58,8 @@ def _r(v, n=1):
 
 
 def build_state(pos, status, batt, *, att=None, cam_seq=0, cam_stamp=None,
-                snapshot=None):
+                snapshot=None, contacts=None, annotations=None,
+                pinpoint_mask=None, slowlane=None):
     """Assemble the single-drone /state dict (any input may be None).
 
     pos      -> VehicleLocalPosition (x, y, z, vx, vy, vz, heading)
@@ -68,6 +69,13 @@ def build_state(pos, status, batt, *, att=None, cam_seq=0, cam_stamp=None,
     cam_seq  -> latest camera frame seq (0 = no frame yet)
     cam_stamp-> latest camera frame sim_stamp (None = no frame yet)
     snapshot -> parsed /pilot/detections PerceptionSnapshot v1 dict, or None
+    contacts -> contact views to serve INSTEAD of snapshot's (M3: the
+                fp_suspect-marked copy from overlay.mark_fp_suspects)
+    annotations   -> M3 slowlane view from overlay.annotations_for ([] when
+                absent/expired — never stale advisory state)
+    pinpoint_mask -> M3 /pilot/deep passthrough from overlay.pinpoint_mask_for
+    slowlane -> the slowlane payload's health dict (process state, not
+                frame-gated), or None
     """
     return {
         "north": _r(pos.x) if pos else None,
@@ -91,6 +99,10 @@ def build_state(pos, status, batt, *, att=None, cam_seq=0, cam_stamp=None,
         "detector": snapshot.get("detector") if snapshot else None,
         "beam": snapshot.get("beam") if snapshot else None,
         "track": snapshot.get("track") if snapshot else None,
-        "contacts": snapshot.get("contacts") if snapshot else None,
+        "contacts": (contacts if contacts is not None
+                     else (snapshot.get("contacts") if snapshot else None)),
+        "annotations": annotations or [],
+        "pinpoint_mask": pinpoint_mask,
+        "slowlane": slowlane,
         "banner": overlay.hud_banner(snapshot),
     }

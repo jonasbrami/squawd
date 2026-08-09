@@ -414,3 +414,129 @@ def test_index_renders_r4_ops_bar_defaults():
     assert "radius_m: S.orbitR, rate_dps: 8" in html
     assert "clamp((S.gap ?? 17) - 3, 14, 20)" in html
     assert "clamp((S.gap ?? 15) + 3, 14, 20)" in html
+
+
+# ---- /state M3 deep additions (deep-perception plan §5/§6) ----
+
+def _slowlane(stamp=42.0, suspects=None, dets=None):
+    return json.dumps({
+        "type": "slowlane", "frame_seq": 57, "sim_stamp": stamp,
+        "frame_w": 640, "frame_h": 360, "captured_mono": 1234.5,
+        "dets": dets if dets is not None else
+        [{"cls": "house", "conf": 0.19, "xyxy": [572, 235, 640, 280]}],
+        "fp_suspects": suspects or [],
+        "fp_checked": suspects is not None,
+        "fast_dets": [], "latency_ms": 41.0,
+        "health": {"active": True, "note": "default", "hz": 0.3,
+                   "vocab": ["building", "house"], "conf": 0.05,
+                   "last_error": None, "ticks": 9, "calls": 8, "ok": 7,
+                   "dropped_busy": 1, "dropped_unavailable": 0,
+                   "dropped_error": 0, "skipped_gate": 1,
+                   "skipped_no_frame": 0, "fp_checked": 6}})
+
+
+def _fp_snap(stamp=42.0):
+    """A snapshot whose truck contact box sits inside the slowlane's house
+    annotation (the phantom-truck-on-building geometry)."""
+    s = json.loads(SNAP)
+    s["sim_stamp"] = stamp
+    s["contacts"] = [{"name": "vis_truck_0", "cls": "truck", "conf": 0.42,
+                      "bbox_xyxy": [575, 238, 638, 279], "range_m": 31.0}]
+    return json.dumps(s)
+
+
+SUSPECT = [{"cls": "truck", "conf": 0.42, "xyxy": [574, 238, 638, 279],
+            "ann_cls": "house", "ann_xyxy": [572, 235, 640, 280],
+            "overlap": 0.97}]
+
+PINPOINT = json.dumps({
+    "type": "pinpoint_mask", "frame_seq": 57, "sim_stamp": 42.0,
+    "frame_w": 640, "frame_h": 360, "xyxy": [296, 271, 347, 303],
+    "mask": {"rle": "gICAwP8=", "w": 51, "h": 32},
+    "centroid": [321.0, 286.8], "area_px": 1398, "score": 0.93,
+    "cls": "truck", "color_rgb": [178, 172, 164]})
+
+
+def _m3_app(br, cam_stamp=42.1):
+    return _app(br, FakeCameras(SimpleNamespace(seq=57, sim_stamp=cam_stamp)))
+
+
+def test_state_serves_fresh_annotations_health_and_fp_flag():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _fp_snap())
+    br.set_latest("/pilot/slowlane", _slowlane(suspects=SUSPECT))
+    with TestClient(_m3_app(br)) as client:
+        d = client.get("/state").json()
+    assert d["annotations"] == [
+        {"cls": "house", "conf": 0.19, "xyxy": [572, 235, 640, 280],
+         "frame_seq": 57, "sim_stamp": 42.0, "age_ms": 100}]
+    assert d["contacts"][0]["fp_suspect"] is True
+    assert d["slowlane"]["hz"] == 0.3 and d["slowlane"]["ok"] == 7
+    assert d["pinpoint_mask"] is None
+
+
+def test_state_annotations_expire_at_half_a_second_of_frame_age():
+    br = FakeBridge()
+    br.set_latest("/pilot/detections", _fp_snap())
+    br.set_latest("/pilot/slowlane", _slowlane(stamp=41.4, suspects=SUSPECT))
+    with TestClient(_m3_app(br)) as client:          # cam 42.1: payload 0.7 s old
+        d = client.get("/state").json()
+    assert d["annotations"] == []                     # expired, nothing stale
+    assert d["contacts"][0]["fp_suspect"] is False    # the advisory clears too
+    assert d["slowlane"]["ok"] == 7                   # health is process state
+
+
+def test_state_annotations_at_the_exact_boundary_survive():
+    br = FakeBridge()
+    br.set_latest("/pilot/slowlane", _slowlane(stamp=41.5))
+    with TestClient(_m3_app(br, cam_stamp=42.0)) as client:   # exactly 0.5 s
+        d = client.get("/state").json()
+    assert len(d["annotations"]) == 1
+    assert d["annotations"][0]["age_ms"] == 500
+
+
+def test_state_fp_flag_requires_box_and_class_match():
+    br = FakeBridge()
+    snap = json.loads(_fp_snap())
+    snap["contacts"] = [
+        {"name": "vis_truck_0", "cls": "truck", "bbox_xyxy": [10, 10, 60, 60]},
+        {"name": "vis_car_1", "cls": "car", "bbox_xyxy": [575, 238, 638, 279]}]
+    br.set_latest("/pilot/detections", json.dumps(snap))
+    br.set_latest("/pilot/slowlane", _slowlane(suspects=SUSPECT))
+    with TestClient(_m3_app(br)) as client:
+        d = client.get("/state").json()
+    by_name = {c["name"]: c for c in d["contacts"]}
+    assert by_name["vis_truck_0"]["fp_suspect"] is False   # box doesn't match
+    assert by_name["vis_car_1"]["fp_suspect"] is False     # cls doesn't match
+
+
+def test_state_pinpoint_mask_passthrough_fresh_then_expired():
+    br = FakeBridge()
+    br.set_latest("/pilot/deep", PINPOINT)
+    with TestClient(_m3_app(br)) as client:
+        d = client.get("/state").json()
+    m = d["pinpoint_mask"]
+    assert m["frame_seq"] == 57 and m["age_ms"] == 100
+    assert m["mask"] == {"rle": "gICAwP8=", "w": 51, "h": 32}
+    assert m["xyxy"] == [296, 271, 347, 303] and m["cls"] == "truck"
+
+    stale = json.loads(PINPOINT)
+    stale["sim_stamp"] = 40.0                           # 2.1 s of frame age
+    br2 = FakeBridge()
+    br2.set_latest("/pilot/deep", json.dumps(stale))
+    with TestClient(_m3_app(br2)) as client:
+        assert client.get("/state").json()["pinpoint_mask"] is None
+
+
+def test_state_deep_topics_absent_or_unparseable_are_safe():
+    br = FakeBridge()
+    with TestClient(_m3_app(br)) as client:
+        d = client.get("/state").json()
+    assert d["annotations"] == [] and d["pinpoint_mask"] is None
+    assert d["slowlane"] is None
+
+    br.set_latest("/pilot/slowlane", "{not json")
+    br.set_latest("/pilot/deep", json.dumps({"type": "something_else"}))
+    with TestClient(_m3_app(br)) as client:
+        d = client.get("/state").json()
+    assert d["annotations"] == [] and d["pinpoint_mask"] is None

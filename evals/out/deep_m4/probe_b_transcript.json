@@ -1,0 +1,10 @@
+[
+ {
+  "t": 0.0,
+  "line": "you: face house_1, then use pinpoint on the house facade and tell me what you see"
+ },
+ {
+  "t": 55.3,
+  "line": "pilot: Faced house_1 (heading -117\u00b0). Deep look detected the house (conf 0.25) ~63m ahead at E53 N-46, matching house_1's known position (E50 N-48). Pinpoint segmented the facade: mask centered ahead in frame at pixel (322,261), tight box [258,220,406,309], area ~8.8k px, mask score 0.95 \u2014 a clean, well-defined house front centered in view. No people or vehicles visible around it."
+ }
+]

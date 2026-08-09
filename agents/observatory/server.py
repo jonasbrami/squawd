@@ -2,7 +2,10 @@
 
 Endpoints (ICD §8.2):
 - GET  /state         pose, attitude, flight mode, battery, detector/beam/track
-                      health (attitude+battery ride the new §8.1 topics)
+                      health (attitude+battery ride the new §8.1 topics);
+                      M3: `annotations` + `pinpoint_mask` + `slowlane` health
+                      and the fp_suspect flag on contacts, all frame-age
+                      gated ≤0.5 s (deep-perception plan §5/§6)
 - WS   /ws_cam        one text announce {"seq","sim_stamp","codec"}, then
                       binary [seq:u32, stamp:f64, H.264 AU] per access unit
 - WS   /ws_detections verbatim relay of the pilot's /pilot/detections
@@ -47,6 +50,8 @@ T_ATT = PX4_BASE + "/vehicle_attitude"
 T_STATUS = PX4_BASE + "/vehicle_status"
 T_BATT = PX4_BASE + "/battery_status"
 T_DETECTIONS = "/pilot/detections"
+T_DEEP = "/pilot/deep"              # M2 pinpoint masks (pinpoint_mask payload)
+T_SLOWLANE = "/pilot/slowlane"      # M3 slowlane annotations + fp advisory
 T_USER_INPUT = "/pilot/user_input"
 T_ESTOP = "/pilot/estop"
 T_CMD = "/pilot/cmd"
@@ -122,17 +127,28 @@ def build_app(bridge, cameras, hub, *, msg_type, cmd_qos, chat_qos):
 
     async def state(request):
         snap = _snap_json(bridge.latest(T_DETECTIONS))
+        slow = _snap_json(bridge.latest(T_SLOWLANE))
+        deep = _snap_json(bridge.latest(T_DEEP))
         f = cameras.snapshot(I)
+        cam_stamp = f.sim_stamp if f else None
         att_msg = bridge.latest(T_ATT)
         att = metrics.rpy_from_quat(getattr(att_msg, "q", None)) \
             if att_msg is not None else None
+        # M3 joins (overlay.py, the same 0.5 s frame-age rule as the overlay):
+        # annotations + mask + fp_suspect all expire; health is process state.
         return JSONResponse(metrics.build_state(
             bridge.latest(T_POSE), bridge.latest(T_STATUS),
             bridge.latest(T_BATT),
             att=att,
             cam_seq=f.seq if f else 0,
-            cam_stamp=f.sim_stamp if f else None,
-            snapshot=snap))
+            cam_stamp=cam_stamp,
+            snapshot=snap,
+            contacts=overlay.mark_fp_suspects(
+                snap.get("contacts") if snap else None, slow,
+                snap.get("sim_stamp") if snap else None, cam_stamp),
+            annotations=overlay.annotations_for(slow, cam_stamp),
+            pinpoint_mask=overlay.pinpoint_mask_for(deep, cam_stamp),
+            slowlane=(slow or {}).get("health") if slow else None))
 
     async def ws_cam(websocket):
         """One camera channel (ICD §8.2): the text announce goes out once with
@@ -279,6 +295,8 @@ def main() -> None:
     bridge.subscribe(T_STATUS, VehicleStatus)
     bridge.subscribe(T_BATT, BatteryStatus)
     bridge.subscribe(T_DETECTIONS, String, STATE_QOS)
+    bridge.subscribe(T_DEEP, String, STATE_QOS)        # M2 pinpoint masks
+    bridge.subscribe(T_SLOWLANE, String, STATE_QOS)    # M3 slowlane state
     cameras = GzCameras(1)
     hub = VideoHub(cameras, I)
     app = build_app(bridge, cameras, hub,

@@ -1,11 +1,11 @@
-"""Backend seam (design §6.5) — THE one module coupled to claude-agent-sdk's
-client + message types. Everything downstream (the pilot loop, the eval
-runner's Trace.observe) consumes the NORMALIZED typed event stream defined
-here — `Text / ToolCall / ToolResult / Result(usage + §5.5 quota metrics)` —
-never SDK imports. A future backend swap to the designated fallback harness
-(kimi-agent-sdk, Apache-2.0, https://github.com/MoonshotAI/kimi-agent-sdk —
-pivot triggers in §6.5) touches THIS file only; the MCP tool binding in
-`agents/flight/tools.py` is the other half of the seam (`make_pilot_options`).
+"""Provider seam for Claude, Kimi, and Codex backends.
+
+Everything downstream (the pilot loop and eval Trace.observe) consumes the
+normalized event stream defined here — ``Text / ToolCall / ToolResult /
+Result`` — and never imports a provider SDK.  Claude and the Anthropic-
+compatible Kimi route use ``BackendClient`` below.  The factory at the end of
+this module selects the Codex adapter in ``codex_backend.py`` when requested.
+The provider-neutral tool catalog lives in ``agents/flight/tools.py``.
 
 §5.5 quota instrumentation (M6): `BackendClient.query` measures what the
 subscription backend actually costs — top-level query count, exact inference
@@ -49,6 +49,15 @@ KIMI_BASE_URL = "https://api.kimi.com/coding/"
 # 2026-08-02): K2.7 Code standard/highspeed + K3 1M/256k.
 KIMI_MODELS = frozenset({"kimi-for-coding", "kimi-for-coding-highspeed",
                          "k3", "k3-256k"})
+VALID_BACKENDS = frozenset({"claude", "kimi", "codex"})
+BACKEND_MODEL_DEFAULTS = {
+    # Preserve the pre-switch Claude/Kimi effective defaults. Claude's None
+    # delegates to the installed Claude Code default; Kimi's recipe pins the
+    # compatible subscription route. Codex is explicit and fail-closed.
+    "claude": None,
+    "kimi": "kimi-for-coding",
+    "codex": "gpt-5.6-terra",
+}
 
 
 # ---- normalized typed event stream (design §6.5) ----
@@ -253,10 +262,17 @@ def is_kimi_tier(model: str | None, env: dict | None) -> bool:
 
 
 def agent_env(tag: str, backend: str | None = None) -> dict:
-    """Per-agent CLAUDE_CONFIG_DIR isolation (a sibling of the base config
-    dir, with its OAuth credentials copied over — from swarm/run.py:30-44) +
-    the Kimi recipe when SQUAWD_BACKEND=kimi (or `backend` says so)."""
-    backend = backend or os.environ.get("SQUAWD_BACKEND", "claude")
+    """Return the selected provider's isolated runtime environment.
+
+    Claude gets a per-agent config directory, Kimi adds its endpoint recipe,
+    and Codex receives only the launcher's isolated ``CODEX_HOME``.
+    """
+    backend = resolve_backend(backend)
+    if backend == "codex":
+        # Codex credentials/config are isolated by CODEX_HOME and the launcher;
+        # never copy Claude state into that directory.
+        return {"CODEX_HOME": os.environ.get(
+            "CODEX_HOME", os.path.expanduser("~/.codex"))}
     base = os.environ.get("CLAUDE_CONFIG_DIR", "/root/.claude")
     d = os.path.join(os.path.dirname(base.rstrip("/")) or "/", f".claude-{tag}")
     os.makedirs(d, exist_ok=True)
@@ -269,3 +285,55 @@ def agent_env(tag: str, backend: str | None = None) -> dict:
     if backend == "kimi":
         env.update(kimi_recipe())
     return env
+
+
+def resolve_backend(value: str | None = None) -> str:
+    """Validate the provider selector without silently falling back."""
+    backend = (value or os.environ.get("SQUAWD_BACKEND", "claude")).strip().lower()
+    if backend not in VALID_BACKENDS:
+        allowed = "|".join(sorted(VALID_BACKENDS))
+        raise ValueError(f"invalid SQUAWD_BACKEND={backend!r}; expected {allowed}")
+    return backend
+
+
+def resolve_model(backend: str, value: str | None = None) -> str | None:
+    """Return an explicit override or the provider's compatibility default."""
+    backend = resolve_backend(backend)
+    if value is None:
+        value = os.environ.get("SQUAWD_MODEL")
+    return value or BACKEND_MODEL_DEFAULTS[backend]
+
+
+def make_backend_client(
+        ops, *, report, registry=None, detect_text=None, deep_tools=None,
+        guard=None, backend: str | None = None, env=None, model=None,
+        cli_path=None, extra_prompt=None, codex_effort: str | None = None,
+        codex_home: str | None = None, codex_workdir: str | None = None):
+    """Build the selected provider behind the common async client contract."""
+    from agents.flight.tools import (PILOT_SYSTEM_PROMPT, make_pilot_options,
+                                     make_pilot_tools)
+
+    selected = resolve_backend(backend)
+    selected_model = resolve_model(selected, model)
+    prompt = PILOT_SYSTEM_PROMPT + (f"\n\n{extra_prompt}" if extra_prompt else "")
+    if selected == "codex":
+        from agents.flight.codex_backend import CodexBackendClient
+
+        specs = make_pilot_tools(
+            ops, detect_text=detect_text, deep_tools=deep_tools, report=report,
+            registry=registry, guard=guard)
+        return CodexBackendClient(
+            specs,
+            system_prompt=prompt,
+            model=selected_model or BACKEND_MODEL_DEFAULTS["codex"],
+            effort=(codex_effort or os.environ.get(
+                "SQUAWD_CODEX_EFFORT", "low")),
+            codex_home=(codex_home or (env or {}).get("CODEX_HOME")),
+            workdir=codex_workdir,
+        )
+
+    options = make_pilot_options(
+        ops, detect_text=detect_text, deep_tools=deep_tools, report=report,
+        registry=registry, guard=guard, env=env,
+        model=selected_model, cli_path=cli_path, extra_prompt=extra_prompt)
+    return BackendClient(options)

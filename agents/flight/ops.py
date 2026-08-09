@@ -769,17 +769,23 @@ class FlightOps:
                     est.update(sim_now, tp[0], tp[1])
                     v0 = (est.ve, est.vn)
                 # COASTING: for a ToF-fed (co-altitude) contact, the position
-                # ghosts during a fusion drought — HOLDING the stale point
-                # lets the real target walk away (v18-v21: lock, then the gap
-                # grows to 27-75 m and fusion never resumes). Re-close toward
-                # the measured bearing at a creep (the beam IS the
-                # acquisition — restore the close geometry where it re-locks,
-                # the SM's COASTING -> ACQUIRING leg). For geom contacts the
-                # proven M3a behavior holds the shaped point and keeps the
-                # nose on the measured bearing — the stream NEVER stops
-                # mid-call (O2). R4 (the demo/hold_altitude path only): the
-                # nose follows the EKF-PREDICTED bearing instead, below; the
-                # mover default keeps the stale bearing byte-identical.
+                # ghosts during a fusion drought — HOLDING position lets the
+                # real target walk away (v18-v21: lock, then the gap grows to
+                # 27-75 m and fusion never resumes). Re-close toward the
+                # measured bearing at a creep (the beam IS the acquisition —
+                # restore the close geometry where it re-locks, the SM's
+                # COASTING -> ACQUIRING leg). For geom contacts the proven
+                # M3a behavior holds the CURRENT position and keeps the nose
+                # on the measured bearing — the stream NEVER stops mid-call
+                # (O2). R4 (the demo/hold_altitude path only): the nose
+                # follows the EKF-PREDICTED bearing instead, below; the mover
+                # default keeps the stale bearing byte-identical.
+                # 2026-08-03 codex-R4 coast-latch fix: BOTH branches below
+                # anchor on the CURRENT position `me`, never `_shp` — the
+                # direct lane (hold_altitude) initializes _shp at engagement
+                # start and never updates it, so coast ticks used to command
+                # the stale START point and fly the drone back mid-pursuit
+                # (the operator's "immediately deviates").
                 health_fn = getattr(self.contacts, "health", None)
                 health = health_fn(name) if callable(health_fn) else "MEASURED"
                 if health == "COASTING":
@@ -790,7 +796,7 @@ class FlightOps:
                     src = getattr(obs, "range_src", None) if obs else None
                     if src == "tof" and b is not None:
                         b_rad = math.radians(coast_yaw)
-                        pos, vel = _sp(_shp[0], _shp[1], alt,
+                        pos, vel = _sp(me[0], me[1], alt,
                                        2.0 * math.cos(b_rad),
                                        2.0 * math.sin(b_rad), coast_yaw)
                     else:
@@ -815,7 +821,7 @@ class FlightOps:
                                 - float(getattr(obs, "vn", 0.0) or 0.0) * back
                             coast_yaw = math.degrees(
                                 math.atan2(pe - me[0], pn - me[1]))
-                        pos, vel = _sp(_shp[0], _shp[1], alt, 0.0, 0.0,
+                        pos, vel = _sp(me[0], me[1], alt, 0.0, 0.0,
                                        coast_yaw)
                     await self.drone.offboard.set_position_velocity_ned(pos, vel)
                     await asyncio.sleep(1.0 / trk.CTRL_HZ)

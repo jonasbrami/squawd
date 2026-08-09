@@ -66,6 +66,14 @@ def _within_step_budget(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     return CheckResult("within_step_budget", steps <= mx, float(steps), f"{steps} steps (max {mx})")
 
 
+def _landed(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Require a completed land tool followed by PX4 disarm."""
+    ok = m.get("landed") is True
+    return CheckResult("landed", ok, 1.0 if ok else 0.0,
+                       "PX4 disarmed after land" if ok else
+                       "final land missing, failed, or did not disarm")
+
+
 def _first_reach_time(track: WorldTrack, xy: tuple, tol: float,
                       after: float | None = None, p: dict | None = None) -> float | None:
     """First time any drone comes within `tol` of `xy`. If `after` is given, only
@@ -501,6 +509,7 @@ CHECKS = {
     "coverage": _coverage,
     "alive": _alive,
     "within_step_budget": _within_step_budget,
+    "landed": _landed,
     "visited_all": _visited_all,
     "ordering": _ordering,
     "altitude": _altitude,

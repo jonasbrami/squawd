@@ -1,0 +1,280 @@
+{
+ "frames": {
+  "frame_a_car_houses": {
+   "conf": 0.05,
+   "dets": [
+    {
+     "cls": "person",
+     "conf": 0.23,
+     "xyxy": [
+      310.8,
+      277.9,
+      339.9,
+      303.1
+     ]
+    },
+    {
+     "cls": "house",
+     "conf": 0.186,
+     "xyxy": [
+      572.0,
+      234.7,
+      639.5,
+      280.0
+     ]
+    },
+    {
+     "cls": "house",
+     "conf": 0.052,
+     "xyxy": [
+      571.9,
+      234.8,
+      639.5,
+      313.0
+     ]
+    }
+   ],
+   "latency_ms": 10.9,
+   "dets_conf025": []
+  },
+  "frame_b_houses_pole_car": {
+   "conf": 0.05,
+   "dets": [
+    {
+     "cls": "person",
+     "conf": 0.174,
+     "xyxy": [
+      394.7,
+      346.2,
+      427.3,
+      360.0
+     ]
+    },
+    {
+     "cls": "tree",
+     "conf": 0.062,
+     "xyxy": [
+      539.2,
+      251.1,
+      629.3,
+      359.6
+     ]
+    }
+   ],
+   "latency_ms": 9.6
+  },
+  "frame_c_gasstation": {
+   "conf": 0.05,
+   "dets": [],
+   "latency_ms": 11.8
+  }
+ },
+ "color_order": {
+  "vocab": [
+   "red car",
+   "blue car"
+  ],
+  "rgb_dets": [
+   [
+    "blue car",
+    0.033,
+    [
+     94.8,
+     260.1,
+     125.3,
+     273.2
+    ]
+   ],
+   [
+    "red car",
+    0.018,
+    [
+     310.3,
+     278.0,
+     340.7,
+     303.6
+    ]
+   ]
+  ],
+  "swapped_dets": [
+   [
+    "blue car",
+    0.032,
+    [
+     94.8,
+     260.1,
+     125.3,
+     273.2
+    ]
+   ],
+   [
+    "blue car",
+    0.022,
+    [
+     572.2,
+     234.6,
+     639.9,
+     282.6
+    ]
+   ],
+   [
+    "blue car",
+    0.013,
+    [
+     395.2,
+     235.4,
+     498.5,
+     296.0
+    ]
+   ],
+   [
+    "blue car",
+    0.011,
+    [
+     310.3,
+     278.0,
+     340.7,
+     303.8
+    ]
+   ]
+  ]
+ },
+ "segment": {
+  "point_car": {
+   "xyxy": [
+    311.0,
+    279.0,
+    340.0,
+    304.0
+   ],
+   "centroid": [
+    326.4,
+    294.5
+   ],
+   "area_px": 380,
+   "score": 0.904,
+   "latency_ms": 83.4,
+   "mask_dims": [
+    29,
+    25
+   ],
+   "decoded_area_matches": true
+  },
+  "box_house": {
+   "xyxy": [
+    396.0,
+    235.0,
+    498.0,
+    296.0
+   ],
+   "centroid": [
+    444.8,
+    265.5
+   ],
+   "area_px": 5414,
+   "score": 0.955,
+   "latency_ms": 84.3,
+   "mask_dims": [
+    102,
+    61
+   ],
+   "decoded_area_matches": true
+  },
+  "box_canopy": {
+   "xyxy": [
+    189.0,
+    303.0,
+    490.0,
+    360.0
+   ],
+   "centroid": [
+    342.4,
+    332.7
+   ],
+   "area_px": 10393,
+   "score": 0.617,
+   "latency_ms": 80.8,
+   "mask_dims": [
+    301,
+    57
+   ],
+   "decoded_area_matches": true
+  }
+ },
+ "latency": {
+  "detect_cold_s": 15.84,
+  "segment_cold_s": 2.75,
+  "detect_warm_ms": {
+   "p50": 9.1,
+   "p95": 13.3,
+   "all": [
+    9.1,
+    8.8,
+    9.4,
+    9.1,
+    9.0,
+    8.7,
+    9.0,
+    10.6,
+    13.3,
+    11.2
+   ]
+  },
+  "segment_warm_ms": {
+   "p50": 82.3,
+   "p95": 93.2,
+   "all": [
+    80.9,
+    83.3,
+    79.8,
+    80.0,
+    83.1,
+    80.8,
+    82.3,
+    82.4,
+    82.4,
+    93.2
+   ]
+  }
+ },
+ "coexistence": {
+  "before": {
+   "detector_latency_ms": [
+    54.4,
+    41.6
+   ],
+   "cam_hz": 9.5
+  },
+  "during_20_detects": {
+   "detector_latency_ms": [
+    41.8,
+    42.8
+   ],
+   "cam_hz": 9.0
+  }
+ },
+ "busy_429": {
+  "statuses": [
+   "BUSY",
+   "OK"
+  ]
+ },
+ "health_loaded": {
+  "ok": true,
+  "device": "cuda",
+  "models_loaded": [
+   "sam2.1_t",
+   "yolov8s-worldv2"
+  ],
+  "vram_mb": 898
+ },
+ "health_final": {
+  "ok": true,
+  "device": "cuda",
+  "models_loaded": [
+   "sam2.1_t",
+   "yolov8s-worldv2"
+  ],
+  "vram_mb": 898
+ }
+}

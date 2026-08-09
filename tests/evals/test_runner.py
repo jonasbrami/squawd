@@ -1,4 +1,4 @@
-from agents.flight.backend import ToolCall
+from agents.flight.backend import ToolCall, ToolResult
 
 from evals.runner import Trace, model_for, CellResult
 
@@ -20,6 +20,19 @@ def test_trace_counts_tooluse_and_stamps_first():
     tr.observe(blk(3), now=6.0)
     assert tr.steps == 3
     assert tr.first_action_t == 5.0
+
+
+def test_completed_land_requires_final_successful_result():
+    from evals.runner import _completed_land
+
+    tr = Trace()
+    tr.observe(ToolCall(id="l", name="mcp__pilot__land", input={}, model="m"), 1)
+    assert not _completed_land(tr)
+    tr.observe(ToolResult(tool_use_id="l", content="landed", is_error=False), 2)
+    assert _completed_land(tr)
+    tr.observe(ToolCall(id="s", name="mcp__pilot__scan", input={}, model="m"), 3)
+    tr.observe(ToolResult(tool_use_id="s", content="ok", is_error=False), 4)
+    assert not _completed_land(tr)
 
 
 def test_cellresult_row_roundtrip():

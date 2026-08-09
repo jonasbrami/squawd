@@ -3,7 +3,7 @@
 One drone, one pilot agent, the `demo` world (3 cars + 2 walkers on loops),
 COCO-v2 detector at 640×360@10, and the cockpit web UI on :8000. Structured
 cockpit operations are LLM-free; natural-language `/command` requests invoke
-the configured Claude or Kimi backend.
+the configured Codex, Claude, or Kimi backend.
 
 ## Prereqs
 
@@ -18,8 +18,11 @@ the configured Claude or Kimi backend.
 
 - `models/coco-nano-seg-v2-640.onnx` plus its JSON manifest. V2 remains an
   explicit demo override rather than the launcher's default.
-- For Kimi, `.env` containing `KIMI_API_KEY`; for Claude, a logged-in host CLI
-  with `~/.claude/.credentials.json`.
+- For Codex, run `codex login` on the host and confirm `~/.codex/auth.json`
+  exists. This route uses the logged-in ChatGPT/Codex subscription, not
+  `OPENAI_API_KEY`.
+- For Kimi, use `.env` containing `KIMI_API_KEY`; for Claude, use a logged-in
+  host CLI with `~/.claude/.credentials.json`.
 - Docker. A reasonably quiet host at boot time (load < ~15 on 20 cores;
   PX4's EKF fails to converge yaw under load ≥ ~30 — "blind land"
   failsafes; check `Ready for takeoff!` in the PX4 log if arming is denied).
@@ -39,12 +42,27 @@ the configured Claude or Kimi backend.
 
 ## Launch the simulator and pilot
 
+Kimi (existing Claude SDK → Kimi coding endpoint route):
+
 ```bash
 cd /home/quenouille/drone
 set -a; . ./.env; set +a
 VISION_MODEL=coco-nano-seg-v2-640.onnx SQUAWD_BACKEND=kimi \
   ./scripts/run_single_demo.sh demo
 ```
+
+Codex (defaults to `gpt-5.6-terra`, low reasoning effort):
+
+```bash
+cd /home/quenouille/drone
+VISION_MODEL=coco-nano-seg-v2-640.onnx SQUAWD_BACKEND=codex \
+  ./scripts/run_single_demo.sh demo
+```
+
+Override with `SQUAWD_MODEL=<model>` and, for Codex,
+`SQUAWD_CODEX_EFFORT=low|medium|high|xhigh`. Direct Claude remains available
+with `SQUAWD_BACKEND=claude`. The default backend remains Claude when
+`SQUAWD_BACKEND` is unset.
 
 The script starts a fresh container from the existing image, gates on
 `scripts/doctor_sim.sh`, and starts the pilot agent. It does not build the image
@@ -65,6 +83,15 @@ curl -fsS http://localhost:8000/state >/dev/null
 docker exec pilot-sim tail -n 30 /tmp/pilot.log
 docker exec pilot-sim tail -n 30 /tmp/cockpit.log
 ```
+
+`doctor_sim.sh` reports the selected backend, model/effort where applicable,
+runtime import readiness, and credential presence without printing credential
+contents. On Codex, the launcher creates a fresh `/tmp/pilot-codex`, copies only
+the host's `auth.json`, and mounts it as writable `/root/.codex`; it does not
+copy the host's `config.toml`, MCP servers, plugins, skills, or workspace state.
+The pilot then starts a required, bearer-authenticated MCP endpoint bound only
+to container loopback. If that endpoint cannot initialize, pilot startup fails
+instead of falling back to another API or backend.
 
 ## Optional deep-perception sidecar
 
