@@ -355,7 +355,7 @@ def _escort(track: WorldTrack, p: dict, m: dict) -> CheckResult:
 
 def _identified_target(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     """The agent locked the RIGHT contact (design §3.8, review Codex-B5): the
-    runner's TargetLockEvent path (evals/perceive_eval.note_target_lock) records
+    runner's target-lock path (evals/perceive_eval.note_target_lock) records
     the first track/goto aimed at a vis_* id and associates the contact's
     measurement to oracle truth AT that sim moment; run_meta carries the
     resulting truth id. Grades PERCEPTION (identity at lock time), never the

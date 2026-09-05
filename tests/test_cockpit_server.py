@@ -65,7 +65,7 @@ class FakeCameras:
 SNAP = json.dumps({
     "schema_version": 1, "sim_stamp": 42.0, "seq": 7,
     "frame_w": 640, "frame_h": 360,
-    "dets": [{"cls": "target", "conf": 0.8, "xyxy": [10, 20, 60, 80], "tid": 3}],
+    "dets": [{"cls": "target", "conf": 0.8, "xyxy": [10, 20, 60, 80]}],
     "contacts": [{"name": "vis_target_0", "cls": "target", "conf": 0.8,
                   "e": 3.0, "n": 12.0, "z": 5.0, "position_src": "measured",
                   "ve": 0.0, "vn": 0.0, "bearing_deg": 14.0,
@@ -259,7 +259,6 @@ def test_ws_detections_relays_det_masks_verbatim():
     byte — the overlay's mask drawing reads exactly what the pilot sent."""
     snap = json.loads(SNAP)
     snap["dets"] = [{"cls": "car", "conf": 0.7, "xyxy": [10, 20, 60, 80],
-                     "tid": None,
                      "mask": {"rle": "gICAwP8=", "w": 50, "h": 60}}]
     text = json.dumps(snap)
     br = FakeBridge()

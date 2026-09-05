@@ -2,9 +2,9 @@
 """w25b_eval — W2.5b phase-2 acceptance eval on the gz splits (codex R5 bar,
 spec docs/benchmarks/w3-detector-codex-r5.md §4; task items 1/2/5).
 
-Runs the exported ONNX directly with onnxruntime — preprocess/decode adapted
-from scripts/w0_assets_eval.py (letterbox 114-pad, class-aware NMS iou=0.45,
-conf 0.25) so numbers are comparable to the production OnnxBackend precedent.
+Runs the exported ONNX directly with onnxruntime using 114-pad letterboxing,
+class-aware NMS at IoU 0.45, and confidence 0.25, matching the production
+OnnxBackend precedent.
 Ground truth comes from the QA'd dataset itself: labels/<split>/<stem>.txt
 seg polygons (bbox of polygon) paired with the per-instance cell metadata in
 frames.jsonl.
@@ -43,7 +43,7 @@ CHAIR = 56
 HOUSE_ROOF_CAMS = {"neg_house1_obl", "neg_house2_roof"}
 
 
-# ---- preprocess/decode (adapted from scripts/w0_assets_eval.py, boxes only)
+# ---- preprocess/decode (boxes only)
 
 def letterbox(img, size):
     import numpy as np
@@ -125,7 +125,7 @@ def center_in(pt, box):
 
 
 def overlaps(det_box, exp_box):
-    """w0_assets_eval.py:248 rule: IoU>0.15 or either center inside."""
+    """Match when IoU > 0.15 or either box center is inside the other."""
     if box_iou(det_box, exp_box) > 0.15:
         return True
     ec = ((exp_box[0] + exp_box[2]) / 2, (exp_box[1] + exp_box[3]) / 2)

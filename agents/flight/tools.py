@@ -13,10 +13,6 @@ the pilot loop the estop shares — a cancelled await still returns ESTOPPED via
 the _handler mapping (it does not kill the worker thread, which the client
 timeouts bound).
 
-`extra_prompt` appends a strategy snippet to the system prompt for ONE options
-instance — the evals strategy-snippet A/B path (design §13 item 6); production
-pilots leave it None until a snippet activates on measured lift.
-
 The pre-M5 `make_drone_options` compat shim is gone (M5): callers assemble
 their own FlightOps (wired to flight contacts, never oracle truth) and call
 make_pilot_options directly.
@@ -361,12 +357,10 @@ def _claude_pilot_server(specs: tuple[ToolSpec, ...]):
 def make_pilot_options(ops: FlightOps, *, detect_text=None, deep_tools=None,
                        report, registry=None,
                        env=None, model=None, cli_path=None,
-                       extra_prompt=None, guard=None) -> ClaudeAgentOptions:
+                       guard=None) -> ClaudeAgentOptions:
     """ICD §5.5: bind THE ONE FlightOps (shared with the estop arbiter).
     deep_tools: the (look, pinpoint) pair from agents.pilot.deep_tools
     (deep-perception M2) — bound ONLY when supplied, like detect_text.
-    extra_prompt: a validated strategy snippet appended to the system prompt
-    (evals A/B cells only — activation requires measured lift, §13 item 6).
     guard: the W3a CommandArbiter's guard_llm — every tool call is rejected
     OPERATOR_ACTIVE while the operator lease/estop holds.
 
@@ -388,7 +382,6 @@ def make_pilot_options(ops: FlightOps, *, detect_text=None, deep_tools=None,
         ops, detect_text=detect_text, deep_tools=deep_tools, report=report,
         registry=registry, guard=guard)
     server, allowed = _claude_pilot_server(specs)
-    prompt = PILOT_SYSTEM_PROMPT + (f"\n\n{extra_prompt}" if extra_prompt else "")
     return ClaudeAgentOptions(
         mcp_servers={"pilot": server},
         allowed_tools=allowed,
@@ -397,5 +390,5 @@ def make_pilot_options(ops: FlightOps, *, detect_text=None, deep_tools=None,
         env=env or {},
         model=model,
         cli_path=cli_path,
-        system_prompt=prompt,
+        system_prompt=PILOT_SYSTEM_PROMPT,
     )

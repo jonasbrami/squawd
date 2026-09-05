@@ -55,11 +55,11 @@ MOVERS = [
 COLOR = {"target": [0.9, 0.45, 0.1], "obstacle": [0.35, 0.4, 0.6]}
 
 
-def mover_sdf(m: dict) -> str:
+def mover_sdf(m: dict, colors: dict) -> str:
     from agents.world.trajectory import pos_xy
     x0, y0 = pos_xy(m["traj"], 0.0)
     s = m["shape"]
-    r, g, b = COLOR[m["kind"]]
+    r, g, b = colors[m["kind"]]
     return f"""
     <model name="{m['name']}">
       <static>false</static>
@@ -103,28 +103,34 @@ def check_min_separation(movers: list[dict], min_m: float = 40.0,
                         f"within {d:.1f}m at t={t:.0f}s (min {min_m}m)")
 
 
-def main() -> None:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-    src, dst = sys.argv[1], sys.argv[2]
-    check_min_separation(MOVERS)
+def write_world(src: str, dst: str, name: str, movers: list[dict],
+                colors: dict) -> None:
     with open(src) as f:
         sdf = f.read()
     # World name MUST match PX4_GZ_WORLD (PX4 gz_bridge + launch polling).
-    sdf = re.sub(r'<world\s+name="[^"]*"', '<world name="dynamic"', sdf, count=1)
+    sdf = re.sub(r'<world\s+name="[^"]*"', f'<world name="{name}"', sdf,
+                 count=1)
     # Movers roam to +/-200 m — widen the ground visual so they stay on canvas.
     sdf = sdf.replace("<size>100 100</size>", "<size>500 500</size>")
     idx = sdf.rfind("</world>")
     if idx == -1:
         raise SystemExit("no </world> in source SDF")
-    sdf = sdf[:idx] + "".join(mover_sdf(m) for m in MOVERS) + "\n  " + sdf[idx:]
+    sdf = sdf[:idx] + "".join(mover_sdf(m, colors) for m in movers) + "\n  " + sdf[idx:]
     with open(dst, "w") as f:
         f.write(sdf)
 
-    sidecar = os.path.join(os.path.dirname(dst) or ".", "dynamic_boxes.json")
+    sidecar = os.path.join(os.path.dirname(dst) or ".", f"{name}_boxes.json")
     with open(sidecar, "w") as f:
         json.dump({"spawn_x": SPAWN_X, "spawn_spacing": SPAWN_SPACING,
-                   "spawn_z": SPAWN_Z, "buildings": [], "movers": MOVERS}, f)
-    print(f"wrote {dst} (+{len(MOVERS)} movers) and {sidecar}")
+                   "spawn_z": SPAWN_Z, "buildings": [], "movers": movers}, f)
+    print(f"wrote {dst} (+{len(movers)} movers) and {sidecar}")
+
+
+def main() -> None:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    src, dst = sys.argv[1], sys.argv[2]
+    check_min_separation(MOVERS)
+    write_world(src, dst, "dynamic", MOVERS, COLOR)
 
 
 if __name__ == "__main__":

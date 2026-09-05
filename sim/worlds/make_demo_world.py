@@ -42,7 +42,7 @@ rendered center sits 5.5 m EAST of the raw-bounds value W1a shipped. house_1's
 and gas_station's W1a box/sidecar numbers were raw-bounds and are corrected
 here). z = 0: bases rest on the ground plane.
 
-Cameras: same IMX214 sensor block as make_assets_world.py but far clip 300
+Cameras: the validated IMX214 sensor geometry, with far clip 300
 (the 100 m production clip cuts the 130 m overview sightline; these are
 evidence vantages, not the production replica).
 

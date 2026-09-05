@@ -36,8 +36,7 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
     """Detector + VisionContacts + pipeline per VisionConfig (M2/M3a). Any
     backend/config failure -> (None, None, None): the caller boots
     SENSING-DEGRADED (flight tools unaffected), never crashes the pilot."""
-    from agents.vision.backends import (ColorBlobBackend, OnnxBackend,
-                                        UltralyticsBackend)
+    from agents.vision.backends import ColorBlobBackend, OnnxBackend
     from agents.vision.config import VisionConfig, VisionConfigError
     from agents.vision.contacts import VisionContacts
     from agents.vision.detector import Detector
@@ -48,12 +47,7 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
         print(f"perception config error: {e} — sensing degraded", flush=True)
         return None, None, None
     try:
-        if cfg.backend == "ultralytics" or (
-                cfg.backend == "auto" and cfg.model and
-                UltralyticsBackend.available):
-            backend = UltralyticsBackend(cfg.weights_dir, cfg.model,
-                                         cfg.device, cfg.half)
-        elif cfg.backend == "onnx" or (cfg.backend == "auto" and cfg.model):
+        if cfg.backend == "onnx" or (cfg.backend == "auto" and cfg.model):
             base = cfg.weights_dir.rstrip("/") + "/" + cfg.model
             backend = OnnxBackend(base, base.rsplit(".", 1)[0] + ".json")
         else:

@@ -40,12 +40,3 @@ def test_schema_helper_emits_required_and_closed_objects():
 def test_builtin_cli_tools_disabled():
     opts = _opts()
     assert opts.tools == []
-
-
-def test_extra_prompt_appends_only_when_given():
-    """Strategy-snippet A/B seam (§13 item 6): extra_prompt rides the system
-    prompt for that one options instance; the default stays byte-identical."""
-    from agents.flight.tools import PILOT_SYSTEM_PROMPT
-    assert _opts().system_prompt == PILOT_SYSTEM_PROMPT
-    opts = _opts(extra_prompt="snippet text")
-    assert opts.system_prompt == PILOT_SYSTEM_PROMPT + "\n\nsnippet text"

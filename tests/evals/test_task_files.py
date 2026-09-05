@@ -62,7 +62,7 @@ def test_step_budget_check_matches_budget_everywhere():
 
 def test_perceive_tasks_load_with_dual_gates_and_identity_check():
     """Perceive ladder (M5): true target + visually distinct decoys in the
-    perceive world; every rung grades the IDENTIFICATION act (TargetLockEvent
+    perceive world; every rung grades the IDENTIFICATION act (target-lock event
     path) plus a mover shadow, and carries both pilot baselines. The glob is
     the p*-RUNGS: s6_kimi_spike is an M6 backend smoke (no baselines by
     design) with its own loader test below — the dual gate applies to every

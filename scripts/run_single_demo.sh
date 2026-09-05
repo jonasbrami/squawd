@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run_single_demo.sh — one drone, one pilot agent, gated by doctor_sim.sh.
-# Usage:  ./scripts/run_single_demo.sh [world]     # world: baylands (default) | city | dynamic
+# Usage:  ./scripts/run_single_demo.sh [world]     # supported demo world: demo
 # Env:    SQUAWD_BACKEND=codex|kimi|claude  RENDER_BACKEND=intel|nvidia|cpu
 set -eo pipefail
 cd "$(dirname "$0")/.."

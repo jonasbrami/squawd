@@ -70,10 +70,3 @@ class ContactView:
                                   # acquisition SM's image-servo aim (§3.10)
     bbox_xyxy: tuple | None = None  # last accepted det bbox — the vertical-
                                   # centre reference (erosion-robust, §3.10)
-
-
-@dataclass(frozen=True)
-class TargetLockEvent:
-    contact_id: str
-    sim_stamp: float
-    tool: str                    # "track" | "goto"

@@ -9,7 +9,10 @@
 > pursuit-altitude/range experiment was discarded; its review and telemetry
 > remain as dated evidence. A whole-repo ponytail audit then removed generated
 > eval outputs, historical swarm/benchmark/spike code, and single-implementation
-> abstractions; the active single-drone path and dated documentation remain.
+> abstractions. A follow-up over-engineering pass removed retired gate, asset,
+> cinematic, strategy-A/B, city-world, and fast-Ultralytics paths, then shared
+> the duplicate mover-world writer. The active single-drone path and dated
+> documentation remain.
 > Treat the verification note below as authoritative for the current tree.
 
 > **ACTIVE GOAL — 2026-09-05:** whole-repo simplification is implemented and
@@ -51,7 +54,7 @@ M0→M6. Branch: `rebuild-single-drone`.
 | M3a vision-fed CV-EKF shadow | **DONE** | `docs/benchmarks/m3a-gate-results.md` (2/2 camera + 2/2 truth) |
 | M3b ToF fusion | **ACCEPTED (deviation)** | `docs/benchmarks/m3b-status.md` — everything proven EXCEPT ≥80% availability |
 | M4 cockpit observatory | **DONE (data plane)** | `/state` + cam + `/ws_detections` live; beam/track SM transitions live; estop holds mid-tool; 3 ICD tests |
-| M5 evals + perception grading | **DONE** | 509-unit milestone; perceive gates + accuracy/A-B infra; d2_shadow regression fixed and validated; dated summary in `docs/benchmarks/m5-gate-results.md` (raw generated output removed from HEAD) |
+| M5 evals + perception grading | **DONE** | 509-unit milestone; perceive target-lock gates; d2_shadow regression fixed and validated; dated summary in `docs/benchmarks/m5-gate-results.md` (retired one-off drivers and raw generated output removed from HEAD) |
 | M6 Kimi switch + backend seam | **PARTIAL** | backend seam and S6 smoke done; the three-rung Kimi ladder (`d2_shadow` + perceive + obstacle) and quota report remain outstanding |
 | Codex/Kimi/Claude provider switch | **IMPLEMENTED; KIMI LIVE GATE QUOTA-BLOCKED (2026-08-08)** | neutral tool catalog; authenticated Codex/Terra two-turn MCP spike; required-server fail-closed check; fresh image; scripted and Codex flight smoke pass. Kimi returned a classified billing-cycle quota error before tool use; see `docs/benchmarks/backend-switch-smoke-2026-08-08.md` |
 | Demo cockpit W0–W5 | **DONE (2026-08-02 evidence)** | `docs/superpowers/specs/2026-07-28-demo-prototype-design.md`, `docs/benchmarks/w5-golden-path.md` |
@@ -64,8 +67,9 @@ The worktree contains the uncommitted audit cleanup. Verification on
 
 - `git diff --check` passes.
 - `bash -n scripts/*.sh sim/launch/*.sh evals/scripts/*.sh` passes.
+- Focused cleanup lane: **172 passed in 31.15 s**.
 - Full host unit lane (`uv run --extra dev --with pyyaml --with numpy pytest
-  tests/ --ignore=tests/integration -q`): **717 passed in 156.33 s**. Two
+  tests/ --ignore=tests/integration -q`): **703 passed in 162.62 s**. Two
   non-failing warnings remain: Starlette's `httpx` TestClient deprecation and
   the existing frame-store hammer test's background-writer integer overflow.
 - No Docker image rebuild, Gazebo/PX4 run, GPU campaign, or LLM request was

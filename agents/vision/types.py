@@ -15,8 +15,6 @@ class Detection:
     conf: float
     xyxy: tuple[float, float, float, float]
     mask: bytes | None = None    # RLE (codec below) when the backend has one
-    tid: int | None = None       # backend track id in track mode; -1 normalized
-                                 # to None; never a contact id
 
     @property
     def cx(self) -> float:
@@ -46,8 +44,6 @@ class AssociationHit:
     xyxy: tuple[float, float, float, float] | None
     aim_px: tuple[float, float]   # footpoint when derivable, else patch centroid
     conf: float                   # tracker-side confidence (display only)
-    tid: int | None
-    mask: bytes | None = None
 
 
 class BackendError(Exception):

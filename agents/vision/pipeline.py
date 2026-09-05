@@ -35,7 +35,7 @@ class PerceptionSnapshot:
     def to_json(self) -> str:
         def det_json(d):
             j = {"cls": d.cls, "conf": round(d.conf, 2),
-                 "xyxy": [round(v, 1) for v in d.xyxy], "tid": d.tid}
+                 "xyxy": [round(v, 1) for v in d.xyxy]}
             if d.mask is not None:
                 # W2 (design §4): the box-region RLE mask rides the wire for
                 # UI drawing — base64 varints + the decode dims, computed with

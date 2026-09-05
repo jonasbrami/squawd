@@ -167,12 +167,6 @@ async def main(args) -> None:
     deps = Deps(world=world, bridge=bridge, cameras=cameras,
                 oracle_truth=gzposes, flight_contacts=flight_contacts,
                 detector=detector, pipeline=pipeline)
-    recorder = None
-    if getattr(args, "record", None):
-        from evals.filming import FrameDump
-        gz_world_name = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
-        recorder = FrameDump(args.record, gz_world_name, deps=deps)
-        print(f"recording frames -> {args.record}", flush=True)
     harness = DroneHarness(deps)
     if args.pilot:
         from evals.pilot import pilot_client_builder
@@ -231,8 +225,6 @@ async def main(args) -> None:
             pipeline.stop()
         if detector is not None:
             detector.stop()
-        if recorder is not None:
-            print(recorder.stop(), flush=True)
         bridge.shutdown()
 
 
@@ -248,9 +240,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--pilot", action="store_true",
                     help="fly each task's declared ideal script with NO LLM (trap "
                          "gate): a task the pilot can't pass is a harness bug")
-    ap.add_argument("--record", default=None,
-                    help="dump POV + cinecam JPEG frames to this dir while cells "
-                         "run (film containers only — needs a render backend)")
     ap.add_argument("--feed", default="truth", choices=["truth", "vision"],
                     help="flight-contact source: 'truth' = explicit ground-truth "
                          "control (classic ladder); 'vision' = Detector -> "

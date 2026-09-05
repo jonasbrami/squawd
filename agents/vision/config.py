@@ -37,11 +37,9 @@ COCO_MANEUVER_KEY = "vehicle"
 
 @dataclass(frozen=True)
 class VisionConfig:
-    backend: str = "auto"        # blob | onnx | ultralytics | auto
+    backend: str = "auto"        # blob | onnx | auto
     weights_dir: str = "models/"
     model: str | None = None
-    device: str = "cpu"          # cpu | cuda
-    half: bool = False
     conf: float = 0.25           # detector conf floor (post-birth filter)
     admit_classes: tuple | None = DEFAULT_ADMIT_CLASSES  # None = admit all
 
@@ -58,8 +56,6 @@ class VisionConfig:
             backend=e.get("VISION_BACKEND", "auto").lower(),
             weights_dir=e.get("VISION_WEIGHTS_DIR", "models/"),
             model=e.get("VISION_MODEL") or None,
-            device=e.get("VISION_DEVICE", "cpu").lower(),
-            half=e.get("VISION_HALF", "").lower() in ("1", "true", "yes"),
             conf=conf,
             admit_classes=(None if admit is not None and admit.strip() in ("*", "")
                            else tuple(c.strip() for c in admit.split(",") if c.strip())
@@ -83,13 +79,11 @@ class VisionConfig:
                              maneuver_key=COCO_MANEUVER_KEY)
 
     def validate(self) -> None:
-        if self.backend not in ("blob", "onnx", "ultralytics", "auto"):
+        if self.backend not in ("blob", "onnx", "auto"):
             raise VisionConfigError(f"unknown VISION_BACKEND {self.backend!r}")
         if not 0.0 < self.conf < 1.0:
             raise VisionConfigError(f"VISION_CONF {self.conf} outside (0, 1)")
-        if self.device not in ("cpu", "cuda"):
-            raise VisionConfigError(f"unknown VISION_DEVICE {self.device!r}")
-        if self.backend in ("onnx", "ultralytics"):
+        if self.backend == "onnx":
             if not self.model:
                 raise VisionConfigError(
                     f"backend {self.backend} requires VISION_MODEL")

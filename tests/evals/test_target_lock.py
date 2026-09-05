@@ -1,4 +1,4 @@
-"""M5 load-bearing ② (ICD §11): TargetLockEvent -> identified_target oracle
+"""M5 load-bearing ② (ICD §11): target-lock event -> identified_target oracle
 path (design §3.8, Codex-B5). The first track/goto aimed at a vis_* id is
 associated to oracle truth AT that sim moment; the oracle grades the truth id
 from run_meta — report text is never graded (§4.3)."""
@@ -89,8 +89,8 @@ def test_lock_without_position_yields_no_truth_id():
 
 def test_association_gate_rejects_far_truth():
     far_truth = FakeTruth({"mov_true": (500.0, 500.0, 1.2)})
-    tid, err = associate_to_truth((10.0, 0.0), far_truth)
-    assert tid is None and err is None
+    truth_id, err = associate_to_truth((10.0, 0.0), far_truth)
+    assert truth_id is None and err is None
 
 
 def _grade_lock(lock_meta, truth_name):

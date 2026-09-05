@@ -9,7 +9,7 @@ from agents.world.model import _default_boxes_path
 def _world(tmp_path):
     boxes = {"spawn_x": 0.0, "spawn_spacing": 3.0, "spawn_z": 0.5,
              "buildings": [{"name": "bldg_0", "x": 50.0, "y": 20.0, "w": 6, "d": 6, "h": 12}]}
-    p = tmp_path / "city_boxes.json"
+    p = tmp_path / "obstacles_boxes.json"
     p.write_text(json.dumps(boxes))
     return World(str(p))
 
@@ -32,13 +32,13 @@ def test_default_boxes_path_is_world_aware(monkeypatch):
     monkeypatch.delenv("CITY_BOXES", raising=False)
     monkeypatch.setenv("GZ_WORLD", "baylands")
     assert _default_boxes_path().endswith("/baylands_boxes.json")
-    monkeypatch.setenv("GZ_WORLD", "city")
-    assert _default_boxes_path().endswith("/city_boxes.json")
+    monkeypatch.setenv("GZ_WORLD", "obstacles")
+    assert _default_boxes_path().endswith("/obstacles_boxes.json")
 
 
 def test_baylands_default_has_no_buildings(monkeypatch):
     # baylands ships no *_boxes.json -> World falls back to empty buildings, so
-    # scan reports only drones (no phantom city buildings leaking across worlds).
+    # scan reports only drones (no phantom buildings leaking across worlds).
     monkeypatch.delenv("CITY_BOXES", raising=False)
     monkeypatch.setenv("GZ_WORLD", "baylands")
     assert World().buildings == []

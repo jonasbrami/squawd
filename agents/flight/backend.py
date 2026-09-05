@@ -307,7 +307,7 @@ def resolve_model(backend: str, value: str | None = None) -> str | None:
 def make_backend_client(
         ops, *, report, registry=None, detect_text=None, deep_tools=None,
         guard=None, backend: str | None = None, env=None, model=None,
-        cli_path=None, extra_prompt=None, codex_effort: str | None = None,
+        cli_path=None, codex_effort: str | None = None,
         codex_home: str | None = None, codex_workdir: str | None = None):
     """Build the selected provider behind the common async client contract."""
     from agents.flight.tools import (PILOT_SYSTEM_PROMPT, make_pilot_options,
@@ -315,7 +315,6 @@ def make_backend_client(
 
     selected = resolve_backend(backend)
     selected_model = resolve_model(selected, model)
-    prompt = PILOT_SYSTEM_PROMPT + (f"\n\n{extra_prompt}" if extra_prompt else "")
     if selected == "codex":
         from agents.flight.codex_backend import CodexBackendClient
 
@@ -324,7 +323,7 @@ def make_backend_client(
             registry=registry, guard=guard)
         return CodexBackendClient(
             specs,
-            system_prompt=prompt,
+            system_prompt=PILOT_SYSTEM_PROMPT,
             model=selected_model or BACKEND_MODEL_DEFAULTS["codex"],
             effort=(codex_effort or os.environ.get(
                 "SQUAWD_CODEX_EFFORT", "low")),
@@ -335,5 +334,5 @@ def make_backend_client(
     options = make_pilot_options(
         ops, detect_text=detect_text, deep_tools=deep_tools, report=report,
         registry=registry, guard=guard, env=env,
-        model=selected_model, cli_path=cli_path, extra_prompt=extra_prompt)
+        model=selected_model, cli_path=cli_path)
     return BackendClient(options)
