@@ -1,6 +1,6 @@
 # PROJECT STATE — single-drone system (living document)
 
-> **CURRENT CHECKPOINT — 2026-08-09.** The supported product is the single-drone
+> **CURRENT CHECKPOINT — 2026-09-05.** The supported product is the single-drone
 > pilot/cockpit stack. The demo prototype W0–W5 is implemented, and the optional
 > deep-perception follow-on M1–M4 is documented as shipped with quantified
 > limits (`docs/benchmarks/deep-perception-m1.md` through `-m4.md`). The
@@ -24,7 +24,7 @@
 > PAUSE, an **independent agent** (fresh context — e.g. `claude -p --model
 > fable` or `codex exec -m gpt-5.6-sol`) can read it cold, look at the repo
 > and the evidence, and advise a way forward. Keep it honest and current;
-> update it at every pause. Last updated: **2026-08-09**.
+> update it at every pause. Last updated: **2026-09-05**.
 
 ---
 
@@ -59,7 +59,11 @@ M0→M6. Branch: `rebuild-single-drone`.
 | Demo cockpit W0–W5 | **DONE (2026-08-02 evidence)** | `docs/superpowers/specs/2026-07-28-demo-prototype-design.md`, `docs/benchmarks/w5-golden-path.md` |
 | Deep perception M1–M4 | **SHIPPED WITH QUANTIFIED LIMITS (2026-08-03 evidence)** | sidecar, `look`/`pinpoint`, slow lane, cockpit layer, and metrics in `docs/benchmarks/deep-perception-m1.md` … `-m4.md` |
 
-### Current verification (2026-08-09 combined checkpoint)
+### Current verification (2026-09-05 documentation checkpoint)
+
+The production code is unchanged from the 2026-08-09 implementation
+checkpoint. Before merging the accumulated branch, the host lane was rerun on
+2026-09-05:
 
 - `git diff --check` passes.
 - `bash -n scripts/*.sh sim/launch/*.sh evals/scripts/*.sh` passes.
@@ -70,7 +74,7 @@ M0→M6. Branch: `rebuild-single-drone`.
   usage reporting, and required-MCP fail-closed behavior. It used the Codex
   login/subscription path, not `OPENAI_API_KEY` or the Responses API.
 - Full host unit lane (`uv run --extra dev --with pyyaml --with numpy pytest
-  tests/ --ignore=tests/integration -q`): **766 passed in 160.07 s**. Two
+  tests/ --ignore=tests/integration -q`): **766 passed in 180.06 s**. Two
   non-failing warnings remain: Starlette's `httpx` TestClient deprecation and
   the existing frame-store hammer test's background-writer integer overflow.
 - Pursuit command/projection/track regression lane after discarding the rejected
@@ -157,6 +161,22 @@ noisy physical setup is not a linear bug-fix ladder — know when to stop.**
    camera-fed d2 acquisition from home; co-altitude pilot commitment; sim-time
    versus wall-time deadlines; incomplete movement-envelope wiring; clean-clone
    PX4/model provisioning; cockpit authentication/network binding.
+5. **Agent-queryable contact memory is proposed, not implemented.** A durable
+   contact ledger, bounded read-only SQL tool, and guarded stationary-yaw
+   reacquisition path are specified in
+   `docs/superpowers/specs/2026-08-09-agent-queryable-contact-memory.md` for a
+   later, separately budgeted milestone.
+6. **Body-fixed-camera lock retention is a recorded circle.** Default shadow,
+   20 m standoff, 20 m slow orbit, image-bbox association, and a bounded
+   settle/ramp were tested without full-lap convergence. The settle removed the
+   initial attitude spike but lock still died after 18.5 s; experimental code
+   was discarded. See
+   `docs/benchmarks/lock-camera-motion-experiments-2026-08-09.md`. Next work
+   should evaluate a stabilized gimbal or replay-tested visibility-aware
+   classical controller, not a fourth live tweak. The ranked low-effort path
+   and its acceptance ladder are recorded in
+   `docs/superpowers/plans/2026-09-05-lock-retention-low-hanging-fruits.md`;
+   none of those changes is implemented yet.
 
 ## 6. Working agreement (owner-set, 2026-07-22)
 

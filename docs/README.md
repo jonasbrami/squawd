@@ -28,6 +28,8 @@ Read these in order:
 
 Recent evidence families:
 
+- `lock-camera-motion-experiments-2026-08-09.md`: bounded body-fixed-camera
+  lock-retention A/B and redesign recommendation.
 - `m2-*`, `m3*`, `m5-*`: single-drone rebuild perception/fusion/eval gates.
 - `demo-*`, `w0-*` through `w5-*`: cockpit demo prototype.
 - `deep-perception-m1.md` through `deep-perception-m4.md`: optional host-GPU
@@ -46,6 +48,14 @@ Key designs:
 - `2026-07-18-single-drone-rebuild-design.md`
 - `2026-07-19-interface-specification.md`
 - `2026-07-28-demo-prototype-design.md`
+- `2026-08-09-agent-queryable-contact-memory.md` — proposed durable contact
+  ledger, read-only SQL tool, and guarded reacquisition path; not implemented.
+
+Current bounded plans:
+
+- `2026-09-05-lock-retention-low-hanging-fruits.md` — ranked conservative
+  tracking, visibility-guard, camera A/B, and reacquisition evaluation plan;
+  not implemented.
 
 ## Reviews
 
