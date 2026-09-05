@@ -145,4 +145,4 @@ class Detector:
         else:
             return None
         d = dets[k]
-        return AssociationHit(k, d.xyxy, d.footpoint, d.conf, None)
+        return AssociationHit(k, d.xyxy, d.footpoint, d.conf)

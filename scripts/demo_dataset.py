@@ -28,9 +28,8 @@ Modes:
   --qa N      render N annotated samples (polygons drawn) into qa/ for
               eyeball verification.
 
-Projection: EXACT full-3D pinhole (world->cam via the camera basis vectors,
-u=cx+f*Xc/Zc) — the same math the W0.1 eval harness validated
-(scripts/w0_assets_eval.py:139). vision_dataset.project_point's
+Projection: exact full-3D pinhole (world->cam via the camera basis vectors,
+u=cx+f*Xc/Zc). vision_dataset.project_point's
 tan-of-angle-difference form is only exact for a level camera near
 boresight; at 30 deg off-axis it misplaces v by ~26 px and it has no pitch
 term for the tilted static cams — same bug class the W0.1 harness caught

@@ -146,7 +146,8 @@ or vehicle control.
 ### `agents.vision`
 
 - `config.py` validates environment-selected detector configuration.
-- `backends.py` adapts color-blob, ONNX segmentation, and Ultralytics models.
+- `backends.py` adapts the fast color-blob and ONNX segmentation models;
+  Ultralytics adapters live only in the optional `deep/` sidecar.
 - `detector.py` owns the camera-to-inference worker.
 - `pipeline.py` converts detector output into atomic perception snapshots.
 - `contacts.py` owns contact birth, association, CV-EKF state, lifecycle,

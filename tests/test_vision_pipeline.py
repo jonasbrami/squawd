@@ -56,7 +56,7 @@ def test_raw_snapshot_schema_and_json():
     wire = json.loads(snap.to_json())
     assert wire["schema_version"] == 1 and wire["seq"] == 7
     assert wire["dets"] == [{"cls": "target", "conf": 0.9,
-                             "xyxy": [1.0, 2.0, 3.0, 4.0], "tid": None}]
+                             "xyxy": [1.0, 2.0, 3.0, 4.0]}]
     assert wire["contacts"] == []
     assert wire["detector"] == {"healthy": True, "latency_ms": 12.3}
     assert wire["beam"]["status"] == "IDLE" and wire["track"]["state"] == "IDLE"

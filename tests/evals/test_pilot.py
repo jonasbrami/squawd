@@ -330,7 +330,7 @@ def test_scripted_client_behavior_binds_ops():
 def test_track_vis_max_range_waits_for_trustworthy_lock():
     """A positioned contact whose range estimate exceeds max_range_m must NOT
     be locked (shallow-angle projections seed the EKF >25m off and the
-    TargetLockEvent gate rightly rejects them) — track_vis waits for a close
+    target-lock gate rightly rejects them) — track_vis waits for a close
     sighting instead."""
     import asyncio
     from types import SimpleNamespace
@@ -363,7 +363,7 @@ def test_track_vis_max_range_waits_for_trustworthy_lock():
 
 
 def test_scripted_client_pending_emits_tool_call_before_execution():
-    """The _pending protocol (TargetLockEvent call-time contract): track_vis's
+    """The _pending protocol (target-lock call-time contract): track_vis's
     track ToolCall must be emitted BEFORE ops.track runs and pair with the
     result on the SAME id — no duplicate call event."""
     import asyncio

@@ -73,19 +73,12 @@ cd /workspace/PX4-Autopilot
 WORLDS="Tools/simulation/gz/worlds"
 
 # Default world: 'baylands' — PX4's realistic coastal scene (road, grass, water,
-# trees). Override with PX4_GZ_WORLD=city for the procedural building world (which
-# also gives the drones building obstacle-awareness via scan). NB: baylands' trees
-# render as black silhouettes under headless EGL (known artifact, scene is fine).
+# trees). NB: baylands' trees render as black silhouettes under headless EGL
+# (known artifact, scene is fine).
 export PX4_GZ_WORLD="${PX4_GZ_WORLD:-baylands}"
 
 # Per-world asset setup.
-if [ "$PX4_GZ_WORLD" = "city" ]; then
-  # Build the 'city' world (buildings) from default.sdf, idempotently — and the
-  # matching city_boxes.json the agents read for obstacle/proximity awareness.
-  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_city_world.py ]; then
-    python3 /workspace/sim/worlds/make_city_world.py "$WORLDS/default.sdf" "$WORLDS/city.sdf" || true
-  fi
-elif [ "$PX4_GZ_WORLD" = "obstacles" ]; then
+if [ "$PX4_GZ_WORLD" = "obstacles" ]; then
   # Flat default world + 6 static box buildings (evals obstacle ladder). Built
   # from default.sdf idempotently, with the obstacles_boxes.json sidecar the
   # agents (scan) and evals oracle both read for building geometry.
@@ -110,58 +103,6 @@ elif [ "$PX4_GZ_WORLD" = "perceive" ]; then
   fi
   export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:+$GZ_SIM_SYSTEM_PLUGIN_PATH:}/workspace/sim/plugins"
   export MOVERS_JSON="/workspace/PX4-Autopilot/$WORLDS/perceive_boxes.json"
-elif [ "$PX4_GZ_WORLD" = "assets" ]; then
-  # W0.1 detector-on-rendered-assets validation world (design 2026-07-28 §2.1):
-  # static Fuel cast at known ranges + fixed cameras replicating the x500_depth
-  # IMX214 geometry. Fuel models download once into the mounted cache; the
-  # generator then resolves the Walking-person actor mesh from that cache.
-  MARKER="$HOME/.gz/fuel/.w0_assets_v1"
-  if [ ! -f "$MARKER" ]; then
-    echo "downloading assets-world Fuel models (one-time)…"
-    for m in Hatchback SUV TruckDelivery TinyRobot "Walking person" "House 1"; do
-      gz fuel download -u "https://fuel.gazebosim.org/1.0/OpenRobotics/models/$m" -t model || true
-    done
-    touch "$MARKER"
-  fi
-  # Walking person: strip <library_animations> from the cached 26 MB dae into
-  # walking_frozen.dae (idempotent) — the gate renders the walker as a STATIC
-  # mesh visual (frozen bind pose; <actor> stalls the headless render thread,
-  # found 2026-08-01), and the 4 MB keyframe-free file parses far faster.
-  python3 - <<'EOF' || true
-import glob, re
-for src in glob.glob("/root/.gz/fuel/fuel.gazebosim.org/openrobotics/models/"
-                     "walking person/*/meshes/walking.dae"):
-    dst = src.replace("walking.dae", "walking_frozen.dae")
-    try:
-        xml = open(src, encoding="utf-8", errors="ignore").read()
-        xml = re.sub(r"<library_animations>.*?</library_animations>", "", xml,
-                     flags=re.S)
-        xml = re.sub(r"<library_animation_clips>.*?</library_animation_clips>",
-                     "", xml, flags=re.S)
-        open(dst, "w").write(xml)
-        print("wrote", dst, len(xml) >> 20, "MB")
-    except OSError as e:
-        print("frozen-strip failed:", e)
-EOF
-  if [ -f "$WORLDS/default.sdf" ] && [ -f /workspace/sim/worlds/make_assets_world.py ]; then
-    python3 /workspace/sim/worlds/make_assets_world.py "$WORLDS/default.sdf" "$WORLDS/assets.sdf" || true
-  fi
-  # Fuel texture path fixes (cache-side, idempotent): the car meshes reference
-  # textures by bare name (resolved against meshes/, where they do NOT live)
-  # and by model://<name>/... URIs (which need a version-less model dir on the
-  # resource path). Without this, Hatchback renders untextured gray — that
-  # would falsify the very domain gap W0.1 measures. Provide both resolutions.
-  LINKS="$HOME/.gz/model-links"
-  mkdir -p "$LINKS"
-  for d in "$HOME"/.gz/fuel/fuel.gazebosim.org/openrobotics/models/*/; do
-    latest="$(ls -d "$d"*/ 2>/dev/null | sort -V | tail -1)"
-    [ -n "$latest" ] || continue
-    ln -sfn "$latest" "$LINKS/$(basename "$d")"
-    if [ -d "${latest}materials/textures" ]; then
-      cp -n "${latest}materials/textures"/*.png "${latest}meshes/" 2>/dev/null || true
-    fi
-  done
-  export GZ_SIM_RESOURCE_PATH="$LINKS${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 elif [ "$PX4_GZ_WORLD" = "demo" ]; then
   # W1b demo world (design 2026-07-28 §3): 5 mesh-visual movers (velocity-drive
   # mover_system plugin, heading_align) + Fuel landmark neighborhood. Fuel
@@ -178,7 +119,7 @@ elif [ "$PX4_GZ_WORLD" = "demo" ]; then
     touch "$MARKER"
   fi
   # Walking person: strip <library_animations> from the cached dae into
-  # walking_frozen.dae (idempotent, same as the `assets` branch) — the demo
+  # walking_frozen.dae (idempotent) — the demo
   # renders walkers as STATIC mesh visuals (frozen stride; <actor> stalls the
   # headless render thread, W0.1 2026-08-01), and the keyframe-free file
   # parses far faster.
@@ -198,8 +139,8 @@ for src in glob.glob("/root/.gz/fuel/fuel.gazebosim.org/openrobotics/models/"
     except OSError as e:
         print("frozen-strip failed:", e)
 EOF
-  # Fuel texture path fixes (cache-side, idempotent) — same as the `assets`
-  # branch: the car meshes reference textures by bare name (resolved against
+  # Fuel texture path fixes (cache-side, idempotent): the car meshes reference
+  # textures by bare name (resolved against
   # meshes/, where they do NOT live) and by model://<name>/... URIs (which
   # need a version-less model dir on the resource path). Without this the cars
   # render untextured gray (W0.1 lesson).
@@ -281,7 +222,7 @@ mkdir -p build/px4_sitl_default/rootfs
 # Boot PX4 with FACTORY state. The rootfs persists parameters.bson/dataman/
 # eeprom across container rebuilds (host bind-mount), and PX4 auto-saves its
 # learned EKF2_MAG_DECL at disarm — a declination learned in one world
-# (baylands CA ≈ +12.8°) poisons boots in another (dynamic/city Zurich ≈
+# (baylands CA ≈ +12.8°) poisons boots in another (dynamic Zurich ≈
 # +2.5°): mag innovations flap across the arming gate and arming is denied
 # (root-caused 2026-07-21; wiped state + hold→arm→takeoff restored flight).
 rm -f build/px4_sitl_default/rootfs/0/parameters.bson \

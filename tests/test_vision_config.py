@@ -24,8 +24,7 @@ def test_blob_needs_no_model():
 
 
 def test_from_env_reads_vars(tmp_path):
-    cfg = VisionConfig.from_env({"VISION_BACKEND": "blob",
-                                 "VISION_DEVICE": "cpu"})
+    cfg = VisionConfig.from_env({"VISION_BACKEND": "blob"})
     assert cfg.backend == "blob"
 
 

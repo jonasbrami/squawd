@@ -4,8 +4,8 @@ Boxes sit east 35-110 / north -55..55 (spawn corridor at east=0 stays clear;
 drones spawn at world (0, i*3, 0.5), yaw=0 — must match swarm_sim.sh
 PX4_GZ_MODEL_POSE="0,${y},0.5").
 
-Writes <out>.sdf + <out_dir>/obstacles_boxes.json (same schema as
-city_boxes.json, consumed by agents/world/model.py + evals sampler/oracle).
+Writes <out>.sdf + <out_dir>/obstacles_boxes.json, consumed by
+agents/world/model.py and the eval sampler/oracle.
 
 Usage: python make_obstacles_world.py <px4_default.sdf> <out_obstacles.sdf>
 """

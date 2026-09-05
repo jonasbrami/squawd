@@ -1,10 +1,9 @@
-"""World: the ground-truth city layout the agents reason about.
+"""World geometry and frame mapping from a generated <world>_boxes.json.
 
-Wraps `city_boxes.json` (written by sim/worlds/make_city_world.py): the exact
-building boxes + the drones' spawn layout. Also maps a drone's local PX4 NED
-telemetry into the gz world frame, so perception can compute bearing/distance in
-pure Python (no extra Gazebo subscriptions) from the same ground truth that
-built the world.
+The sidecar contains exact building boxes, movers, and the drone spawn layout.
+World also maps local PX4 NED telemetry into the Gazebo world frame, so
+perception can compute bearing/distance in pure Python from the same geometry
+that built the world.
 
 Frames: gz world is ENU (+x East, +y North, +z Up). PX4 VehicleLocalPosition is
 NED (x=North, y=East, z=Down). Drone i spawns at world (x=0, y=i*spacing, z) with
@@ -29,9 +28,7 @@ def _ang_lerp(a: float, b: float, t: float) -> float:
 
 
 def _default_boxes_path() -> str:
-    """Per-world sidecar: <world>_boxes.json. 'city' has buildings (written by
-    make_city_world.py); 'baylands' has none, so its file is absent and World
-    falls back to empty buildings — scan then reports only nearby drones."""
+    """Per-world sidecar path; missing files mean an empty world layout."""
     world = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "baylands"
     return f"/workspace/PX4-Autopilot/Tools/simulation/gz/worlds/{world}_boxes.json"
 

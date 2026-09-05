@@ -236,7 +236,7 @@ def result(t, dets, hit=None):
 
 
 def center_hit(k=0):
-    return AssociationHit(k, CENTER_BOX, (320.0, 190.0), 0.8, None)
+    return AssociationHit(k, CENTER_BOX, (320.0, 190.0), 0.8)
 
 
 def make_vc(rf=None):
@@ -442,7 +442,7 @@ def test_deterministic_consumption_designated_reserved_and_once_per_cycle():
     t = T0 + 2 * DT
     rf.set(30.0, t)
     vc.update(result(t, [det_box(FAR_BOX), det_box()], hit=AssociationHit(
-        0, FAR_BOX, (320.0, 190.0), 0.8, None)))
+        0, FAR_BOX, (320.0, 190.0), 0.8)))
     assert "vis_target_0" not in vc.poses()          # no fallback fusion
     # an off-beam designated det is rejected by the envelope's off-boresight
     # gate (image-space), before the footprint path — the no-fallback

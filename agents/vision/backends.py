@@ -2,7 +2,7 @@
 through frame_to_array (THE one RGB888→BGR conversion site).
 
 Baseline: ColorBlobBackend (stdlib+numpy) and OnnxBackend (onnxruntime).
-Optional extra `perception-dnn`: UltralyticsBackend (torch+ultralytics).
+The optional deep sidecar has its own Ultralytics adapters.
 """
 import hashlib
 import json
@@ -59,8 +59,8 @@ class ColorBlobBackend:
             if c < conf:
                 continue
             # mask at FULL box resolution (the Detection.mask contract is a
-            # box-region RLE at the xyxy scale — the half-res encoding was a
-            # latent shape bug found by mask_iou_eval)
+            # box-region RLE at the xyxy scale; half-res encoding has the wrong
+            # shape for consumers.
             sub = m[y1:y2, x1:x2]
             dets.append(Detection("target", c, full,
                                   rle_encode(np.kron(sub, np.ones((2, 2),
@@ -256,71 +256,3 @@ def _assemble_mask(coeff, protos, box, scale, pad, fw, fh, net_size=640):
     out = np.asarray(_I.fromarray((m * 255).astype(np.uint8))
                      .resize((bw, bh), _I.BILINEAR)) > 127
     return rle_encode(out)
-
-
-try:
-    from ultralytics import YOLO as _YOLO      # optional extra perception-dnn
-    _ULTRALYTICS = True
-except ImportError:
-    _YOLO = None
-    _ULTRALYTICS = False
-
-
-class UltralyticsBackend:
-    """Any ultralytics-compatible .pt (yolo26 family, yolo11-seg, visdrone
-    fine-tunes). Derived from perception-lab's YoloRunner. Optional extra."""
-    available = _ULTRALYTICS
-
-    def __init__(self, weights_dir: str, model_name: str,
-                 device: str = "cpu", half: bool = False) -> None:
-        if not _ULTRALYTICS:
-            raise BackendError("ultralytics not installed (perception-dnn extra)")
-        self.weights_dir, self.device, self.half = weights_dir, device, half
-        try:
-            self._model = _YOLO(os.path.join(weights_dir, model_name))
-        except Exception as e:
-            raise BackendError(f"yolo load failed: {e}")
-
-    @staticmethod
-    def discover_weights(weights_dir: str) -> list[str]:
-        import glob
-        return sorted(os.path.basename(f)
-                      for f in glob.glob(os.path.join(weights_dir, "*.pt"))
-                      if not os.path.basename(f).startswith("sam"))
-
-    def _extract(self, res, conf: float) -> list[Detection]:
-        names = res.names
-        dets = []
-        ids = getattr(res.boxes, "id", None) if res.boxes is not None else None
-        masks = getattr(res, "masks", None)
-        for i, b in enumerate(res.boxes or []):
-            if float(b.conf) < conf:
-                continue
-            x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
-            tid = int(ids[i]) if ids is not None else None
-            mask = None
-            if masks is not None and len(masks) > i:
-                mask = rle_encode((masks.data[i].cpu().numpy() > 0.5))
-            dets.append(Detection(names[int(b.cls)], float(b.conf),
-                                  (x1, y1, x2, y2), mask, tid))
-        if getattr(res, "obb", None) is not None and len(res.obb):
-            for b in res.obb:
-                if float(b.conf) < conf:
-                    continue
-                pts = b.xyxyxyxy[0].cpu().numpy()
-                xs, ys = pts[0::2], pts[1::2]
-                dets.append(Detection(names[int(b.cls)], float(b.conf),
-                                      (float(xs.min()), float(ys.min()),
-                                       float(xs.max()), float(ys.max()))))
-        return dets
-
-    def infer(self, frame: Frame, conf: float) -> list[Detection]:
-        res = self._model.predict(frame_to_array(frame), conf=conf, verbose=False,
-                                  device=self._dev(), half=self._fp16())[0]
-        return self._extract(res, conf)
-
-    def _dev(self):
-        return 0 if self.device == "cuda" else "cpu"
-
-    def _fp16(self):
-        return self.half and self.device == "cuda"

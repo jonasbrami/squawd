@@ -252,7 +252,7 @@ def test_first_tof_fuses_with_incumbent_sigma_and_does_not_flip_src():
     t = T0 + 2 * DT
     # the reserved det under the beam + a fresh VALID sample
     hit = AssociationHit(0, (310.0, 170.0, 330.0, 190.0), (320.0, 190.0),
-                         0.8, None)
+                         0.8)
     vc.update(result(t, [Detection("target", 0.9,
                                    (310.0, 170.0, 330.0, 190.0))], hit=hit))
     n1 = vc.poses()[name][1]
@@ -406,7 +406,7 @@ def test_designated_hit_feeds_the_designated_track():
     vc.designate(name)
     ax = math.atan2(0.0, 41.0)
     ay = math.asin((ALT - 0.6) / 41.0)   # cls "target" base plane z=0.6
-    hit = AssociationHit(None, None, _px(ax, ay), 0.8, None)
+    hit = AssociationHit(None, None, _px(ax, ay), 0.8)
     vc.update(result(T0 + 2 * DT, [], hit=hit))
     # one geom-sigma fusion step toward (0, 41): K = 5.48/9.48 -> +0.58 m
     assert vc.poses()[name][1] == pytest.approx(40.58, abs=0.1)
@@ -523,7 +523,7 @@ def test_tof_birth_crosschecked_against_bbox_height_cue():
     vc = VisionContacts(LowWorld(), rangefinder=rf)
     vc.set_beam_context(mode="shadow", own_speed_mps=0.0)
     name = _bearing_only_designated(vc)
-    hit = AssociationHit(0, box, (320.0, 200.0), 0.9, None)
+    hit = AssociationHit(0, box, (320.0, 200.0), 0.9)
     vc.update(result(t, [Detection("target", 0.9, box)], hit=hit))
     assert name in vc.poses()
     assert vc.poses()[name][1] == pytest.approx(rng_h + 0.2, abs=0.3)
@@ -832,7 +832,7 @@ def test_armed_window_admits_designated_hit_through_widened_nis():
     g = math.hypot(me, mn)
     hit = AssociationHit(None, None,
                          _px(math.atan2(me, mn), math.asin(ALT / g)),
-                         0.8, None)
+                         0.8)
     tk = t + 4 * DT
     vc.update(result(tk, [], hit=hit))
     assert tr.t_meas == pytest.approx(tk)         # widened NIS admitted it
@@ -850,7 +850,7 @@ def test_armed_window_admits_designated_hit_through_widened_nis():
     g2 = math.hypot(me2, mn2)
     hit2 = AssociationHit(None, None,
                           _px(math.atan2(me2, mn2), math.asin(ALT / g2)),
-                          0.8, None)
+                          0.8)
     t_meas2 = tr2.t_meas
     vc2.update(result(t2 + 2 * DT, [], hit=hit2))
     assert tr2.t_meas == pytest.approx(t_meas2)   # no range fused

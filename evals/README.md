@@ -83,25 +83,13 @@ cell, is in `docs/benchmarks/backend-switch-smoke-2026-08-08.md`.
 Outputs `evals/out/<timestamp>/results.jsonl` + `RESULTS.md`. Re-running the same
 command resumes (cells already in `results.jsonl` are skipped).
 
-## Obstacle scenarios — HELD (city world unusable)
+## Obstacle scenarios
 
-The obstacle ladder (`evals/tasks/obstacle/*`, `capstone/c2_*`) is **not shipped** yet.
-It needs the `city` world (flat ground + buildings), but as of 2026-07-01 the `city` PX4
-gz world fails a live validation gate:
-
-- gz ground truth puts the drone at spawn `(0, 0, z≈-0.01)`, but PX4's
-  `vehicle_local_position` reports a stable **`(x=-40, y=120, z=-12)`** offset — the EKF
-  local frame is grossly displaced from the world frame, so `World.drone_state` (and thus
-  the oracle) would grade against bogus coordinates.
-- Preflight never passes (`Preflight Fail: vertical velocity unstable` → `Yaw estimate
-  error`), so the drone **cannot arm** — every obstacle cell would be an `infra_fail`.
-
-This is a `city`-world sim/EKF problem (same class as the `baylands` altitude offset),
-not a harness bug. The `clearance` oracle check and `WorldTrack.buildings` plumbing are
-built and unit-tested, ready for obstacle tasks once a usable flat-with-buildings world
-exists (fix `city`'s EKF/world-origin config, or add buildings to the `default`/`lawn`
-world). Until then, run only the flat-world ladders (plan-depth / spatial / ambiguity /
-`c1`).
+The obstacle ladder uses the flat `obstacles` world generated from PX4's
+`default.sdf` by `sim/worlds/make_obstacles_world.py`. Its sidecar supplies the
+same building geometry to `World`, the sampler, and the clearance oracle. As
+with every live gate, re-prove the scripted `--pilot` baseline in a fresh
+container before spending model quota.
 
 ## Perception grading (M5)
 
@@ -115,20 +103,11 @@ world). Until then, run only the flat-world ladders (plan-depth / spatial / ambi
   rover (`mov_true`) plus visually DISTINCT ground decoys (red tall hauler,
   blue-grey sled — the blob can't separate same-orange decoys). The
   `identified_target` oracle check grades the perception act: the first
-  `track`/`goto` aimed at a `vis_*` id logs a `TargetLockEvent`, the harness
+  `track`/`goto` aimed at a `vis_*` id logs a target-lock event, the harness
   associates that contact to oracle truth AT that sim moment, and the check
   compares the truth id (`truth: mov_true`). Report text is never graded.
   Dual gates as usual: `pilot` (scripted `track_vis` behavior — same contact
   path as the LLM) must PASS, `pilot_null` (blind) must FAIL.
-- **Offline accuracy (`perceive_eval.accuracy_report`):** recorded frames
-  timestamp-joined to truth by sim_stamp (50 ms tolerance): per-class
-  precision/recall (IoU≥0.5), center error p50/p95 by truth range, ID-switch
-  rate + track fragmentation.
-- **Strategy A/B (§13 item 6):** `--assignments "drones=sonnet;drones=sonnet,strategy=intercept-lead"`
-  appends a validated snippet (`agents/pilot/strategies/*.md`) to the system
-  prompt for the named lane only; `evals/strategy_ab.lift_decision` activates a
-  snippet ONLY on measured lift (snippet Wilson CI-low > base point rate, both
-  lanes ≥3 scored cells).
 - **Primitive statistics (§13 item 7):** `PRIMITIVES.md` per sweep —
   per-primitive call count, latency p50, stable error-code counts, grouped by
   model/detector/difficulty. Observational only.

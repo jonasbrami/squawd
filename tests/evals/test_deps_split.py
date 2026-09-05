@@ -130,14 +130,3 @@ def test_client_for_passes_no_detect_text_without_a_pipeline(monkeypatch):
     client = _harness(deps).client_for("some-model")
     assert called == []
     assert "mcp__pilot__detect" not in client.options.allowed_tools
-
-
-def test_client_for_appends_strategy_snippet_to_system_prompt():
-    deps = Deps(world=None, bridge=None, cameras=None)
-    h = _harness(deps)
-    h.prompt_append = "STRATEGY SNIPPET BODY"
-    client = h.client_for("some-model")
-    assert client.options.system_prompt.endswith("STRATEGY SNIPPET BODY")
-    h.prompt_append = None
-    from agents.flight.tools import PILOT_SYSTEM_PROMPT
-    assert h.client_for("some-model").options.system_prompt == PILOT_SYSTEM_PROMPT

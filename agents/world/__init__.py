@@ -1,4 +1,4 @@
-"""World layout + frame mapping (ground truth from city_boxes.json)."""
+"""World layout + frame mapping from per-world geometry sidecars."""
 from agents.world.model import World
 
 __all__ = ["World"]

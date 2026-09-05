@@ -103,7 +103,7 @@ def test_cam_spec_pose_aims_back_at_anchor():
 # ---- exact camera model -----------------------------------------------------
 
 def _ref_project(cam_pose, px, py, pz):
-    """Reference pinhole in the w0_assets_eval.project convention (yaw/pitch
+    """Reference pinhole in the capture projection convention (yaw/pitch
     form): pitch-blind-free, F*(lat/f) — the eval-validated math."""
     cx, cy, cz, _, pitch, yaw = cam_pose
     fpx = 320.0 / math.tan(1.204 / 2.0)

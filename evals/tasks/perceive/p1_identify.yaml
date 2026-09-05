@@ -5,7 +5,7 @@
 # separate same-orange decoys (make_dynamic_world.py:55, Codex-Mj4). Grading is
 # the perception act itself: identified_target passes only when the FIRST
 # vis_* lock associates to mov_true in oracle truth at that sim moment (the
-# TargetLockEvent path); dwell_moving then proves the shadow. Report text is
+# target-lock path); dwell_moving then proves the shadow. Report text is
 # never graded (§4.3).
 # v1 honesty limit: with the single-class blob the decoys are invisible to the
 # detector, so the must-FAIL baseline is the BLIND strategy (never locks);
@@ -40,7 +40,7 @@ oracle:
 # From alt 3 the rover sweeps through 7-40 m in view and the blob fires
 # strongly. max_range_m=25 makes the lock wait for a NEAR sighting: a far,
 # shallow-angle first sighting (<6° depression, outside the M2/M3a projection
-# envelope) seeds the EKF >25 m off and the TargetLockEvent association gate
+# envelope) seeds the EKF >25 m off and the target-lock association gate
 # rightly rejects it ("locked vis_target_0 -> None", same live session).
 # max_range_m=15 (close-lock): acquisitions only HOLD at close geometry —
 # locks at 20-25 m dropped the contact mid-transit ('LOST: vis_target_N

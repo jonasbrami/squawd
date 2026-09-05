@@ -196,9 +196,6 @@ class DroneHarness:
         self._system_factory = system_factory
         self._client_builder = client_builder
         self._system = None
-        # Strategy-snippet A/B (design §13 item 6): run_cell sets this per cell
-        # from the assignment's `strategy` key; appended to the system prompt.
-        self.prompt_append: str | None = None
 
     async def system(self):
         if self._system is not None:
@@ -258,8 +255,7 @@ class DroneHarness:
         return make_backend_client(
             self._make_ops(), detect_text=detect, report=lambda _m: None,
             backend=backend,
-            env=(kimi_recipe() if backend == "kimi" else None), model=model,
-            extra_prompt=self.prompt_append)
+            env=(kimi_recipe() if backend == "kimi" else None), model=model)
 
 
 async def _drive(client, prompt: str, deadline_s: float, max_steps: int,
@@ -268,7 +264,7 @@ async def _drive(client, prompt: str, deadline_s: float, max_steps: int,
     budget. Returns (trace, crashed, reason). crashed stays False here; the oracle's
     `alive` check derives crash from geofence breach + the reason string.
     `on_msg(trace, ev, now)` fires synchronously after every observe — the
-    TargetLockEvent path (evals/perceive_eval.note_target_lock) rides it so the
+    Target-lock path (evals/perceive_eval.note_target_lock) rides it so the
     contact→truth association happens AT the event's sim moment."""
     trace = Trace()
     t0 = time.monotonic()
@@ -400,14 +396,6 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     t0_epoch = time.time()
     try:
         from evals.task_prompt import render_task_prompt
-        # Strategy-snippet A/B (§13 item 6): the assignment's `strategy` key names
-        # a snippet appended to the system prompt for THIS cell only.
-        strategy = assignment.get("strategy")
-        if strategy:
-            from evals.strategy_ab import load_snippet
-            harness.prompt_append = load_snippet(strategy)
-        else:
-            harness.prompt_append = None
         # identified_target data path (Codex-B5): associate the first vis_*
         # lock to oracle truth AT its sim moment, synchronously at observe time.
         lock_hook = None
@@ -463,7 +451,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     # Crash is inferred by the oracle's `alive` check (geofence breach); the deadline/
     # step-budget note lives in `reason`. So run_meta only carries steps + a False crash flag.
     run_meta = {"steps": trace.steps, "crashed": False, "landed": landed}
-    if "target_lock" in trace.meta:   # TargetLockEvent → identified_target (§3.8)
+    if "target_lock" in trace.meta:   # target lock → identified_target (§3.8)
         run_meta["target_lock"] = trace.meta["target_lock"]
     g = grade(track, spec.oracle, run_meta)
 

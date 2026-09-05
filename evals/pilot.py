@@ -229,7 +229,7 @@ async def track_vis(ops, args):
     within it — the support-plane projection is hyper-sensitive to attitude
     noise at shallow depression (far range + low alt), so a first sighting
     beyond the proven envelope (>=6 deg depression, M2/M3a) seeds the EKF
-    tens of meters off and the TargetLockEvent association gate rightly
+    tens of meters off and the target-lock association gate rightly
     rejects it. Lock when CLOSE, not when barely-visible."""
     cls = args.get("cls", "target")
     wait_s = float(args.get("wait_s", 30.0))
@@ -263,7 +263,7 @@ async def track_vis(ops, args):
              "duration_s": float(args.get("duration_s", 60.0)),
              "within_m": float(args.get("within_m", 15.0))}
     # the USE block must reach the Trace BEFORE the call runs: the
-    # TargetLockEvent path (identified_target) timestamps the lock AT CALL
+    # Target-lock path (identified_target) timestamps the lock AT CALL
     # TIME — emitting post-hoc (after a 60-75 s track) would associate a
     # long-dropped contact and measure nothing (observed live: every lock
     # 'measured_xy=None', 2026-07-22).
@@ -312,7 +312,7 @@ class ScriptedClient:
                 pending = None   # (id, tool) of a ToolCall emitted pre-call
                 async for item in fn(ops, step.get("args", {})):
                     # "_pending": emit the ToolCall BEFORE the tool runs so
-                    # observe-time hooks (TargetLockEvent) see true call time —
+                    # observe-time hooks (target lock) see true call time —
                     # behavior triples are otherwise post-hoc by construction.
                     if item and item[0] == "_pending":
                         _, tool, targs = item
