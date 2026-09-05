@@ -1,5 +1,5 @@
 import math
-from agents.core.geo import GeoPoint, offset_point, horizontal_distance_m
+from agents.core.geo import GeoPoint, offset_point
 
 # Zurich-ish reference; values are convention checks, not site-specific.
 ORIGIN = GeoPoint(latitude_deg=47.3977, longitude_deg=8.5456, absolute_altitude_m=500.0)
@@ -25,8 +25,3 @@ def test_east_offset_increases_longitude():
 def test_up_increases_absolute_altitude():
     p = offset_point(ORIGIN, north_m=0.0, east_m=0.0, up_m=10.0)
     assert math.isclose(p.absolute_altitude_m, 510.0, abs_tol=1e-9)
-
-
-def test_distance_roundtrip_50m():
-    p = offset_point(ORIGIN, north_m=30.0, east_m=40.0, up_m=0.0)
-    assert math.isclose(horizontal_distance_m(ORIGIN, p), 50.0, abs_tol=0.5)

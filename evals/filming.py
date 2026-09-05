@@ -70,7 +70,8 @@ class FrameDump:
         while not self._stop.is_set():
             try:
                 st = self._deps.world.drone_state(self._deps.bridge, 0)
-                movers = self._deps.gzposes.poses() if self._deps.gzposes else {}
+                movers = (self._deps.oracle_truth.poses()
+                          if self._deps.oracle_truth else {})
                 d = f"{st[0]:.1f},{st[1]:.1f},{st[2]:.1f}" if st else ",,"
                 mv = ";".join(f"{n}:{p[0]:.1f}:{p[1]:.1f}"
                               for n, p in sorted(movers.items()))

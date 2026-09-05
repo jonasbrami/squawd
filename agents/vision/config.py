@@ -42,8 +42,6 @@ class VisionConfig:
     model: str | None = None
     device: str = "cpu"          # cpu | cuda
     half: bool = False
-    tracker: str = "none"        # none | botsort | bytetrack | ... | auto
-    tracker_yaml: str | None = None
     conf: float = 0.25           # detector conf floor (post-birth filter)
     admit_classes: tuple | None = DEFAULT_ADMIT_CLASSES  # None = admit all
 
@@ -62,8 +60,6 @@ class VisionConfig:
             model=e.get("VISION_MODEL") or None,
             device=e.get("VISION_DEVICE", "cpu").lower(),
             half=e.get("VISION_HALF", "").lower() in ("1", "true", "yes"),
-            tracker=e.get("VISION_TRACKER", "none").lower(),
-            tracker_yaml=e.get("VISION_TRACKER_YAML") or None,
             conf=conf,
             admit_classes=(None if admit is not None and admit.strip() in ("*", "")
                            else tuple(c.strip() for c in admit.split(",") if c.strip())
@@ -100,15 +96,3 @@ class VisionConfig:
             if not os.path.isdir(self.weights_dir):
                 raise VisionConfigError(
                     f"weights dir {self.weights_dir!r} does not exist")
-        known = ("none", "auto", "botsort", "bytetrack", "ocsort", "deepocsort",
-                 "tracktrack", "fasttrack", "csrt", "kcf", "mosse", "sam2")
-        if self.tracker not in known:
-            raise VisionConfigError(f"unknown VISION_TRACKER {self.tracker!r}")
-        if self.tracker != "none" and self.backend == "blob":
-            # blob has no track mode: DNN trackers can't pair (fail closed)
-            if self.tracker in ("botsort", "bytetrack", "ocsort", "deepocsort",
-                                "tracktrack", "fasttrack"):
-                raise VisionConfigError(
-                    f"tracker {self.tracker} needs track ids but backend "
-                    f"'blob' has supports_track=False — use "
-                    f"VISION_BACKEND=ultralytics or VISION_TRACKER=none")

@@ -28,7 +28,6 @@ class Snapshot:
 class WorldTrack:
     snapshots: list[Snapshot]
     objects: dict[str, tuple[float, float]]
-    n_drones: int
     geofence_m: float
     buildings: list[dict] = field(default_factory=list)
 

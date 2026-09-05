@@ -16,7 +16,6 @@ def frame(seq, stamp):
 
 class ScriptBackend:
     """Returns the scripted detections for each frame seq."""
-    supports_track = True
 
     def __init__(self, per_frame):
         self._pf = per_frame
@@ -98,7 +97,7 @@ def test_accuracy_report_id_metrics_none_without_track_ids():
     truths = [truth(10.00, {"target": [TBOX]}, {"target": ["mov_true"]})]
 
     class NoTidBackend(ScriptBackend):
-        supports_track = False
+        pass
 
     rep = accuracy_report(frames, truths,
                           NoTidBackend({1: [Detection("target", 0.9, TBOX)]}))

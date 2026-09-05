@@ -15,10 +15,10 @@ PY=python3
 command -v uv >/dev/null 2>&1 && PY="uv run --no-project python"
 
 # 1. gz + ROS + project deps in the python env the agents will actually use
-$PY - <<'EOF' && ok "python deps (mavsdk, claude_agent_sdk, openai_codex, websockets, rclpy, px4_msgs)" || bad "python deps missing (mavsdk/claude_agent_sdk/openai_codex/websockets/rclpy/px4_msgs)"
+$PY - <<'EOF' && ok "python deps (mavsdk, claude_agent_sdk, openai_codex, rclpy, px4_msgs)" || bad "python deps missing (mavsdk/claude_agent_sdk/openai_codex/rclpy/px4_msgs)"
 import importlib.util, sys
 sys.exit(0 if all(importlib.util.find_spec(m) for m in
-    ("mavsdk", "claude_agent_sdk", "openai_codex", "websockets", "rclpy", "px4_msgs")) else 1)
+    ("mavsdk", "claude_agent_sdk", "openai_codex", "rclpy", "px4_msgs")) else 1)
 EOF
 
 # 1b. Backend credentials and runtime contract (presence only; never print data)

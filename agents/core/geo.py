@@ -34,10 +34,3 @@ def offset_point(origin: GeoPoint, north_m: float, east_m: float, up_m: float) -
         longitude_deg=origin.longitude_deg + dlon_deg,
         absolute_altitude_m=origin.absolute_altitude_m + up_m,
     )
-
-
-def horizontal_distance_m(a: GeoPoint, b: GeoPoint) -> float:
-    lat_rad = math.radians((a.latitude_deg + b.latitude_deg) / 2.0)
-    dn = math.radians(b.latitude_deg - a.latitude_deg) * _WGS84_A
-    de = math.radians(b.longitude_deg - a.longitude_deg) * _WGS84_A * math.cos(lat_rad)
-    return math.hypot(dn, de)

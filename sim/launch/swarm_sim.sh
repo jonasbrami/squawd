@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Multi-vehicle PX4 SITL: N drones in one Gazebo world.
-# Each instance i: spawns at (0, i*3), namespaces ROS2 topics as /px4_<i>/fmu/*,
-# and gets MAVLink offboard on udp 14540+i -> mavsdk_server on 50051+i.
+# Single-vehicle PX4 SITL in one Gazebo world. The filename is historical.
+# PX4 uses /px4_0/fmu/*, MAVLink UDP 14540, and mavsdk_server port 50051.
 # `-d` runs px4 detached (no interactive pxh> console -> no log spam).
 # NB: no `-u` — ROS setup.bash references unbound vars.
 set -eo pipefail
@@ -239,17 +238,15 @@ elif [ "$PX4_GZ_WORLD" = "baylands" ]; then
   fi
 fi
 
-N=${SWARM_N:-3}
 MODEL=${PX4_MODEL:-gz_x500_depth}
 
 # PX4_GZ_STANDALONE needs the model/world resource path so it can spawn into the
 # already-running gz server (below).
 export GZ_SIM_RESOURCE_PATH="/workspace/sim/models:${GZ_SIM_RESOURCE_PATH}:/workspace/PX4-Autopilot/$WORLDS/../models:/workspace/PX4-Autopilot/$WORLDS"
 
-# Patch the OakD-Lite camera (idempotent) so each drone gets a UNIQUE, low-res
-# camera topic: drop the shared `<topic>camera</topic>` override (-> gz scopes the
-# topic per model: /world/default/model/x500_depth_<i>/.../IMX214/image) and cut
-# it to 640x360@10Hz so N feeds render on software GL.
+# Patch the OakD-Lite camera (idempotent): drop the shared
+# `<topic>camera</topic>` override so Gazebo scopes it to the model, and cut it
+# to 640x360@10Hz.
 CAM_W="${CAM_W:-640}"; CAM_H="${CAM_H:-360}"; CAM_FPS="${CAM_FPS:-10}"
 OAKD="Tools/simulation/gz/models/OakD-Lite/model.sdf"
 if [ -f "$OAKD" ] && grep -q "<topic>camera</topic>" "$OAKD"; then
@@ -261,10 +258,10 @@ if [ -f "$OAKD" ] && grep -q "<topic>camera</topic>" "$OAKD"; then
     "$OAKD"
 fi
 
-# Start gz as a PERSISTENT standalone server FIRST, then attach every PX4 instance
-# to it (PX4_GZ_STANDALONE=1). Previously instance 0 launched gz itself and raced
+# Start gz as a persistent standalone server first, then attach PX4 to it
+# (PX4_GZ_STANDALONE=1). Previously PX4 launched gz itself and raced
 # its own create-service — on a busy host (or the heavier baylands world) it timed
-# out and KILLED the gz it spawned, taking the whole swarm down. Starting gz up
+# out and killed the gz it spawned. Starting gz up
 # front and waiting until its spawn service is live removes the race entirely.
 echo "starting gz server ($PX4_GZ_WORLD)…"
 gz sim -v1 -r -s ${GZ_HR:-} "$WORLDS/$PX4_GZ_WORLD.sdf" >/tmp/gz.log 2>&1 &
@@ -273,7 +270,7 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 
-# Single uXRCE-DDS Agent bridges all instances to ROS2.
+# Bridge PX4 to ROS 2.
 MicroXRCEAgent udp4 -p 8888 >/tmp/xrce.log 2>&1 &
 sleep 2
 
@@ -287,29 +284,19 @@ mkdir -p build/px4_sitl_default/rootfs
 # (baylands CA ≈ +12.8°) poisons boots in another (dynamic/city Zurich ≈
 # +2.5°): mag innovations flap across the arming gate and arming is denied
 # (root-caused 2026-07-21; wiped state + hold→arm→takeoff restored flight).
-for i in $(seq 0 $((N-1))); do
-  rm -f "build/px4_sitl_default/rootfs/$i/parameters.bson" \
-        "build/px4_sitl_default/rootfs/$i/parameters_backup.bson" \
-        "build/px4_sitl_default/rootfs/$i/dataman"
-  rm -rf "build/px4_sitl_default/rootfs/$i/eeprom"
-done
+rm -f build/px4_sitl_default/rootfs/0/parameters.bson \
+      build/px4_sitl_default/rootfs/0/parameters_backup.bson \
+      build/px4_sitl_default/rootfs/0/dataman
+rm -rf build/px4_sitl_default/rootfs/0/eeprom
 
-for i in $(seq 0 $((N-1))); do
-  y=$((i * 3))
-  # SIM_GZ_EN_LIDAR=0: PX4's gz_bridge must NOT ingest the composite's forward
-  # ToF beam as a distance_sensor — a horizontal beam feeding the EKF
-  # destabilizes it (observed: ~700m physical drift + arming denial, fable-MAJOR-3).
-  PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4001 PX4_SIM_MODEL="${MODEL}" \
-    SIM_GZ_EN_LIDAR=0 \
-    PX4_GZ_MODEL_POSE="0,${y},0.5" PX4_UXRCE_DDS_NS="px4_${i}" \
-    ./build/px4_sitl_default/bin/px4 -i "${i}" -d >"/tmp/px4_${i}.log" 2>&1 &
-  sleep 3                                  # stagger model spawns into the live gz
-done
+# SIM_GZ_EN_LIDAR=0: PX4's gz_bridge must NOT ingest the composite's forward
+# ToF beam as a distance_sensor — a horizontal beam feeding the EKF
+# destabilizes it (observed: ~700m physical drift + arming denial, fable-MAJOR-3).
+PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4001 PX4_SIM_MODEL="${MODEL}" \
+  SIM_GZ_EN_LIDAR=0 PX4_GZ_MODEL_POSE="0,0,0.5" PX4_UXRCE_DDS_NS="px4_0" \
+  ./build/px4_sitl_default/bin/px4 -i 0 -d >/tmp/px4_0.log 2>&1 &
 
-# one mavsdk_server per drone
-for i in $(seq 0 $((N-1))); do
-  mavsdk_server -p $((50051 + i)) "udpin://0.0.0.0:$((14540 + i))" >"/tmp/mav_${i}.log" 2>&1 &
-done
+mavsdk_server -p 50051 "udpin://0.0.0.0:14540" >/tmp/mav_0.log 2>&1 &
 
-echo "swarm bring-up launched (N=$N, world=$PX4_GZ_WORLD)"
+echo "single-drone bring-up launched (world=$PX4_GZ_WORLD)"
 wait

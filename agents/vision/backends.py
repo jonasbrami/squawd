@@ -11,12 +11,7 @@ import os
 import numpy as np
 
 from agents.core.contact import Frame
-from agents.vision.types import (BackendError, Detection, DetectorBackend,
-                                 rle_encode)
-
-TRACK_CONF = 0.1     # track mode runs low (two-stage association needs the
-                     # low-score stage); Detector's conf is a post-birth filter
-
+from agents.vision.types import BackendError, Detection, rle_encode
 
 def frame_to_array(frame: Frame) -> np.ndarray:
     """Frame.rgb (RGB888 bytes) -> uint8 (H, W, 3) BGR ndarray. THE one
@@ -40,8 +35,6 @@ class ColorBlobBackend:
     measured box pixels span shadow face (95,68,30) to sunlit top (204,150,74),
     so r>140/r-g>50 rejected the whole box and the detector saw nothing.
     Discriminators vs the gray world: r-g>15, g-b>20, r-b>45."""
-    supports_track = False
-
     def __init__(self, hsv_lo: tuple = (80, 50, 15),
                  hsv_hi: tuple = (235, 180, 110), min_area_px: int = 40) -> None:
         # thresholds are (r, g, b) bounds on the ORANGE ratio, not HSV angles
@@ -105,8 +98,6 @@ def _components(mask: np.ndarray, min_area: int):
 class OnnxBackend:
     """YOLO nano via onnxruntime (MIT) — no ultralytics import at runtime.
     Model ships with a SHA-256 manifest (ICD §6.2); mismatch raises BackendError."""
-    supports_track = False
-
     def __init__(self, model_path: str, manifest_path: str,
                  device: str = "cpu") -> None:
         self.model_path, self.manifest_path, self.device = model_path, manifest_path, device
@@ -278,7 +269,7 @@ except ImportError:
 class UltralyticsBackend:
     """Any ultralytics-compatible .pt (yolo26 family, yolo11-seg, visdrone
     fine-tunes). Derived from perception-lab's YoloRunner. Optional extra."""
-    supports_track = _ULTRALYTICS
+    available = _ULTRALYTICS
 
     def __init__(self, weights_dir: str, model_name: str,
                  device: str = "cpu", half: bool = False) -> None:
@@ -327,21 +318,6 @@ class UltralyticsBackend:
         res = self._model.predict(frame_to_array(frame), conf=conf, verbose=False,
                                   device=self._dev(), half=self._fp16())[0]
         return self._extract(res, conf)
-
-    def infer_tracked(self, frame: Frame, conf: float,
-                      tracker_yaml: str) -> list[Detection]:
-        res = self._model.track(frame_to_array(frame), persist=True,
-                                tracker=tracker_yaml, conf=TRACK_CONF,
-                                verbose=False,
-                                device=self._dev(), half=self._fp16())[0]
-        return self._extract(res, conf)
-
-    def reset_tracking(self) -> None:
-        """Drop the cached model so a NEW tracker_yaml takes effect (without
-        this the first tracker silently persists — the lab's YoloRunner.reset)."""
-        name = self._model.model_name
-        del self._model
-        self._model = _YOLO(name)
 
     def _dev(self):
         return 0 if self.device == "cuda" else "cpu"

@@ -3,12 +3,10 @@
 # obs_0/obs_1 gap route (9.0m) passes — the model must actually thread, not
 # merely lean away. wp1->wp2 direct clears obs_3 by 9.2m (legal).
 id: o2_slalom
-target_layer: single_drone
 suite: obstacle
 difficulty: {plan_depth: 3, coordination: 1, ambiguity: 1, spatial: 4, obstacle: 2}
 setup:
   world: obstacles
-  n_drones: 1
   spawn: home
   seed_objects:
     - {id: wp1, east: 60, north: 20}

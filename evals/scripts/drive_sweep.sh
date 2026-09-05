@@ -26,8 +26,8 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
   echo "=== round $round/$MAX_ROUNDS ($TIER) ==="
   timeout "$ROUND_TIMEOUT_S" docker exec "$CONTAINER" bash -lc \
     "source /opt/ros/jazzy/setup.bash; source /opt/px4_ws/install/setup.bash;
-     cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH SWARM_N=1 GZ_WORLD=$GZ_WORLD \
-     uv run --no-project --with pyyaml python -m evals.run_evals --tasks $TASKS \
+     cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH GZ_WORLD=$GZ_WORLD \
+     uv run --no-project python -m evals.run_evals --tasks $TASKS \
        --assignments 'drones=$TIER' --k 2 --seed $SEED --out evals/out/$OUT" 2>&1
   # done when every expected cell is scored (run_evals skips-then-exits cleanly)
   remaining=$(docker exec "$CONTAINER" bash -lc \

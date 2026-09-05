@@ -1,8 +1,7 @@
 # evals/ — agent task-eval harness
 
 Measures how hard a task the drone agent can accomplish and how the selected
-LLM backend/model trades latency vs correctness. Distinct from `bench/`
-(sim/infra throughput).
+LLM backend/model trades latency vs correctness.
 
 - **Grading:** sim-state oracle only (`oracle.py`) — every check is a pure function
   over a sampled `WorldTrack`. No LLM-judge.
@@ -50,13 +49,13 @@ the marker), FAILS on baylands for that reason.
 ## Historical Claude run recipe (verified 2026-07-01)
 
 ```bash
-# 1) bring up a single-drone FLAT-world sim in the swarm container (host):
+# 1) bring up a single-drone FLAT-world sim in the container (host):
 docker run -d --name evals-sim \
   -e RENDER_BACKEND=cpu -e PX4_MODEL=gz_x500 \
   -v "$PWD:/workspace" \
   -v /tmp/evals-claude:/root/.claude -v /tmp/evals-claude.json:/root/.claude.json \
   -v /tmp/swarm-gz-fuel:/root/.gz/fuel \
-  -e SWARM_N=1 -e PX4_GZ_WORLD=default -e GZ_WORLD=default \
+  -e PX4_GZ_WORLD=default -e GZ_WORLD=default \
   squawd:dev bash -lc 'sim/launch/swarm_sim.sh'
 # (first mount /tmp/evals-claude with a copy of ~/.claude/.credentials.json, + '{}' in the .json)
 # wait until: ros2 topic list | grep -c vehicle_local_position  == 1
@@ -64,7 +63,7 @@ docker run -d --name evals-sim \
 # 2) run the sweep INSIDE the container (ROS must be sourced so rclpy/px4_msgs resolve,
 #    and keep $PYTHONPATH — do NOT overwrite it):
 docker exec evals-sim bash -lc 'source /opt/ros/jazzy/setup.bash; source /opt/px4_ws/install/setup.bash;
-  cd /workspace && PYTHONPATH=/workspace:$PYTHONPATH SWARM_N=1 GZ_WORLD=default \
+  cd /workspace && PYTHONPATH=/workspace:$PYTHONPATH GZ_WORLD=default \
   uv run --no-project python -m evals.run_evals \
     --tasks evals/tasks/reach_marker_single.yaml \
     --assignments "drones=opus;drones=haiku" --k 5'
@@ -110,7 +109,7 @@ world). Until then, run only the flat-world ladders (plan-depth / spatial / ambi
   oracle ONLY. Flight tools read `Deps.flight_contacts` — `VisionContacts` under
   `--feed vision` (Detector → VisionContacts, the production detect→lock→track
   path), or GzPoses under `--feed truth` (the explicit truth-fed control).
-  `FleetHarness` never crosses those wires. Per cell, `VisionContacts.reset()`
+  `DroneHarness` never crosses those wires. Per cell, `VisionContacts.reset()`
   runs at soft_reset — no filter/ID leak across anchored repeats.
 - **Perceive ladder (`tasks/perceive/*`):** the `perceive` world hosts ONE orange
   rover (`mov_true`) plus visually DISTINCT ground decoys (red tall hauler,
@@ -136,5 +135,5 @@ world). Until then, run only the flat-world ladders (plan-depth / spatial / ambi
 
 ## Scope
 
-Single-drone layer only. Commander + full-swarm layers and the prompt/tooling
-iteration loop are follow-on work (see the design doc).
+Single-drone only. Historical Commander/swarm code and tasks are preserved in
+Git history, not in this harness.

@@ -1,13 +1,13 @@
 """Generate a 'city' Gazebo world from PX4's default.sdf by injecting buildings.
 
 Keeps default.sdf's required plugins/scene/sun/ground (so PX4 + sensors work) and
-adds a deterministic scatter of box "buildings" so the drones + their cameras have
+adds a deterministic scatter of box "buildings" so the drone and camera have
 something to see. Buildings avoid the spawn corridor near the origin.
 
 Also writes a sidecar `city_boxes.json` next to the world: the exact building
-boxes + the drones' spawn layout, so the agents can compute obstacle/proximity
+boxes and spawn layout, so the pilot can compute obstacle/proximity
 awareness in pure Python (no extra Gazebo subscriptions) from the same ground
-truth that built the world. See agents/swarm/perception.py.
+truth that built the world. See agents/perception/perception.py.
 
 Usage: python make_city_world.py <px4_default.sdf> <out_city.sdf>
        -> writes <out_city.sdf> and <out_dir>/city_boxes.json
@@ -18,9 +18,8 @@ import random
 import re
 import sys
 
-# Drones spawn at world (x=0, y=i*SPAWN_SPACING, z=SPAWN_Z), yaw=0 — must match
-# swarm_sim.sh (PX4_GZ_MODEL_POSE="0,${y},0.5"). The agents read these to map a
-# drone's local NED telemetry into this world frame.
+# The drone spawns at world (x=0, y=0, z=SPAWN_Z), yaw=0. The pilot reads this
+# geometry to map local NED telemetry into the world frame.
 SPAWN_X = 0.0
 SPAWN_SPACING = 3.0
 SPAWN_Z = 0.5
@@ -32,12 +31,12 @@ def building_boxes(seed: int = 7) -> list[dict]:
     boxes = []
     n = 0
     # sparse grid of plots with jitter; skip the spawn/flight corridor near origin.
-    # Kept light (~15 buildings) so 3 camera renders + flight stay real-time.
+    # Kept light (~15 buildings) so camera rendering and flight stay real-time.
     for gx in range(-80, 81, 40):
         for gy in range(-30, 91, 40):
             x = gx + rng.uniform(-6, 6)
             y = gy + rng.uniform(-6, 6)
-            if abs(x) < 14 and -6 < y < 40:      # keep spawn corridor clear: drones spawn at y=i*3 (up to ~12)
+            if abs(x) < 14 and -6 < y < 40:      # keep the spawn corridor clear
                 continue
             if rng.random() < 0.15:               # some empty lots
                 continue

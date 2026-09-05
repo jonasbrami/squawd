@@ -315,7 +315,7 @@ def test_mask_publisher_is_best_effort():
 
 def _bound(client, **kw):
     look, pinpoint = _tools(client, **kw)
-    opts = make_pilot_options(FlightOps(None, None, None, 0, 1),
+    opts = make_pilot_options(FlightOps(None, None, None),
                               deep_tools=(look, pinpoint),
                               report=lambda m: None)
     srv = opts.mcp_servers["pilot"]["instance"]
@@ -333,7 +333,7 @@ def _bound(client, **kw):
 
 
 def test_deep_tools_register_only_when_supplied():
-    bare = make_pilot_options(FlightOps(None, None, None, 0, 1),
+    bare = make_pilot_options(FlightOps(None, None, None),
                               report=lambda m: None)
     assert "mcp__pilot__look" not in bare.allowed_tools
     assert "mcp__pilot__pinpoint" not in bare.allowed_tools

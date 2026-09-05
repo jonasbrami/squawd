@@ -54,16 +54,6 @@ def test_cellresult_row_carries_suite_and_difficulty():
     assert row["suite"] == "spatial" and row["difficulty"] == {"spatial": 2}
 
 
-def test_require_single_drone_rejects_multi():
-    import pytest
-    from evals.runner import require_single_drone
-    from types import SimpleNamespace
-    spec = SimpleNamespace(id="t", setup=SimpleNamespace(n_drones=4))
-    with pytest.raises(ValueError):
-        require_single_drone(spec)
-    require_single_drone(SimpleNamespace(id="t", setup=SimpleNamespace(n_drones=1)))  # no raise
-
-
 def test_settle_returns_when_drone_stops_moving():
     """Once the drone holds position (speed < threshold), settle returns before the
     deadline instead of burning the whole budget."""
@@ -85,7 +75,7 @@ def test_settle_returns_when_drone_stops_moving():
     async def go():
         t0 = time.monotonic()
         # Generous deadline; settle should return well before it once still.
-        await _settle(MovingThenStillWorld(), bridge=None, n=1,
+        await _settle(MovingThenStillWorld(), bridge=None,
                       deadline=t0 + 5.0, still_speed=0.8, poll=0.01)
         return time.monotonic() - t0
 
@@ -109,7 +99,7 @@ def test_settle_stops_at_deadline_when_never_still():
 
     async def go():
         t0 = time.monotonic()
-        await _settle(AlwaysMovingWorld(), bridge=None, n=1,
+        await _settle(AlwaysMovingWorld(), bridge=None,
                       deadline=t0 + 0.1, still_speed=0.8, poll=0.01)
         return time.monotonic() - t0
 
@@ -125,19 +115,19 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
 
     connects = {"n": 0}
 
-    class FakeAgent:
+    class FakeSystem:
         def __init__(self):
-            self._system = object()
+            self.param = None
 
         async def connect(self):
             connects["n"] += 1
 
-    agents_made = []
+    systems_made = []
 
-    def agent_factory(i):
-        a = FakeAgent()
-        agents_made.append(a)
-        return a
+    def system_factory():
+        system = FakeSystem()
+        systems_made.append(system)
+        return system
 
     clients = []
 
@@ -147,7 +137,7 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
         return c
 
     h = DroneHarness(Deps(world=None, bridge=None, cameras=None),
-                     agent_factory=agent_factory, client_builder=client_builder)
+                     system_factory=system_factory, client_builder=client_builder)
 
     async def go():
         s1 = await h.system()
@@ -160,64 +150,6 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
 
     s = asyncio.run(go())
     assert connects["n"] == 1                  # connect() called exactly once
-    assert len(agents_made) == 1               # only one DroneAgent ever built
+    assert len(systems_made) == 1              # only one System ever built
     assert len(clients) == 2                   # one client per client_for call
-    assert s is agents_made[0]._system
-
-
-def test_fleet_harness_connects_n_agents_once():
-    import asyncio
-    from evals.runner import Deps, FleetHarness
-
-    made = []
-
-    class FakeAgent:
-        def __init__(self, i):
-            self.i = i
-            self._system = f"sys{i}"
-            self.connects = 0
-
-        async def connect(self):
-            self.connects += 1
-
-    def factory(i):
-        a = FakeAgent(i)
-        made.append(a)
-        return a
-
-    h = FleetHarness(Deps(world=None, bridge=None, cameras=None), n=2,
-                     agent_factory=factory)
-
-    async def run():
-        s1 = await h.systems_list()
-        s2 = await h.systems_list()
-        return s1, s2
-
-    s1, s2 = asyncio.run(run())
-    assert s1 == ["sys0", "sys1"] and s2 is not s1 and s2 == s1
-    assert [a.connects for a in made] == [1, 1]          # built + connected once
-    assert asyncio.run(h.system()) == "sys0"             # back-compat accessor
-
-
-def test_layer_gate_rejects_dropped_layers_and_multidrone():
-    """operator/commander layers were dropped in the rebuild: the gate must
-    reject them (and any multi-drone spec) loudly — never silently pass."""
-    import pytest
-    from evals.runner import require_layer_supported
-
-    class Setup:
-        n_drones = 2
-
-    class Spec:
-        id = "w1"
-        setup = Setup()
-        target_layer = "single_drone"
-
-    with pytest.raises(ValueError, match="n_drones==1"):
-        require_layer_supported(Spec())
-    with pytest.raises(ValueError, match="dropped"):
-        require_layer_supported(Spec(), layer="operator")
-    with pytest.raises(ValueError, match="dropped"):
-        require_layer_supported(Spec(), layer="commander")
-    with pytest.raises(ValueError, match="dropped"):
-        require_layer_supported(Spec(), layer="bogus")
+    assert s is systems_made[0]

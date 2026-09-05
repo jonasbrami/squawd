@@ -71,7 +71,7 @@ class FakeDrone:
 
 
 def _ops(deny_starts=0):
-    return FlightOps(FakeDrone(deny_starts), world=FakeWorld(), bridge=None, i=0, n=1)
+    return FlightOps(FakeDrone(deny_starts), world=FakeWorld(), bridge=None)
 
 
 async def test_success_returns_logs_and_value():

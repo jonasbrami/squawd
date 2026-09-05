@@ -6,8 +6,6 @@ RLE mask codec: row-major bool array as run-length varints, starting with the
 count of leading ZEROS, alternating. rle_encode/rle_decode are the contract
 (tested in tests/test_vision_detector.py)."""
 from dataclasses import dataclass
-from typing import Protocol
-
 from agents.core.contact import Frame  # noqa: F401  (re-exported for convenience)
 
 
@@ -39,7 +37,6 @@ class InferenceResult:
     frame: Frame
     detections: list
     completed_monotonic: float
-    generation: int = 0
     designated_hit: "AssociationHit | None" = None
 
 
@@ -53,20 +50,8 @@ class AssociationHit:
     mask: bytes | None = None
 
 
-@dataclass(frozen=True)
-class TrackingMode:
-    needs_track_ids: bool
-    tracker_yaml: str | None = None
-
-
 class BackendError(Exception):
     """Model/backend load or inference setup failure (pilot → degraded boot)."""
-
-
-class DetectorBackend(Protocol):
-    supports_track: bool
-
-    def infer(self, frame: Frame, conf: float) -> list[Detection]: ...
 
 
 def rle_encode(mask_rows) -> bytes:

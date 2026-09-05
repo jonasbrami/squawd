@@ -15,7 +15,7 @@ work unchanged.
 
 Dynamic tasks add two twists:
 - a script step may be {behavior: <name>, args: {...}} — behaviors compute
-  their tool calls at runtime from live mover positions (ops.gzposes) and
+  their tool calls at runtime from live mover positions (ops.contacts) and
   yield every underlying ops call, so step budgets and transcripts stay honest;
 - the DUAL-baseline gate: `pilot:` is the must-PASS reference (e.g. a lead
   predictor), an optional `null_pilot:` is the must-FAIL baseline (e.g. the
@@ -28,9 +28,9 @@ from agents.flight.backend import ToolCall, ToolResult
 
 
 def _mover_xy(ops, name: str) -> tuple[float, float]:
-    p = ops.gzposes.poses().get(name)
+    p = ops.contacts.poses().get(name)
     if p is None:
-        raise ValueError(f"behavior: mover {name!r} not visible on gz poses")
+        raise ValueError(f"behavior: mover {name!r} not visible")
     return (p[0], p[1])
 
 
@@ -56,7 +56,7 @@ async def lead_chaser(ops, args):
     prev, prev_t = None, None
     for _ in range(int(args.get("rounds", 8))):
         e, n = _mover_xy(ops, args["mover"])
-        t = ops.gzposes.sim_time()
+        t = ops.contacts.sim_time()
         ve = vn = 0.0
         lead = lead_s
         if prev is not None and t > prev_t:
@@ -79,13 +79,13 @@ async def lead_intercept(ops, args):
         res = await ops.set_speed(speed=speed)   # solve AND fly at this speed
         yield ("set_speed", {"speed": speed}, res)
     e1, n1 = _mover_xy(ops, args["mover"])
-    t1 = ops.gzposes.sim_time()
+    t1 = ops.contacts.sim_time()
     await asyncio.sleep(obs_s)
     e2, n2 = _mover_xy(ops, args["mover"])
-    t2 = ops.gzposes.sim_time()
+    t2 = ops.contacts.sim_time()
     dt = max(t2 - t1, 1e-6)
     ve, vn = (e2 - e1) / dt, (n2 - n1) / dt
-    st = ops.world.drone_state(ops.bridge, ops.i)
+    st = ops.world.drone_state(ops.bridge, 0)
     de, dn = e2 - st[0], n2 - st[1]
     # solve |target + v*t - drone| = speed*t for the earliest positive t
     a = ve * ve + vn * vn - speed * speed
@@ -135,7 +135,7 @@ async def shadow_loop(ops, args):
     obs = []
     for k in range(3):
         e, n = _mover_xy(ops, mover)
-        obs.append((ops.gzposes.sim_time(), e, n))
+        obs.append((ops.contacts.sim_time(), e, n))
         if k < 2:
             res = await ops.hover(seconds=obs_s)
             yield ("hover", {"seconds": obs_s}, res)
@@ -157,7 +157,7 @@ async def shadow_loop(ops, args):
     prev_m = None
     for _ in range(40):
         me, mn = _mover_xy(ops, mover)
-        st = ops.world.drone_state(ops.bridge, ops.i)
+        st = ops.world.drone_state(ops.bridge, 0)
         sep = math.hypot(me - st[0], mn - st[1])
         # start the lap only with the mover BEHIND and closing: joining with it
         # alongside/ahead makes any pacing error open the gap immediately
@@ -172,7 +172,7 @@ async def shadow_loop(ops, args):
         res = await ops.hover(seconds=2)
         yield ("hover", {"seconds": 2}, res)
     # author a matched-speed lap-and-a-half from the drone's own angle
-    st = ops.world.drone_state(ops.bridge, ops.i)
+    st = ops.world.drone_state(ops.bridge, 0)
     dang = math.atan2(st[1] - cn, st[0] - ce)
     step = sign * (2.0 * math.pi / 10.0)
     pts = [(round(ce + radius * math.cos(dang + i * step), 2),
@@ -206,7 +206,7 @@ async def await_gap(ops, args):
     deadline = float(args.get("timeout_s", 60.0))
     waited, last = 0.0, None
     while waited < deadline:
-        p = ops.gzposes.poses()[args["mover"]]
+        p = ops.contacts.poses()[args["mover"]]
         v = p[idx]
         if v >= min_value and last is not None and v > last:
             yield ("hover", {"seconds": 0}, f"gap open: mover at {v:.1f}, receding")
@@ -303,22 +303,14 @@ class ScriptedClient:
     async def query(self, prompt: str):   # the pilot ignores the prose
         ops = await self._ops_provider()
         seq = 0
-        # fleet routing: on a FLEET ops the `drone:` key picks a body via the
-        # drone(i) METHOD; single-drone FlightOps has a `.drone` ATTRIBUTE (the
-        # MAVSDK System) — callable-guard the routing or behavior steps crash
-        # with "'System' object is not callable" (latent until M5: the
-        # dynamic-ladder behavior gates ran under the old fleet ops).
-        drone_fn = getattr(ops, "drone", None)
-        route = drone_fn if callable(drone_fn) else None
         for i, step in enumerate(self._script):
             if "behavior" in step:
                 fn = BEHAVIORS.get(step["behavior"])
                 if fn is None:
                     raise ValueError(f"pilot step {i}: unknown behavior "
                                      f"'{step['behavior']}' ({sorted(BEHAVIORS)})")
-                body = route(step.get("drone", 0)) if route else ops
                 pending = None   # (id, tool) of a ToolCall emitted pre-call
-                async for item in fn(body, step.get("args", {})):
+                async for item in fn(ops, step.get("args", {})):
                     # "_pending": emit the ToolCall BEFORE the tool runs so
                     # observe-time hooks (TargetLockEvent) see true call time —
                     # behavior triples are otherwise post-hoc by construction.
@@ -345,13 +337,7 @@ class ScriptedClient:
             args = step.get("args", {})
             yield ToolCall(id=f"pilot{seq}", name=f"pilot__{tool}", input=args,
                            model="pilot")
-            if hasattr(ops, tool):
-                target = ops
-            elif route is not None:
-                target = route(step.get("drone", 0))
-            else:
-                target = ops
-            fn = getattr(target, tool, None)
+            fn = getattr(ops, tool, None)
             # ``report`` belongs to the neutral provider tool catalog rather
             # than FlightOps.  The eval harness installs a no-op report sink,
             # so mirror that exact observable result for no-LLM pilot gates.
@@ -372,19 +358,16 @@ class ScriptedClient:
 
 
 def pilot_client_builder(harness, deps):
-    """A DroneHarness client_builder for pilot mode. The script varies per cell, so
+    """A client builder for pilot mode. The script varies per cell, so
     run_evals sets `harness.pilot_script` before each run_cell; the builder reads it."""
 
     async def ops_provider():
         from agents.flight.ops import FlightOps
-        systems = await harness.systems_list()
-        if len(systems) != 1:
-            raise ValueError("single-drone rebuild: pilot harness expects n==1, "
-                             f"got {len(systems)}")
+        system = await harness.system()
         # Deps split (§3.8): the scripted pilot reads the SAME contact provider
         # the LLM's flight tools get (flight_contacts) — never the oracle truth
         # unless run_evals explicitly chose the truth-fed control.
-        return FlightOps(systems[0], deps.world, deps.bridge, 0, 1,
+        return FlightOps(system, deps.world, deps.bridge,
                          contacts=deps.flight_contacts)
 
     def build(model):

@@ -5,12 +5,10 @@
 # home instead of c gives (-129.9, -75.0) ≈ 72 m off. Single goto — immune to
 # ordering/tooling effects; expected haiku knee.
 id: s6_bearing
-target_layer: single_drone
 suite: spatial
 difficulty: {plan_depth: 1, coordination: 1, ambiguity: 1, spatial: 6}
 setup:
   world: default
-  n_drones: 1
   spawn: home
   seed_objects:
     - {id: brg, east: -89.9, north: -15.0}

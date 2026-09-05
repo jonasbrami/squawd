@@ -66,7 +66,7 @@ async def main() -> int:
     backend = make_backend(args.backend)
     print(f"backend: {args.backend}", flush=True)
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
-    ops = FlightOps(system, world, bridge, 0, 1, gzposes=gz)
+    ops = FlightOps(system, world, bridge, contacts=gz)
     bridge.start()
     rec.start()
     await system.connect()

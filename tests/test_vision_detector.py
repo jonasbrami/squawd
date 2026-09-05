@@ -1,6 +1,4 @@
-"""Detector + backends + types contracts (ICD §6.2/§6.3): seq-dedupe,
-degrade-on-failures, wait_next freshness, configure_tracking validation,
-blob inference, RLE codec, frame_to_array channel order."""
+"""Detector + backends + types contracts (ICD §6.2/§6.3)."""
 import time
 
 import numpy as np
@@ -9,8 +7,7 @@ from agents.core.contact import Frame
 from agents.vision.backends import (ColorBlobBackend, OnnxBackend,
                                     frame_to_array)
 from agents.vision.detector import Detector
-from agents.vision.types import (BackendError, Detection, TrackingMode,
-                                 rle_decode, rle_encode)
+from agents.vision.types import BackendError, Detection, rle_decode, rle_encode
 
 
 def make_frame(seq=1, w=64, h=48, rgb=None):
@@ -32,8 +29,6 @@ class FakeCameras:
 
 
 class ScriptBackend:
-    supports_track = False
-
     def __init__(self, dets=None, fail=False):
         self.dets = dets or []
         self.fail = fail
@@ -127,17 +122,6 @@ def test_detector_wait_next_returns_newer_only():
     nxt = det.wait_next(after_seq=1, timeout=2.0)
     assert nxt is not None and nxt.frame.seq == 2
     det.stop()
-
-
-def test_configure_tracking_rejects_incompatible_backend():
-    det = Detector(FakeCameras([]), ScriptBackend(), hz=10.0)
-    try:
-        det.configure_tracking(TrackingMode(True, "botsort.yaml"))
-        assert False, "should have raised BackendError"
-    except BackendError:
-        pass
-    gen = det.configure_tracking(TrackingMode(False, None))
-    assert gen == 1
 
 
 def test_onnx_manifest_verification(tmp_path):
@@ -288,9 +272,7 @@ def test_shipped_manifests_class_tables():
     assert tuple(mover.get("classes") or ()) == ()
 
 
-def test_request_lock_default_tracker_none_consumes_seed():
-    """W0.2: the DEFAULT config (tracker `none`) must not ValueError on the
-    click path — the no-op tracker resolves the seed and stores it."""
+def test_request_lock_consumes_seed():
     dets = [Detection("target", 0.9, (20, 16, 30, 26)),
             Detection("target", 0.7, (40, 30, 50, 40))]
     cam = FakeCameras([orange_frame(seq=1)])
@@ -303,8 +285,6 @@ def test_request_lock_default_tracker_none_consumes_seed():
     hit = res.designated_hit
     assert hit.detection_index == 0 and hit.xyxy == (20, 16, 30, 26)
     assert hit.aim_px == dets[0].footpoint
-    assert det._tracker is not None                  # no ValueError path
-    assert det._tracker._seed == ((25.0, 20.0), None)
 
 
 def test_request_lock_seed_index_is_preferred():

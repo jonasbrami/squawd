@@ -47,11 +47,11 @@ RUN mkdir -p /opt/px4_ws/src \
 # mavsdk_server: use the version-matched binary bundled in the pip `mavsdk`
 # package (NOT a separately-downloaded one — a v2 server vs v3 client mismatch
 # leaves gRPC 50051 dead and connect() hangs). Symlink it onto PATH.
-COPY requirements-swarm.txt /tmp/requirements-swarm.txt
+COPY pyproject.toml /tmp/pyproject.toml
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
     && uv venv --system-site-packages /opt/venv \
-    && VIRTUAL_ENV=/opt/venv uv pip install -r /tmp/requirements-swarm.txt \
+    && VIRTUAL_ENV=/opt/venv uv pip install -r /tmp/pyproject.toml \
     && ln -sf /opt/venv/lib/python3.12/site-packages/mavsdk/bin/mavsdk_server /usr/local/bin/mavsdk_server
 
 # --- PX4 gz_bridge build dep: cppzmq provides the CPPZMQ::CPPZMQ CMake target
@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends cppzmq-dev \
 # (`bash -lc`, which does NOT read /etc/bash.bashrc); bash.bashrc covers
 # interactive non-login shells (`docker exec -it`).
 # --- Provider runtimes. openai-codex and its pinned CLI binary are installed
-# from requirements-swarm.txt. Claude/Kimi use the external Claude Code CLI;
+# from pyproject.toml. Claude/Kimi use the external Claude Code CLI;
 # the launcher mounts only the selected provider's isolated login artifact. ---
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \

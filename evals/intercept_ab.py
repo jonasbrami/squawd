@@ -62,7 +62,7 @@ async def main() -> int:
     gz = GzPoses(os.environ.get("GZ_WORLD", "dynamic"), [TARGET])
     rec = Px4StateRecorder(bridge, world, i=0, sim_time_ref=gz.sim_time)
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
-    ops = FlightOps(system, world, bridge, 0, 1, contacts=gz)
+    ops = FlightOps(system, world, bridge, contacts=gz)
     await system.connect()
     async for s in system.core.connection_state():
         if s.is_connected:

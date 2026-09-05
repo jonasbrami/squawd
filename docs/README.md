@@ -22,7 +22,6 @@ Read these in order:
 
 - [Evaluation harness](../evals/README.md) — task schema, truth isolation,
   scripted baselines, and live-run recipe.
-- [Capacity benchmark](../bench/README.md) — historical render/simulator scaling.
 - [`docs/benchmarks/`](benchmarks/) — dated evidence. A benchmark result proves
   the named revision/configuration, not necessarily the current worktree.
 
@@ -74,8 +73,8 @@ Documents dated before the single-drone rebuild may describe:
 - a Commander agent;
 - N autonomous drone agents;
 - `/swarm/*` application topics;
-- `agents/swarm/run.py` and `agents/swarm/commander.py`;
-- the `run_swarm_demo.sh` end-to-end path.
+- the removed Commander/swarm runtime and tasks;
+- the removed `run_swarm_demo.sh` end-to-end path.
 
 Those claims are historical unless the missing assembly is restored and tested.
 The current application uses one `PilotAgent`, `/pilot/*` topics, and the

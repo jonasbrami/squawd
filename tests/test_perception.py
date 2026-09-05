@@ -55,7 +55,7 @@ def test_scan_reports_building_footprint_geometry():
         def world_xy(self, bridge, j):
             return None
 
-    out = scan_text(W(), None, 0, 1)
+    out = scan_text(W(), None)
     assert "obs_0" in out
     assert "E45" in out and "N0" in out          # world-frame centre
     assert "14x14" in out                        # footprint extents
@@ -76,7 +76,7 @@ def test_scan_covers_all_six_obstacle_world_buildings():
         def world_xy(self, bridge, j):
             return None
 
-    out = scan_text(W(), None, 0, 1)
+    out = scan_text(W(), None)
     for j in range(6):
         assert f"obs_{j}" in out
 
@@ -97,7 +97,7 @@ def test_scan_reports_mover_contacts_position_only():
     two scans is the capability the dynamic ladder probes."""
     from agents.perception.perception import scan_text
 
-    out = scan_text(_FlatWorld(), None, 0, 1,
+    out = scan_text(_FlatWorld(), None,
                     mover_poses={"mov_1": (0.0, 60.0, 1.2)})
     assert "contact mov_1 60m ahead [IN VIEW]" in out
     assert "E0 N60" in out and "alt 1m" in out
@@ -109,7 +109,7 @@ def test_scan_omits_movers_beyond_range():
     from agents.perception.perception import MOVER_SCAN_RANGE_M, scan_text
 
     far = MOVER_SCAN_RANGE_M + 30.0
-    out = scan_text(_FlatWorld(), None, 0, 1,
+    out = scan_text(_FlatWorld(), None,
                     mover_poses={"mov_0": (far, 0.0, 10.0),
                                  "mov_1": (30.0, 30.0, 5.0)})
     assert "mov_0" not in out
@@ -119,4 +119,4 @@ def test_scan_omits_movers_beyond_range():
 def test_scan_without_movers_unchanged():
     from agents.perception.perception import scan_text
 
-    assert "contact" not in scan_text(_FlatWorld(), None, 0, 1)
+    assert "contact" not in scan_text(_FlatWorld(), None)

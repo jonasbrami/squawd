@@ -1,15 +1,8 @@
-"""Single-instance guard for the swarm agents process.
-
-Running two `agents/swarm/run.py` processes at once is a foot-gun: each starts
-its own Commander, and BOTH react to every drone report on /swarm/report/*, so
-they amplify each other into a storm of dispatches with no human input. An
-exclusive advisory file lock makes a second agents process refuse to start
-instead of silently stacking another swarm.
-"""
+"""Single-instance guard for the pilot process."""
 import fcntl
 import os
 
-DEFAULT_LOCK_PATH = os.environ.get("SWARM_LOCK", "/tmp/squawd_agents.lock")
+DEFAULT_LOCK_PATH = os.environ.get("PILOT_LOCK", "/tmp/squawd_pilot.lock")
 
 
 def acquire_singleton_lock(path: str = DEFAULT_LOCK_PATH):
@@ -23,9 +16,7 @@ def acquire_singleton_lock(path: str = DEFAULT_LOCK_PATH):
     except OSError:
         f.close()
         raise SystemExit(
-            f"swarm agents already running (lock held: {path}); refusing to start a "
-            "second Commander. Stop the other process first "
-            "(pkill -f '[a]gents/swarm/run.py').")
+            f"pilot already running (lock held: {path}); stop it before starting another")
     f.truncate(0)
     f.write(str(os.getpid()))
     f.flush()

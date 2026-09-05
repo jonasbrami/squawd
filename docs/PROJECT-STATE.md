@@ -7,17 +7,15 @@
 > checkpoint includes that follow-on, the Codex/Kimi/Claude provider switch,
 > and a reviewed COASTING position-latch correction. The rejected 5.5 m
 > pursuit-altitude/range experiment was discarded; its review and telemetry
-> remain as dated evidence. Treat the verification note below as authoritative
-> for the current tree; older milestone test counts are dated evidence only.
+> remain as dated evidence. A whole-repo ponytail audit then removed generated
+> eval outputs, historical swarm/benchmark/spike code, and single-implementation
+> abstractions; the active single-drone path and dated documentation remain.
+> Treat the verification note below as authoritative for the current tree.
 
-> **HISTORICAL GOAL SWITCH 2026-07-28 (owner):** the M0→M6 rebuild goal was
-> parked at
-> "M6 rungs remaining" (S6 spike PASSED first attempt; d2_shadow + perceive
-> + obstacle rungs + quota-metrics report outstanding — see §5 item 2).
-> The ACTIVE goal is the **Demo Cockpit Prototype** per
-> `docs/superpowers/specs/2026-07-28-demo-prototype-design.md` (v0.2,
-> codex-confirmed). Resume the M6 rungs as a separate goal afterward.
-> Demo containers killed at switch.
+> **ACTIVE GOAL — 2026-09-05:** whole-repo simplification is implemented and
+> host-verified, pending owner review. The remaining M6 live model ladder is a
+> separate, explicitly budgeted campaign; do not spend simulator or LLM quota
+> as part of this cleanup.
 
 > **Purpose.** This is the "state of mind" file: where the project is, what
 > we're doing next, and what we're stuck on. It exists so that when we
@@ -46,51 +44,37 @@ M0→M6. Branch: `rebuild-single-drone`.
 
 | Milestone | Status | Evidence |
 |---|---|---|
-| M0 Kimi spike | **DONE** | `spikes/M0-RESULTS.md` |
+| M0 Kimi spike | **DONE (historical)** | Git history; superseded by the backend seam |
 | M1 skeleton + estop/envelope | **DONE** | pytest, 12 tools, estop arbiter |
 | M2 perception (contact error) | **DONE** | `docs/benchmarks/m2-gate-results.md` (p50 0.50 m) |
 | M2.5 nano-seg artifact | **DONE** | `models/mover-nano-seg-v1.onnx` + manifest SHA-256 (production detector) |
 | M3a vision-fed CV-EKF shadow | **DONE** | `docs/benchmarks/m3a-gate-results.md` (2/2 camera + 2/2 truth) |
 | M3b ToF fusion | **ACCEPTED (deviation)** | `docs/benchmarks/m3b-status.md` — everything proven EXCEPT ≥80% availability |
 | M4 cockpit observatory | **DONE (data plane)** | `/state` + cam + `/ws_detections` live; beam/track SM transitions live; estop holds mid-tool; 3 ICD tests |
-| M5 evals + perception grading | **DONE** | 509-unit green; perceive gates + accuracy JSONs + A/B infra; d2_shadow regression found→codex-reviewed→fixed→validated (dwell 69.1 s vs 45 gate); d1–d5 truth-fed re-confirmation **9/9 cells match pre-M5 behavior** (`evals/out/m5_d1d5_confirm_20260728/`, `docs/benchmarks/m5-gate-results.md`) |
+| M5 evals + perception grading | **DONE** | 509-unit milestone; perceive gates + accuracy/A-B infra; d2_shadow regression fixed and validated; dated summary in `docs/benchmarks/m5-gate-results.md` (raw generated output removed from HEAD) |
 | M6 Kimi switch + backend seam | **PARTIAL** | backend seam and S6 smoke done; the three-rung Kimi ladder (`d2_shadow` + perceive + obstacle) and quota report remain outstanding |
 | Codex/Kimi/Claude provider switch | **IMPLEMENTED; KIMI LIVE GATE QUOTA-BLOCKED (2026-08-08)** | neutral tool catalog; authenticated Codex/Terra two-turn MCP spike; required-server fail-closed check; fresh image; scripted and Codex flight smoke pass. Kimi returned a classified billing-cycle quota error before tool use; see `docs/benchmarks/backend-switch-smoke-2026-08-08.md` |
 | Demo cockpit W0–W5 | **DONE (2026-08-02 evidence)** | `docs/superpowers/specs/2026-07-28-demo-prototype-design.md`, `docs/benchmarks/w5-golden-path.md` |
 | Deep perception M1–M4 | **SHIPPED WITH QUANTIFIED LIMITS (2026-08-03 evidence)** | sidecar, `look`/`pinpoint`, slow lane, cockpit layer, and metrics in `docs/benchmarks/deep-perception-m1.md` … `-m4.md` |
 
-### Current verification (2026-09-05 documentation checkpoint)
+### Current verification (2026-09-05 ponytail-audit checkpoint)
 
-The production code is unchanged from the 2026-08-09 implementation
-checkpoint. Before merging the accumulated branch, the host lane was rerun on
+The worktree contains the uncommitted audit cleanup. Verification on
 2026-09-05:
 
 - `git diff --check` passes.
 - `bash -n scripts/*.sh sim/launch/*.sh evals/scripts/*.sh` passes.
-- Focused backend/tool/doctor/eval tests on the final implementation:
-  **96 passed in 44.63 s**.
-- Authenticated Codex SDK/MCP spike: **2 passed in 29.52 s**. It proved tool
-  discovery, a tool call/result on each of two turns on one persistent thread,
-  usage reporting, and required-MCP fail-closed behavior. It used the Codex
-  login/subscription path, not `OPENAI_API_KEY` or the Responses API.
 - Full host unit lane (`uv run --extra dev --with pyyaml --with numpy pytest
-  tests/ --ignore=tests/integration -q`): **766 passed in 180.06 s**. Two
+  tests/ --ignore=tests/integration -q`): **717 passed in 156.33 s**. Two
   non-failing warnings remain: Starlette's `httpx` TestClient deprecation and
   the existing frame-store hammer test's background-writer integer overflow.
-- Pursuit command/projection/track regression lane after discarding the rejected
-  altitude/range experiment: **45 passed**. The independent COASTING latch fix
-  is pinned for both geometric and ToF branches in `tests/test_track_ops.py`.
-- Fresh `squawd:dev` rebuilt successfully and contains pinned
-  `openai-codex==0.144.4` / matching CLI runtime `0.144.4`.
-- Fresh-container bounded flight smoke (`take_off → scan → report → land`):
-  scripted pilot **PASS** and Codex/Terra-low **PASS**, both exactly four calls,
-  all oracle checks green, and final PX4 state disarmed near home. Codex used
-  one request, 16,379 input + 4 output tokens (16,128 cached input), with zero
-  quota errors and 36.783 s backend wall time.
-- The identical Kimi cell was attempted once and is **quota-blocked**: classified
-  HTTP 403 billing-cycle usage limit, zero tool calls, `quota_errors=1`; vehicle
-  remained disarmed at home. Full evidence is in
-  `docs/benchmarks/backend-switch-smoke-2026-08-08.md`.
+- No Docker image rebuild, Gazebo/PX4 run, GPU campaign, or LLM request was
+  spent for this structural cleanup. The last live provider evidence remains
+  the dated `docs/benchmarks/backend-switch-smoke-2026-08-08.md` report.
+
+Next bounded step: review the deletion set, then rebuild `squawd:dev` and run
+the scripted four-step backend smoke in a fresh container if live assurance is
+required before committing.
 
 Historical claims such as “490 green”, “509 green”, “638+ green”, or “753
 green” identify the milestone snapshot in which they were recorded. Do not use

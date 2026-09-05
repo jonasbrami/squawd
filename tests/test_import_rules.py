@@ -18,16 +18,14 @@ IMPORT_RULES = {
                            "agents.flight"},
     "agents/pilot":       {"agents.core", "agents.world", "agents.perception",
                            "agents.vision", "agents.flight", "agents.pilot",
-                           "agents.swarm", "agents.observatory"},
+                           "agents.observatory"},
     "agents/observatory": {"agents.core", "agents.observatory"},
-    "agents/swarm":       {"agents.core", "agents.world", "agents.perception",
-                           "agents.flight", "agents.swarm"},   # legacy, being dismantled
 }
 
 # ROS / gz / numpy gates (third-party libs are governed by requirements pinning).
 ROS_ROOTS = ("rclpy", "std_msgs", "px4_msgs")
 GZ_ROOTS = ("gz",)
-ROS_ALLOWED = {"agents/core", "agents/pilot", "agents/observatory", "agents/swarm"}
+ROS_ALLOWED = {"agents/core", "agents/pilot", "agents/observatory"}
 GZ_ALLOWED = {"agents/core"}
 NUMPY_ALLOWED = {"agents/vision"}
 

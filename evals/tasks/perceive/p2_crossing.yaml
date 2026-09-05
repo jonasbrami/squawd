@@ -9,12 +9,10 @@
 # see p1_identify.yaml's header for the two-sided lesson (blob starvation
 # from alt 6, shallow-angle lock rejection, LOST-on-transit at 20-25 m locks).
 id: p2_crossing
-target_layer: single_drone
 suite: perceive
 difficulty: {plan_depth: 2, coordination: 1, ambiguity: 3, spatial: 3, dynamic: 3, perceive: 2}
 setup:
   world: perceive
-  n_drones: 1
   spawn: home
   seed_objects: []
 prompt: "The plaza southeast of you has several vehicles on crossing routes.

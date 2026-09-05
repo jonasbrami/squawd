@@ -14,7 +14,6 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Protocol
 
 RANGE_TOPIC = ("/world/{world}/model/x500_depth_0/link/range_link"
                "/sensor/lidar/scan")  # gz derives the topic from the sensor
@@ -35,21 +34,6 @@ class RangeSample:
     quality: float               # 0..1
     status: str                  # VALID|LOW_SIGNAL|SATURATED|OUT_OF_RANGE|STALE|EDGE_MIX
     seq: int
-
-
-class RangeProvider(Protocol):
-    def latest(self) -> RangeSample | None: ...
-    def robust_at(self, sim_stamp: float, *, window_s: float = 0.12,
-                  sync_tolerance_s: float = 0.05) -> RangeSample | None: ...
-
-
-class ImpairmentModel(Protocol):
-    def apply(self, hits_m: list, ideal_range_m: float | None,
-              rng: random.Random) -> tuple[float | None, float, str]:
-        """(bundle hits, RAW IDEAL sensor range — never GzPoses oracle truth)
-        -> (range_m|None, quality, status). Injects distance-scaled noise,
-        reflectivity max, dropouts, latency. STALE is stamped by
-        latest()/robust_at() at READ time, not here."""
 
 
 class SimImpairment:
@@ -83,7 +67,7 @@ class GzRangeProvider:
     """Reads the 3x3 ray-bundle gz lidar topic; reduces to canonical samples."""
 
     def __init__(self, topic: str, *, bundle: int = 9,
-                 impair: ImpairmentModel | None = None,
+                 impair=None,
                  edge_spread_m: float = 0.3, buf_s: float = 2.0) -> None:
         self.topic = topic
         self.bundle = bundle

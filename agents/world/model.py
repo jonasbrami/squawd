@@ -85,19 +85,9 @@ class World:
         st = self.drone_state(bridge, i)
         return None if st is None else (st[0], st[1], st[2])
 
-    def resolve_xy(self, name: str, bridge, n_drones: int):
-        """World (east, north) of a named target: 'drone_<j>' or a building name.
-        None if unknown."""
+    def resolve_xy(self, name: str):
+        """World (east, north) of a named building, or None if unknown."""
         name = name.strip().lower()
-        if name.startswith("drone_"):
-            try:
-                j = int(name.split("_", 1)[1])
-            except ValueError:
-                return None
-            if 0 <= j < n_drones:
-                xy = self.world_xy(bridge, j)
-                return None if xy is None else (xy[0], xy[1])
-            return None
         for b in self.buildings:
             if b["name"].lower() == name:
                 return (b["x"], b["y"])
