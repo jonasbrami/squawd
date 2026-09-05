@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.deep_token
 *.log
 flight_logs/
 .pytest_cache/
@@ -18,3 +19,25 @@ dist/
 # Local agent / tooling state
 .claude/
 .superpowers/
+.film/
+
+# Training venvs (host-only, huge)
+.venv-train/
+.venv-train-gpu/
+
+# Model weights are provisioned, never committed (models/README.md); manifests stay
+*.onnx
+*.pt
+
+# Generated eval/training artifacts (M0 2026-08-02) — regenerable; git stays media-free
+evals/out/**/*.png
+evals/out/**/*.jpg
+evals/out/**/*.jpeg
+evals/out/**/*.gif
+evals/out/**/*.webm
+evals/out/**/*.mp4
+evals/out/coco/
+evals/out/w25b_dataset/
+evals/out/dataset_topup/
+evals/out/dataset_v1/
+runs/

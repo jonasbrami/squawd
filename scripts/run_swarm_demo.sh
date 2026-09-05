@@ -45,9 +45,14 @@ cp "$HOME/.claude/.credentials.json" "$CRED/" 2>/dev/null || {
 printf '{}' > "$CRED.json"
 
 GPU_ARGS=()
+# Intel device nodes are resolved from the PCI by-path symlinks AT LAUNCH:
+# card/renderD numbering flips across boots, and ':' in the by-path links
+# breaks --device parsing.
+INTEL_CARD=$(readlink -f /dev/dri/by-path/pci-0000:00:02.0-card)
+INTEL_RENDER=$(readlink -f /dev/dri/by-path/pci-0000:00:02.0-render)
 case "$RENDER_BACKEND" in
   intel)
-    GPU_ARGS=(--device /dev/dri/renderD128 --device /dev/dri/card1
+    GPU_ARGS=(--device "$INTEL_RENDER" --device "$INTEL_CARD"
               --group-add "$RENDER_GID" --group-add "$VIDEO_GID"
               -e RENDER_BACKEND=intel -e PX4_MODEL=gz_x500_depth)
     ;;

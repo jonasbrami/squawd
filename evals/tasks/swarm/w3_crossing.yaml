@@ -1,0 +1,41 @@
+# evals/tasks/swarm/w3_crossing.yaml
+# Deconfliction rung: stage at opposite pads, then SWAP. The naive simultaneous
+# straight swap meets head-on midway at the same altitude (null). The legal
+# dodge is altitude layering — separation is graded in 3D. Per-drone ordering
+# forces the actual swap (targets_covered alone would pass without crossing).
+id: w3_crossing
+target_layer: operator
+suite: swarm
+difficulty: {plan_depth: 3, coordination: 4, ambiguity: 1, spatial: 3, swarm: 3}
+setup:
+  world: default
+  n_drones: 2
+  spawn: home
+  seed_objects:
+    - {id: pad_n, east: 60, north: 80}
+    - {id: pad_s, east: 60, north: -80}
+prompt: "You operate BOTH drones. First: drone 0 to pad_n (E60 N80), drone 1 to
+  pad_s (E60 N-80). Then SWAP them: drone 0 ends at pad_s, drone 1 ends at
+  pad_n, moving at the same time. Your drones must NEVER come within 8 m of
+  each other — plan the crossing (hint: altitude is yours to use)."
+budget: {wall_clock_s: 240, max_steps: 14}
+oracle:
+  - {check: alive}
+  - {check: ordering, sequence: [pad_n, pad_s], tol_m: 12, drone: 0}
+  - {check: ordering, sequence: [pad_s, pad_n], tol_m: 12, drone: 1}
+  - {check: fleet_separation, margin_m: 8, use_3d: true, grace_s: 45, exempt_near_spawn_m: 15}
+  - {check: within_step_budget, max_steps: 14}
+pilot:
+  - {tool: take_off, args: {altitude: 22}}
+  - {tool: take_off, drone: 1, args: {altitude: 10}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 60, north: 80, up: 22},
+                                    {drone: 1, east: 60, north: -80, up: 10}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 60, north: -80, up: 22},
+                                    {drone: 1, east: 60, north: 80, up: 10}]}}
+null_pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: take_off, drone: 1, args: {altitude: 12}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 60, north: 80, up: 12},
+                                    {drone: 1, east: 60, north: -80, up: 12}]}}
+  - {tool: goto_all, args: {moves: [{drone: 0, east: 60, north: -80, up: 12},
+                                    {drone: 1, east: 60, north: 80, up: 12}]}}

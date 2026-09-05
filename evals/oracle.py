@@ -25,9 +25,19 @@ class GradeResult:
     checks: list[CheckResult]
 
 
+def _sel(poses: dict, p: dict) -> list:
+    """Poses considered by a check: one drone when the check carries `drone:`
+    (per-drone assignments — e.g. grading a swap), else the whole fleet."""
+    if "drone" in p:
+        pose = poses.get(int(p["drone"]))
+        return [pose] if pose is not None else []
+    return list(poses.values())
+
+
 def _reached(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     xy = track.objects[p["target"]]
-    d = track.min_dist_to(xy)
+    d = min((math.hypot(q.e - xy[0], q.n - xy[1]) for s in track.snapshots
+             for q in _sel(s.poses, p)), default=math.inf)
     tol = float(p["tol_m"])
     return CheckResult("reached", d <= tol, d, f"min dist {d:.1f}m to {p['target']} (tol {tol:g})")
 
@@ -56,8 +66,16 @@ def _within_step_budget(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     return CheckResult("within_step_budget", steps <= mx, float(steps), f"{steps} steps (max {mx})")
 
 
+def _landed(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Require a completed land tool followed by PX4 disarm."""
+    ok = m.get("landed") is True
+    return CheckResult("landed", ok, 1.0 if ok else 0.0,
+                       "PX4 disarmed after land" if ok else
+                       "final land missing, failed, or did not disarm")
+
+
 def _first_reach_time(track: WorldTrack, xy: tuple, tol: float,
-                      after: float | None = None) -> float | None:
+                      after: float | None = None, p: dict | None = None) -> float | None:
     """First time any drone comes within `tol` of `xy`. If `after` is given, only
     consider samples strictly after that time — this lets `ordering` chain reaches so a
     waypoint that coincides with an earlier position (e.g. return-to-home) is matched at
@@ -65,7 +83,7 @@ def _first_reach_time(track: WorldTrack, xy: tuple, tol: float,
     for s in track.snapshots:
         if after is not None and s.t <= after:
             continue
-        for pose in s.poses.values():
+        for pose in _sel(s.poses, p or {}):
             if math.hypot(pose.e - xy[0], pose.n - xy[1]) <= tol:
                 return s.t
     return None
@@ -90,7 +108,7 @@ def _ordering(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     times: list[float | None] = []
     prev: float | None = None
     for t in seq:
-        rt = _first_reach_time(track, track.objects[t], tol, after=prev)
+        rt = _first_reach_time(track, track.objects[t], tol, after=prev, p=p)
         times.append(rt)
         if rt is None:
             break
@@ -218,7 +236,7 @@ def _final_pos(track: WorldTrack, p: dict, m: dict) -> CheckResult:
     tol = float(p["tol_m"])
     last = track.snapshots[-1] if track.snapshots else None
     d = min((math.hypot(pose.e - xy[0], pose.n - xy[1])
-             for pose in last.poses.values()), default=math.inf) if last else math.inf
+             for pose in _sel(last.poses, p)), default=math.inf) if last else math.inf
     shown = "inf" if d == math.inf else f"{d:.1f}m"
     return CheckResult("final_pos", d <= tol, 0.0 if d == math.inf else d,
                        f"ended {shown} from {p['target']} (tol {tol:g})")
@@ -232,11 +250,266 @@ def _clearance(track: WorldTrack, p: dict, m: dict) -> CheckResult:
                        f"min clearance {shown} (margin {margin:g})")
 
 
+def _mover_sep(s, name: str) -> float | None:
+    """Min 2D distance from any drone pose to mover `name` within ONE snapshot —
+    drone and mover positions were captured the same tick, so dynamic checks
+    built on this are immune to sim-time vs wall-clock drift."""
+    mv = s.movers.get(name)
+    if mv is None or not s.poses:
+        return None
+    return min(math.hypot(p.e - mv[0], p.n - mv[1]) for p in s.poses.values())
+
+
+def _intercept(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Come within tol of the mover at some instant. Optional deadline: at the
+    moment of contact the mover must still be > zone_radius_m from the objects
+    point zone_target (perimeter-defense: 'catch it BEFORE it reaches X')."""
+    tol = float(p["tol_m"])
+    name = p["mover"]
+    zone = track.objects[p["zone_target"]] if "zone_target" in p else None
+    zr = float(p.get("zone_radius_m", 0.0))
+    best, hit = math.inf, False
+    for s in track.snapshots:
+        d = _mover_sep(s, name)
+        if d is None:
+            continue
+        best = min(best, d)
+        if d <= tol:
+            if zone is None:
+                hit = True
+                break
+            mv = s.movers[name]
+            if math.hypot(mv[0] - zone[0], mv[1] - zone[1]) > zr:
+                hit = True
+                break
+    shown = "inf" if best == math.inf else f"{best:.1f}m"
+    extra = f" before {p['zone_target']}+{zr:g}m" if zone is not None else ""
+    return CheckResult("intercept", hit, 0.0 if best == math.inf else best,
+                       f"min separation {shown} to {name} (tol {tol:g}){extra}")
+
+
+def _dwell_moving(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Stay within tol of the mover for >= hold_s CONTIGUOUS seconds. One
+    outside/missing sample doesn't break the run (2 Hz sampling can drop a
+    tick); two consecutive do."""
+    tol, need = float(p["tol_m"]), float(p["hold_s"])
+    name = p["mover"]
+    best, run_start, gap = 0.0, None, 0
+    for s in track.snapshots:
+        d = _mover_sep(s, name)
+        if d is not None and d <= tol:
+            if run_start is None:
+                run_start = s.t
+            gap = 0
+            best = max(best, s.t - run_start)
+        else:
+            gap += 1
+            if gap >= 2:
+                run_start = None
+    return CheckResult("dwell_moving", best >= need, best,
+                       f"held {best:.1f}s within {tol:g}m of {name} (need {need:g}s)")
+
+
+def _avoid_moving(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Never come within margin of the mover (moving keep-out bubble).
+    grace_s excuses early samples, same convention as avoid_area."""
+    margin = float(p["margin_m"])
+    grace = float(p.get("grace_s", 0.0))
+    name = p["mover"]
+    worst, hits = math.inf, 0
+    for s in track.snapshots:
+        if s.t < grace:
+            continue
+        d = _mover_sep(s, name)
+        if d is None:
+            continue
+        worst = min(worst, d)
+        if d < margin:
+            hits += 1
+    shown = "inf" if worst == math.inf else f"{worst:.1f}m"
+    return CheckResult("avoid_moving", hits == 0, 0.0 if worst == math.inf else worst,
+                       f"{hits} samples within {margin:g}m of {name} (closest {shown})")
+
+
+def _escort(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Station-keeping on a mover: from the FIRST joined sample (<= tol) to the
+    end of the track, the fraction of samples within tol must be >= min_fraction
+    AND no continuous gap outside tol may exceed max_gap_s. Measured from first
+    join so takeoff/transit to the convoy isn't charged against the escort."""
+    tol = float(p["tol_m"])
+    need_frac = float(p["min_fraction"])
+    max_gap = float(p["max_gap_s"])
+    name = p["mover"]
+    seps = [(s.t, _mover_sep(s, name)) for s in track.snapshots]
+    seps = [(t, d) for t, d in seps if d is not None]
+    joined = next((i for i, (_, d) in enumerate(seps) if d <= tol), None)
+    if joined is None:
+        return CheckResult("escort", False, 0.0, f"never within {tol:g}m of {name}")
+    window = seps[joined:]
+    inside = sum(1 for _, d in window if d <= tol)
+    frac = inside / len(window)
+    worst_gap, gap_start = 0.0, None
+    for t, d in window:
+        if d > tol:
+            gap_start = t if gap_start is None else gap_start
+            worst_gap = max(worst_gap, t - gap_start)
+        else:
+            gap_start = None
+    ok = frac >= need_frac and worst_gap <= max_gap
+    return CheckResult("escort", ok, frac,
+                       f"{frac:.0%} of samples within {tol:g}m of {name} after join "
+                       f"(need {need_frac:.0%}); worst gap {worst_gap:.1f}s "
+                       f"(max {max_gap:g}s)")
+
+
+def _targets_covered(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Every listed target visited within tol by SOME drone. Drone-agnostic on
+    purpose: budgets (fleet path, wall clock) punish solo tours, not this check."""
+    tol = float(p["tol_m"])
+    missed = []
+    for t in p["targets"]:
+        xy = track.objects[t]
+        d = min((math.hypot(q.e - xy[0], q.n - xy[1])
+                 for s in track.snapshots for q in s.poses.values()),
+                default=math.inf)
+        if d > tol:
+            missed.append(t)
+    got = len(p["targets"]) - len(missed)
+    return CheckResult("targets_covered", not missed, float(got),
+                       f"covered {got}/{len(p['targets'])} within {tol:g}m; "
+                       f"missed {missed}")
+
+
+def _fleet_separation(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Min pairwise distance between OWN drones stays >= margin. 2D by default
+    (airspace hygiene); use_3d for tasks where altitude layering is the legal
+    dodge. grace_s excuses spawn adjacency (drones spawn 3 m apart).
+    exempt_near_spawn_m additionally excuses samples where BOTH drones sit near
+    their own first-seen positions (the pads): sequential takeoffs climb through
+    each other's altitude 3 m apart no matter how well the mission is planned,
+    and LLM deliberation paces takeoffs past any fixed grace window (observed
+    live: a perfectly layered 20/40 m plan 'violated' at t~50s on the pads).
+    Positional, not temporal — a mid-field violation is never excused."""
+    margin = float(p["margin_m"])
+    grace = float(p.get("grace_s", 0.0))
+    use_3d = bool(p.get("use_3d", False))
+    pad_r = float(p.get("exempt_near_spawn_m", 0.0))
+    first: dict = {}
+    if pad_r > 0.0:
+        for s in track.snapshots:
+            for i, q in s.poses.items():
+                first.setdefault(i, (q.e, q.n))
+    worst = math.inf
+    for s in track.snapshots:
+        if s.t < grace:
+            continue
+        ids = sorted(s.poses)
+        for a in range(len(ids)):
+            for b in range(a + 1, len(ids)):
+                qa, qb = s.poses[ids[a]], s.poses[ids[b]]
+                if pad_r > 0.0:
+                    fa, fb = first.get(ids[a]), first.get(ids[b])
+                    if (fa and fb
+                            and math.hypot(qa.e - fa[0], qa.n - fa[1]) <= pad_r
+                            and math.hypot(qb.e - fb[0], qb.n - fb[1]) <= pad_r):
+                        continue
+                d = math.hypot(qa.e - qb.e, qa.n - qb.n)
+                if use_3d:
+                    d = math.hypot(d, qa.alt - qb.alt)
+                worst = min(worst, d)
+    ok = worst >= margin or worst == math.inf
+    shown = "inf" if worst == math.inf else f"{worst:.1f}m"
+    return CheckResult("fleet_separation", ok, 0.0 if worst == math.inf else worst,
+                       f"min own-fleet separation {shown} (margin {margin:g}"
+                       f"{', 3D' if use_3d else ''})")
+
+
+def _simultaneous(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """Some single snapshot where DISTINCT drones cover all marks at once —
+    the coordinated-timing primitive. Distinctness is a permutation match
+    (fleet sizes here are small)."""
+    import itertools
+    marks = p["marks"]
+    for s in track.snapshots:
+        ids = sorted(s.poses)
+        if len(ids) < len(marks):
+            continue
+        for perm in itertools.permutations(ids, len(marks)):
+            ok = True
+            for mk, did in zip(marks, perm):
+                xy = track.objects[mk["target"]]
+                q = s.poses[did]
+                if math.hypot(q.e - xy[0], q.n - xy[1]) > float(mk["tol_m"]):
+                    ok = False
+                    break
+            if ok:
+                return CheckResult("simultaneous", True, s.t,
+                                   f"all {len(marks)} marks held at t={s.t:.1f}s")
+    return CheckResult("simultaneous", False, 0.0,
+                       f"no snapshot with {len(marks)} marks covered by "
+                       f"distinct drones")
+
+
+def _event_time(track: WorldTrack, ev: dict) -> float | None:
+    tol = float(ev["tol_m"])
+    for s in track.snapshots:
+        if ev["type"] == "reach":
+            xy = track.objects[ev["target"]]
+            if any(math.hypot(q.e - xy[0], q.n - xy[1]) <= tol
+                   for q in s.poses.values()):
+                return s.t
+        elif ev["type"] == "intercept":
+            d = _mover_sep(s, ev["mover"])
+            if d is not None and d <= tol:
+                return s.t
+    return None
+
+
+def _within_window(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """All listed events (first occurrence each) within window_s of one another
+    — forces a fleet SPLIT when the event sites are far apart."""
+    times = [_event_time(track, ev) for ev in p["events"]]
+    if any(t is None for t in times):
+        missing = [p["events"][i] for i, t in enumerate(times) if t is None]
+        return CheckResult("within_window", False, 0.0,
+                           f"events never occurred: {missing}")
+    spread = max(times) - min(times)
+    win = float(p["window_s"])
+    return CheckResult("within_window", spread <= win, spread,
+                       f"events {spread:.1f}s apart (window {win:g}s)")
+
+
+def _identified_target(track: WorldTrack, p: dict, m: dict) -> CheckResult:
+    """The agent locked the RIGHT contact (design §3.8, review Codex-B5): the
+    runner's TargetLockEvent path (evals/perceive_eval.note_target_lock) records
+    the first track/goto aimed at a vis_* id and associates the contact's
+    measurement to oracle truth AT that sim moment; run_meta carries the
+    resulting truth id. Grades PERCEPTION (identity at lock time), never the
+    report text (§4.3). Params: truth = the true mover's name; optional
+    max_assoc_m bounds the association error we're willing to trust."""
+    lock = m.get("target_lock")
+    want = p["truth"]
+    if not lock:
+        return CheckResult("identified_target", False, 0.0,
+                           "no vis_* lock (track/goto never targeted a contact)")
+    got = lock.get("truth_id")
+    err = lock.get("assoc_err_m")
+    cap = float(p.get("max_assoc_m", 25.0))
+    ok = got == want and (err is None or err <= cap)
+    detail = (f"locked {lock.get('contact_id')} -> {got} (want {want}) "
+              f"at sim_t={lock.get('sim_stamp'):.1f}s, assoc err {err}m, "
+              f"measured_xy={lock.get('measured_xy')}")
+    if got == want and not ok:
+        detail += f" — over the {cap:g}m association cap"
+    return CheckResult("identified_target", ok, float(err or 0.0), detail)
+
+
 CHECKS = {
     "reached": _reached,
     "coverage": _coverage,
     "alive": _alive,
     "within_step_budget": _within_step_budget,
+    "landed": _landed,
     "visited_all": _visited_all,
     "ordering": _ordering,
     "altitude": _altitude,
@@ -248,6 +521,15 @@ CHECKS = {
     "alt_ceiling": _alt_ceiling,
     "final_pos": _final_pos,
     "min_visited": _min_visited,
+    "targets_covered": _targets_covered,
+    "fleet_separation": _fleet_separation,
+    "simultaneous": _simultaneous,
+    "within_window": _within_window,
+    "intercept": _intercept,
+    "dwell_moving": _dwell_moving,
+    "avoid_moving": _avoid_moving,
+    "escort": _escort,
+    "identified_target": _identified_target,
 }
 
 

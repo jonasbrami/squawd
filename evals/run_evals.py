@@ -1,4 +1,5 @@
-"""Agent task-eval orchestrator (single-drone layer).
+"""Agent task-eval orchestrator (single_drone layer only — operator/commander
+layers were dropped in the single-drone rebuild, design §3.9).
 
 For each (task x model-assignment x repeat) cell: soft-reset the world, run the drone
 agent on the task under its budget, grade the sampled WorldTrack, append a row to
@@ -28,7 +29,7 @@ import time
 
 from evals.matrix import expand, done_keys, shuffled
 from evals.report import aggregate, render_markdown
-from evals.runner import Deps, DroneHarness, run_cell
+from evals.runner import Deps, FleetHarness, run_cell
 from evals.spec import load_task
 
 
@@ -44,6 +45,16 @@ def parse_assignments(spec_str: str) -> list[dict]:
             d[role.strip()] = tier.strip()
         out.append(d)
     return out
+
+
+def apply_layer_override(assignments: list[dict], layer: str) -> list[dict]:
+    """--layer spec (default) honors each task's own target_layer, so assignments
+    pass through untouched. Any other value rides along in assignment["_layer"] —
+    expand()/assignment_label() carry it verbatim, so cells/rows/resume keys pick
+    it up automatically; run_cell reads it as an override of spec.target_layer."""
+    if layer == "spec":
+        return assignments
+    return [{**a, "_layer": layer} for a in assignments]
 
 
 class InfraFuse:
@@ -92,9 +103,18 @@ async def main(args) -> None:
         for t in missing:
             print(f"pilot: SKIP {t} (no pilot script declared)", flush=True)
         specs = {t: s for t, s in specs.items() if s.pilot}
+        if not specs:
+            raise SystemExit("pilot: every requested task lacks a pilot script — nothing to run")
         assignments = [{"drones": "pilot"}]
+        # Dual-baseline gate for dynamic tasks: run each null_pilot (the naive
+        # strategy the task exists to defeat) as its own lane. The gate reading:
+        # pilot rows must PASS, pilot_null rows must FAIL.
+        with_null = [t for t, s in specs.items() if s.null_pilot]
+        if with_null:
+            print(f"pilot: null-baseline lane for {with_null}", flush=True)
     else:
         assignments = parse_assignments(args.assignments)
+    assignments = apply_layer_override(assignments, args.layer)
 
     out_dir = args.out or os.path.join(
         os.path.dirname(__file__), "out", time.strftime("%Y%m%d-%H%M%S"))
@@ -103,15 +123,73 @@ async def main(args) -> None:
     tjsonl = os.path.join(out_dir, "transcripts.jsonl")
 
     done = done_keys(_load_rows(jsonl))
-    cells = shuffled(expand(list(specs), assignments, args.k), seed=args.seed)
+    cells = expand(list(specs), assignments, args.k)
+    if args.pilot:
+        null_assignments = apply_layer_override([{"drones": "pilot_null"}], args.layer)
+        cells += expand([t for t, s in specs.items() if s.null_pilot],
+                        null_assignments, args.k)
+    cells = shuffled(cells, seed=args.seed)
 
     bridge = RosBridge(node_name="evals_runner")
     world = World()
     n_max = max(s.setup.n_drones for s in specs.values())
     cameras = GzCameras(n_max)
+    gzposes = None
+    if world.movers:
+        from agents.core.gzposes import GzPoses
+        gz_world = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
+        gzposes = GzPoses(gz_world, [m["name"] for m in world.movers])
     bridge.start()
-    deps = Deps(world=world, bridge=bridge, cameras=cameras)
-    harness = DroneHarness(deps)  # shared flight link, fresh Claude client per cell
+    # Deps split (design §3.8, Codex-Mj11): gzposes is the ORACLE TRUTH — it
+    # feeds the sampler/oracle only. The flight path gets flight_contacts:
+    # --feed truth (default) explicitly chooses the truth-fed control (the
+    # classic ladder); --feed vision builds the real perception stack and hands
+    # the flight tools the VisionContacts the detector feeds — the same
+    # detect→lock→track path the production pilot runs.
+    flight_contacts = gzposes
+    detector = None
+    px4_recorder = None
+    pipeline = None
+    if args.feed == "vision":
+        from agents.core.telemetry import Px4StateRecorder
+        from agents.vision.contacts import VisionContacts
+        clock = gzposes
+        if clock is None:
+            from agents.core.gzposes import GzPoses
+            clock = GzPoses(
+                os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD")
+                or "dynamic", [])          # physics-rate clock only (pilot pattern)
+        px4_recorder = Px4StateRecorder(bridge, world, i=0,
+                                        sim_time_ref=clock.sim_time)
+        px4_recorder.start()
+        from agents.vision.backends import ColorBlobBackend, OnnxBackend
+        from agents.vision.detector import Detector
+        backend = (ColorBlobBackend() if args.backend == "blob" else
+                   OnnxBackend("/workspace/models/mover-nano-seg-v1.onnx",
+                               "/workspace/models/mover-nano-seg-v1.json"))
+        detector = Detector(cameras, backend, i=0, hz=10.0, conf=0.25)
+        detector.start()
+        flight_contacts = VisionContacts(world)
+        flight_contacts.attach_detector(detector)   # designate() lock seam
+        # THE PUMP: without VisionPipeline nothing feeds detector results into
+        # the contacts — track_vis polls an empty provider forever (found live
+        # at the M5 perceive gate: 15 hover polls, zero vis_* contacts).
+        from agents.vision.pipeline import VisionPipeline
+        pipeline = VisionPipeline(detector, contacts=flight_contacts,
+                                  bridge=bridge)
+        pipeline.start()
+        print(f"feed=vision backend={args.backend}: flight tools read "
+              "VisionContacts", flush=True)
+    deps = Deps(world=world, bridge=bridge, cameras=cameras,
+                oracle_truth=gzposes, flight_contacts=flight_contacts,
+                detector=detector, pipeline=pipeline)
+    recorder = None
+    if getattr(args, "record", None):
+        from evals.filming import FrameDump
+        gz_world_name = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
+        recorder = FrameDump(args.record, gz_world_name, deps=deps)
+        print(f"recording frames -> {args.record}", flush=True)
+    harness = FleetHarness(deps, n=n_max)  # shared flight links, fresh client per cell
     if args.pilot:
         from evals.pilot import pilot_client_builder
         harness._client_builder = pilot_client_builder(harness, deps)
@@ -127,7 +205,9 @@ async def main(args) -> None:
                     continue
                 spec = specs[cell.task_id]
                 if args.pilot:
-                    harness.pilot_script = spec.pilot  # per-cell script for the builder
+                    harness.pilot_script = (   # per-cell script for the builder
+                        spec.null_pilot if cell.assignment.get("drones") == "pilot_null"
+                        else spec.pilot)
                 res = await run_with_retry(
                     lambda c=cell, s=spec: run_cell(s, c.assignment, c.repeat, deps, harness))
                 fh.write(json.dumps(res.to_row()) + "\n")
@@ -158,11 +238,21 @@ async def main(args) -> None:
             from evals.report import aggregate_transcripts, render_tools
             with open(os.path.join(out_dir, "TOOLS.md"), "w") as f:
                 f.write(render_tools(aggregate_transcripts(trows)))
+            # Primitive statistics (§13 item 7, observational only)
+            from evals.report import primitive_stats, render_primitive_stats
+            with open(os.path.join(out_dir, "PRIMITIVES.md"), "w") as f:
+                f.write(render_primitive_stats(primitive_stats(trows, rows)))
     finally:
+        if pipeline is not None:
+            pipeline.stop()
+        if detector is not None:
+            detector.stop()
+        if recorder is not None:
+            print(recorder.stop(), flush=True)
         bridge.shutdown()
 
 
-def _cli() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Agent task-eval harness (single-drone).")
     ap.add_argument("--tasks", nargs="+", required=True, help="task YAML paths")
     ap.add_argument("--assignments", default="drones=opus",
@@ -171,10 +261,26 @@ def _cli() -> None:
     ap.add_argument("--out", default=None, help="output dir (default evals/out/<ts>)")
     ap.add_argument("--seed", type=int, default=0,
                     help="cell-order shuffle seed (logged; resume-safe)")
+    ap.add_argument("--layer", default="spec", choices=["spec"],
+                    help="kept for CLI compat; only 'spec' survives the rebuild")
     ap.add_argument("--pilot", action="store_true",
                     help="fly each task's declared ideal script with NO LLM (trap "
                          "gate): a task the pilot can't pass is a harness bug")
-    args = ap.parse_args()
+    ap.add_argument("--record", default=None,
+                    help="dump POV + cinecam JPEG frames to this dir while cells "
+                         "run (film containers only — needs a render backend)")
+    ap.add_argument("--feed", default="truth", choices=["truth", "vision"],
+                    help="flight-contact source: 'truth' = explicit ground-truth "
+                         "control (classic ladder); 'vision' = Detector -> "
+                         "VisionContacts, the production perception path "
+                         "(perceive tasks, camera-fed A/B)")
+    ap.add_argument("--backend", default="blob", choices=["blob", "onnx"],
+                    help="detector backend for --feed vision")
+    return ap
+
+
+def _cli() -> None:
+    args = _build_arg_parser().parse_args()
     asyncio.run(main(args))
 
 

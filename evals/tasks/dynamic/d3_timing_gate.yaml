@@ -1,0 +1,38 @@
+# L3 timing gate: an impassable fence along E110 with one 40 m gap (N-10..N30)
+# that a patrol drone sweeps at 4 m/s (20 s period). Reaching the depot needs:
+# read the patrol's phase from scans, wait at a staging point, dash when it
+# recedes. The fence keep-out strips close the spatial bypass; the phase anchor
+# makes the charge-straight-in baseline hit the patrol deterministically.
+id: d3_timing_gate
+target_layer: single_drone
+suite: dynamic
+difficulty: {plan_depth: 3, coordination: 1, ambiguity: 2, spatial: 3, dynamic: 3}
+setup:
+  world: dynamic
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {id: depot, east: 170, north: -5}
+prompt: "Reach the depot at E170 N-5 and hold there. A security fence runs
+  along E110 — impassable except for the gap between N-10 and N30; never cross
+  the fence line outside the gap. A patrol drone (contact mov_2) sweeps the
+  gap; stay at least 15 m away from it at all times. Watch its pattern with
+  scan, stage near the gap, and time your crossing for when it is moving away."
+budget: {wall_clock_s: 300, max_steps: 18}
+oracle:
+  - {check: alive}
+  - {check: reached, target: depot, tol_m: 12}
+  - {check: avoid_area, area: fence_e110_south}
+  - {check: avoid_area, area: fence_e110_north}
+  - {check: avoid_moving, mover: mov_2, margin_m: 15}
+  - {check: within_step_budget, max_steps: 18}
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: goto, args: {east: 80, north: -5, up: 12}}
+  - {behavior: await_gap, args: {mover: mov_2, coord: n, min_value: 15, poll_s: 2, timeout_s: 45}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {tool: goto, args: {east: 170, north: -5, up: 12}}
+null_pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {tool: goto, args: {east: 170, north: -5, up: 12}}

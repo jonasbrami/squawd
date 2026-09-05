@@ -1,4 +1,4 @@
-from claude_agent_sdk import AssistantMessage, ToolUseBlock
+from agents.flight.backend import ToolCall, ToolResult
 
 from evals.runner import Trace, model_for, CellResult
 
@@ -12,16 +12,27 @@ def test_model_for_maps_tier():
 
 def test_trace_counts_tooluse_and_stamps_first():
     def blk(i):
-        return ToolUseBlock(id=f"t{i}", name="mcp__d0__goto", input={})
-
-    def msg(*blocks):
-        return AssistantMessage(content=list(blocks), model="m")
+        return ToolCall(id=f"t{i}", name="mcp__d0__goto", input={}, model="m")
 
     tr = Trace()
-    tr.observe(msg(blk(1)), now=5.0)
-    tr.observe(msg(blk(2), blk(3)), now=6.0)
+    tr.observe(blk(1), now=5.0)
+    tr.observe(blk(2), now=6.0)
+    tr.observe(blk(3), now=6.0)
     assert tr.steps == 3
     assert tr.first_action_t == 5.0
+
+
+def test_completed_land_requires_final_successful_result():
+    from evals.runner import _completed_land
+
+    tr = Trace()
+    tr.observe(ToolCall(id="l", name="mcp__pilot__land", input={}, model="m"), 1)
+    assert not _completed_land(tr)
+    tr.observe(ToolResult(tool_use_id="l", content="landed", is_error=False), 2)
+    assert _completed_land(tr)
+    tr.observe(ToolCall(id="s", name="mcp__pilot__scan", input={}, model="m"), 3)
+    tr.observe(ToolResult(tool_use_id="s", content="ok", is_error=False), 4)
+    assert not _completed_land(tr)
 
 
 def test_cellresult_row_roundtrip():
@@ -123,7 +134,7 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
 
     agents_made = []
 
-    def agent_factory():
+    def agent_factory(i):
         a = FakeAgent()
         agents_made.append(a)
         return a
@@ -152,3 +163,61 @@ def test_droneharness_caches_system_once_and_yields_fresh_clients():
     assert len(agents_made) == 1               # only one DroneAgent ever built
     assert len(clients) == 2                   # one client per client_for call
     assert s is agents_made[0]._system
+
+
+def test_fleet_harness_connects_n_agents_once():
+    import asyncio
+    from evals.runner import Deps, FleetHarness
+
+    made = []
+
+    class FakeAgent:
+        def __init__(self, i):
+            self.i = i
+            self._system = f"sys{i}"
+            self.connects = 0
+
+        async def connect(self):
+            self.connects += 1
+
+    def factory(i):
+        a = FakeAgent(i)
+        made.append(a)
+        return a
+
+    h = FleetHarness(Deps(world=None, bridge=None, cameras=None), n=2,
+                     agent_factory=factory)
+
+    async def run():
+        s1 = await h.systems_list()
+        s2 = await h.systems_list()
+        return s1, s2
+
+    s1, s2 = asyncio.run(run())
+    assert s1 == ["sys0", "sys1"] and s2 is not s1 and s2 == s1
+    assert [a.connects for a in made] == [1, 1]          # built + connected once
+    assert asyncio.run(h.system()) == "sys0"             # back-compat accessor
+
+
+def test_layer_gate_rejects_dropped_layers_and_multidrone():
+    """operator/commander layers were dropped in the rebuild: the gate must
+    reject them (and any multi-drone spec) loudly — never silently pass."""
+    import pytest
+    from evals.runner import require_layer_supported
+
+    class Setup:
+        n_drones = 2
+
+    class Spec:
+        id = "w1"
+        setup = Setup()
+        target_layer = "single_drone"
+
+    with pytest.raises(ValueError, match="n_drones==1"):
+        require_layer_supported(Spec())
+    with pytest.raises(ValueError, match="dropped"):
+        require_layer_supported(Spec(), layer="operator")
+    with pytest.raises(ValueError, match="dropped"):
+        require_layer_supported(Spec(), layer="commander")
+    with pytest.raises(ValueError, match="dropped"):
+        require_layer_supported(Spec(), layer="bogus")

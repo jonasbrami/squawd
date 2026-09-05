@@ -7,7 +7,7 @@ import pytest
 
 import agents.flight.ops as ops_mod
 from agents.flight.ops import FlightOps
-from agents.flight import make_drone_options
+from agents.flight import make_pilot_options
 
 
 class FakeAction:
@@ -102,7 +102,8 @@ def test_fly_waits_for_relative_arrival():
 
 
 def test_goto_tool_schema_and_prompt_state_blocking_semantics():
-    opts = make_drone_options(0, None, None, None, 1, None, lambda m: None)
+    opts = make_pilot_options(FlightOps(None, None, None, 0, 1),
+                              report=lambda m: None)
     assert "ARRIVE" in opts.system_prompt          # prompt states goto returns on arrival
     assert "wait=false" in opts.system_prompt.lower()
 

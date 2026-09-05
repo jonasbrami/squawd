@@ -1,0 +1,9 @@
+{
+  "sha256": "3724f345fc4d3c75542d4423b5842e970a4503c62b050187ede9e4c81a1d6b45",
+  "source": "yolo11n-seg fine-tune on dataset_v1 (geometric auto-labels, 29/50 epochs, freeze=10, seed=7; exported imgsz=416 for the <=25 ms CPU budget)",
+  "trained_at": "2026-07-21T07:48:34.357732+00:00",
+  "output": {
+    "layout": "seg-v1",
+    "nms": "external"
+  }
+}

@@ -1,13 +1,18 @@
-"""H.264 video for the observatory tiles.
+"""H.264 video for the single-drone cockpit (M4, ICD §8.3).
 
-Replaces per-frame JPEG with a real codec. One libx264 encoder per drone
-(baseline / zero-latency / Annex-B, with SPS+PPS carried in every keyframe so the
-browser's WebCodecs ``VideoDecoder`` is self-sufficient), driven by a single
-background pump that encodes each new frame exactly once and fans the NAL units
-out to every connected WebSocket. The browser decodes per tile onto a ``<canvas>``.
+Replaces per-frame JPEG with a real codec. One libx264 encoder (baseline /
+zero-latency / Annex-B, with SPS+PPS carried in every keyframe so the browser's
+WebCodecs ``VideoDecoder`` is self-sufficient), driven by a single background
+pump that encodes each new frame exactly once and fans the NAL units out to
+every connected WebSocket. The browser decodes onto the POV ``<canvas>``.
 
-Only the observatory streaming path lives here; the VLM still gets JPEG straight
-from ``core.camera`` (``jpeg_b64``), untouched.
+``VideoHub`` consumes ``cameras.snapshot()`` exclusively (NOT ``seq()`` +
+``raw()`` — v1's split read could tear across generations), and every emitted
+access unit carries its frame's ``seq`` + ``sim_stamp`` so the overlay can
+match detections to the exact frame (design §3.7).
+
+Only the observatory streaming path lives here; accuracy tooling still gets
+JPEG straight from ``core.camera`` (``jpeg``), untouched.
 """
 import asyncio
 import os
@@ -111,33 +116,34 @@ class H264Encoder:
 
 
 class VideoHub:
-    """Background encode pump + pub/sub fan-out over a camera feed.
+    """Background encode pump + pub/sub fan-out over the drone's camera feed.
 
-    ``pump`` encodes each drone's newest frame once (regardless of how many
-    clients are watching) and pushes ``(id, is_key, codec, data)`` to every
-    subscriber queue. A new subscriber asks the pump to force an IDR on every
-    drone, so its tiles light up within a frame rather than waiting up to a GOP.
+    ``pump`` encodes the newest frame once (regardless of how many clients are
+    watching) and pushes ``(seq, sim_stamp, is_key, codec, data)`` to every
+    subscriber queue — one tuple per access unit, stamped with the frame it was
+    encoded from (ICD §8.2/§8.3). A new subscriber asks the pump to force an
+    IDR, so its video lights up within a frame rather than waiting up to a GOP.
     Encoding is skipped entirely while nobody is connected.
 
-    ``cameras`` is duck-typed: it needs ``seq(i) -> int`` and
-    ``raw(i) -> (w, h, rgb_bytes) | None``.
+    ``cameras`` is duck-typed: it needs ``snapshot(i) -> Frame | None`` with
+    ``seq``/``sim_stamp``/``width``/``height``/``rgb`` (core.GzCameras).
     """
 
-    def __init__(self, cameras, n: int, *, maxpx: int = MAXPX,
+    def __init__(self, cameras, i: int = 0, *, maxpx: int = MAXPX,
                  bitrate: int = BITRATE, fps: int = FPS, interval: float = 0.05) -> None:
         self._cameras = cameras
-        self._n = n
+        self._i = i
         self._interval = interval
-        self._encoders = {i: H264Encoder(maxpx, bitrate, fps) for i in range(n)}
-        self._last: dict[int, int] = {}        # i -> last seq encoded
+        self._encoder = H264Encoder(maxpx, bitrate, fps)
+        self._last = 0                         # last seq encoded
         self._subs: set[asyncio.Queue] = set()
-        self._force: set[int] = set()          # drones owed a forced IDR
+        self._force = False                    # a newcomer is owed an IDR
         self._pump_task: asyncio.Task | None = None
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=240)
         self._subs.add(q)
-        self._force.update(range(self._n))     # prime keyframes for the newcomer
+        self._force = True                     # prime a keyframe for the newcomer
         # Self-start the pump on the first viewer (no startup hook needed, and no
         # encode cost until someone is watching).
         if self._pump_task is None or self._pump_task.done():
@@ -152,31 +158,30 @@ class VideoHub:
             if not self._subs:                 # nobody watching => no encode cost
                 await asyncio.sleep(self._interval)
                 continue
-            for i in range(self._n):
-                seq = self._cameras.seq(i)
-                if not seq:
-                    continue
-                force = i in self._force
-                if self._last.get(i) == seq and not force:
-                    continue
-                raw = self._cameras.raw(i)
-                if raw is None:
-                    continue
-                w, h, data = raw
-                try:
-                    packets = await asyncio.to_thread(
-                        self._encoders[i].encode, w, h, data, force)
-                except Exception:
-                    continue
-                self._last[i] = seq
-                self._force.discard(i)
-                codec = self._encoders[i].codec_string
-                for is_key, b in packets:
-                    self._broadcast(i, is_key, codec, b)
+            f = self._cameras.snapshot(self._i)
+            if f is None:
+                await asyncio.sleep(self._interval)
+                continue
+            force = self._force
+            if f.seq == self._last and not force:
+                await asyncio.sleep(self._interval)
+                continue
+            try:
+                packets = await asyncio.to_thread(
+                    self._encoder.encode, f.width, f.height, f.rgb, force)
+            except Exception:
+                await asyncio.sleep(self._interval)
+                continue
+            self._last = f.seq
+            self._force = False
+            codec = self._encoder.codec_string
+            for is_key, b in packets:
+                self._broadcast(f.seq, f.sim_stamp, is_key, codec, b)
             await asyncio.sleep(self._interval)
 
-    def _broadcast(self, i: int, is_key: bool, codec: str | None, data: bytes) -> None:
-        msg = (i, is_key, codec, data)
+    def _broadcast(self, seq: int, stamp: float, is_key: bool,
+                   codec: str | None, data: bytes) -> None:
+        msg = (seq, stamp, is_key, codec, data)
         for q in list(self._subs):
             try:
                 q.put_nowait(msg)

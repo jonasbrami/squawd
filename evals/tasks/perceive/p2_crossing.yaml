@@ -1,0 +1,39 @@
+# p2_crossing — perceive ladder L2 (M5, ground-mover variant): the SAME
+# identification task, but graded through the decoys' crossing windows — the
+# red hauler's faster/tighter circle and the blue sled's plaza shuttle cross
+# the rover's bearing fan repeatedly, stressing NN association (ID-switch /
+# track fragmentation territory, Codex-Mj4). Longer contiguous dwell (45 s)
+# guarantees at least one crossing inside the graded window. Same dual gates
+# as p1: pilot (scripted perception) must PASS, blind null must FAIL.
+# Pilot geometry: alt-3 (40,-70) vantage + close-lock (max_range_m=15) —
+# see p1_identify.yaml's header for the two-sided lesson (blob starvation
+# from alt 6, shallow-angle lock rejection, LOST-on-transit at 20-25 m locks).
+id: p2_crossing
+target_layer: single_drone
+suite: perceive
+difficulty: {plan_depth: 2, coordination: 1, ambiguity: 3, spatial: 3, dynamic: 3, perceive: 2}
+setup:
+  world: perceive
+  n_drones: 1
+  spawn: home
+  seed_objects: []
+prompt: "The plaza southeast of you has several vehicles on crossing routes.
+  Your target is the ORANGE survey rover (contact class 'target') — the red
+  hauler and the blue-grey sled cross its path and are NOT your target. Close
+  in, identify the rover with scan/detect, lock it with track (mode='shadow'),
+  and stay within 15 m of it for 45 CONTINUOUS seconds without losing it to a
+  decoy."
+budget: {wall_clock_s: 300, max_steps: 25}
+oracle:
+  - {check: alive}
+  - {check: identified_target, truth: mov_true}
+  - {check: dwell_moving, mover: mov_true, tol_m: 15, hold_s: 45}
+  - {check: within_step_budget, max_steps: 25}
+pilot:
+  - {tool: take_off, args: {altitude: 3}}
+  - {tool: goto, args: {east: 40, north: -70, up: 3}}
+  - {behavior: track_vis, args: {cls: target, mode: shadow, alt: 3, duration_s: 75, within_m: 15, wait_s: 60, poll_s: 3, max_range_m: 15}}
+null_pilot:
+  - {tool: take_off, args: {altitude: 3}}
+  - {tool: goto, args: {east: 40, north: -70, up: 3}}
+  - {tool: hover, args: {seconds: 60}}

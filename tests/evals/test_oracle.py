@@ -35,6 +35,12 @@ def test_step_budget():
     assert grade(_track(True), spec, {"steps": 4, "crashed": False}).passed
 
 
+def test_landed_requires_px4_disarm_confirmation():
+    spec = [{"check": "landed"}]
+    assert grade(_track(True), spec, {**META_OK, "landed": True}).passed
+    assert not grade(_track(True), spec, {**META_OK, "landed": False}).passed
+
+
 def test_coverage_counts_overflown_cells():
     # Drone visits two cell centers of ne_quadrant; min_pct low enough to pass.
     snaps = [Snapshot(float(i), {0: DronePose(e, n, 12.0, 0.0)})

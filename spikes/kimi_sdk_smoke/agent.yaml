@@ -1,0 +1,6 @@
+version: 1
+agent:
+  name: "m0-smoke"
+  system_prompt_path: ./system.md
+  tools:
+    - "plus_tool:Plus"

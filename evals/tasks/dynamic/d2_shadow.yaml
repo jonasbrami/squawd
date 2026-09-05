@@ -1,0 +1,39 @@
+# Shadow the loop — the TRAJECTORY-AUTHORING rung. Measured goto physics (~4s
+# fixed overhead per blocking leg) puts a hard ceiling on discrete-hop
+# tracking: at rover 3.5 m/s both the naive tail-chase (locked ~20 m out) and
+# the strongest lead-leapfrog (gap spikes past 15 m at every hop — gate-
+# measured, 2.0 s max dwell) fail a 45 s contiguous dwell. The only winning
+# strategy is MATCHING the mover's motion: fit its loop from observations and
+# fly a synchronized run_mission lap. null_pilot is the strongest goto
+# strategy, not the weakest. No static point dwells: the rover crosses any
+# fixed 15 m disc on its path in ~9 s.
+id: d2_shadow
+target_layer: single_drone
+suite: dynamic
+difficulty: {plan_depth: 2, coordination: 1, ambiguity: 2, spatial: 3, dynamic: 2}
+setup:
+  world: dynamic
+  n_drones: 1
+  spawn: home
+  seed_objects: []
+prompt: "A survey rover (contact mov_1) is driving a repeating route around
+  the plaza southeast of you. Find it with scan, work out its route, and
+  shadow it: stay within 15 m of it for at least 45 CONTINUOUS seconds.
+  Chasing it point-to-point will not hold — its motion is smooth and regular,
+  so match its track instead."
+budget: {wall_clock_s: 330, max_steps: 30}
+oracle:
+  - {check: alive}
+  - {check: dwell_moving, mover: mov_1, tol_m: 15, hold_s: 45}
+  - {check: within_step_budget, max_steps: 30}
+# Pilot (2026-07-06): the track primitive replaced shadow_loop's trajectory
+# fit as the ideal toolpath — an onboard 10 Hz pursuit controller holds the
+# rover directly (smoke: mean gap 2.2m, 56s dwell in a 60s call). 75s covers
+# ~14s transit from home + the 45s dwell + margin.
+pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: track, args: {target: mov_1, mode: shadow, alt: 12, duration_s: 75, within_m: 15}}
+null_pilot:
+  - {tool: take_off, args: {altitude: 12}}
+  - {tool: set_speed, args: {speed: 12}}
+  - {behavior: lead_chaser, args: {mover: mov_1, rounds: 25, lead_s: 8, alt: 12}}

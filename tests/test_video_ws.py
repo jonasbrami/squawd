@@ -1,17 +1,18 @@
-"""Protocol test for the observatory video WebSocket.
+"""Protocol test for the cockpit video WebSocket (ICD §8.2).
 
-Mirrors server.ws_cams against a real VideoHub + fake cameras (server.py itself
-imports ROS/gz, unavailable off-sim). Asserts the wire format: a one-off text
-config {"d","codec"} precedes a drone's first binary frame, whose header is
-[drone id, flags] with bit0 = keyframe.
+Exercises the REAL ws_cam handler (server.build_app) against a real VideoHub +
+fake cameras: a one-off text announce {"seq","sim_stamp","codec"} precedes the
+first binary access unit, whose header is [seq:u32 BE, sim_stamp:f64 BE] —
+the stamps the overlay match keys on.
 """
 import json
+import struct
 
 from PIL import Image
-from starlette.applications import Starlette
-from starlette.routing import WebSocketRoute
 from starlette.testclient import TestClient
 
+from agents.core.contact import Frame
+from agents.observatory.server import build_app
 from agents.observatory.video import VideoHub
 
 
@@ -19,45 +20,44 @@ def _rgb(w, h, val):
     return Image.new("RGB", (w, h), (val, val, val)).tobytes()
 
 
+class _FakeString:
+    def __init__(self):
+        self.data = ""
+
+
+class _FakeBridge:
+    def __init__(self):
+        self.published = []
+
+    def subscribe(self, topic, msg_type, qos=None, callback=None):
+        pass
+
+    def latest(self, topic):
+        return None
+
+    def publish(self, topic, msg_type, msg, qos=None):
+        self.published.append((topic, msg.data))
+
+
 class _FakeCameras:
-    def __init__(self, n):
-        self._seq = {i: 1 for i in range(n)}   # one frame ready per drone
+    def __init__(self):
+        self._f = Frame(1, 12.5, 640, 360, _rgb(640, 360, 42))
 
-    def seq(self, i):
-        return self._seq[i]
-
-    def raw(self, i):
-        return (640, 360, _rgb(640, 360, 10 + i))
+    def snapshot(self, i):
+        return self._f
 
 
-def _make_app(hub):
-    async def ws_cams(websocket):
-        await websocket.accept()
-        q = hub.subscribe()
-        announced = set()
-        try:
-            while True:
-                i, is_key, codec, data = await q.get()
-                if codec and i not in announced:
-                    await websocket.send_text(json.dumps({"d": i, "codec": codec}))
-                    announced.add(i)
-                await websocket.send_bytes(bytes([i, 1 if is_key else 0]) + data)
-        except Exception:
-            pass
-        finally:
-            hub.unsubscribe(q)
-
-    return Starlette(routes=[WebSocketRoute("/ws", ws_cams)])   # hub self-starts on subscribe
-
-
-def test_ws_sends_codec_config_then_keyframe():
-    hub = VideoHub(_FakeCameras(1), 1, maxpx=320, interval=0.01)
-    with TestClient(_make_app(hub)) as client:
-        with client.websocket_connect("/ws") as ws:
-            cfg = json.loads(ws.receive_text())           # text config first
-            assert cfg["d"] == 0
+def test_ws_cam_announces_then_sends_stamped_access_units():
+    cams = _FakeCameras()
+    hub = VideoHub(cams, 0, maxpx=320, interval=0.01)
+    app = build_app(_FakeBridge(), cams, hub,
+                    msg_type=_FakeString, cmd_qos=object(), chat_qos=object())
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws_cam") as ws:
+            cfg = json.loads(ws.receive_text())           # announce first
+            assert cfg["seq"] == 1 and cfg["sim_stamp"] == 12.5
             assert cfg["codec"].startswith("avc1.42")
-            data = ws.receive_bytes()                      # then a binary frame
-            assert data[0] == 0                            # drone id
-            assert data[1] & 1 == 1                        # keyframe flag set
-            assert len(data) > 2                           # carries NAL bytes
+            data = ws.receive_bytes()                     # then a binary AU
+            seq, stamp = struct.unpack(">Id", data[:12])
+            assert (seq, stamp) == (1, 12.5)              # the frame's stamps
+            assert len(data) > 12                         # carries NAL bytes

@@ -1,0 +1,26 @@
+# Provider-neutral, quota-gated smoke. Run the scripted pilot first; only then
+# spend one Codex and one Kimi cell on the identical prompt and simulator.
+id: backend_switch
+target_layer: single_drone
+suite: smoke
+difficulty: {plan_depth: 1, coordination: 1, ambiguity: 1, spatial: 1}
+setup:
+  world: default
+  n_drones: 1
+  spawn: home
+  seed_objects:
+    - {kind: marker, id: home, east: 0, north: 0}
+prompt: "Use exactly four tools in this order: take_off to 3 m, scan once,
+  report a short literal summary of the scan result, then land. Do not move
+  horizontally, retry a tool, or call any other tool."
+budget: {wall_clock_s: 120, max_steps: 4}
+oracle:
+  - {check: alive}
+  - {check: final_pos, target: home, tol_m: 5}
+  - {check: landed}
+  - {check: within_step_budget, max_steps: 4}
+pilot:
+  - {tool: take_off, args: {altitude: 3}}
+  - {tool: scan}
+  - {tool: report, args: {message: "scripted scan complete"}}
+  - {tool: land}

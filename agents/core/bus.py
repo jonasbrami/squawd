@@ -30,6 +30,24 @@ CHAT_QOS = QoSProfile(
     depth=100,
 )
 
+# Commands: reliable but VOLATILE — a restarted pilot must never replay a stale
+# "take off" (design Codex-B4).
+CMD_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.VOLATILE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=10,
+)
+
+# State streams (detections): latched LATEST only — a late joiner gets the
+# newest snapshot, not a burst of stale ones.
+STATE_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+)
+
 
 class RosBridge:
     def __init__(self, node_name: str = "swarm_bridge") -> None:

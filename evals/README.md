@@ -1,19 +1,26 @@
 # evals/ — agent task-eval harness
 
-Measures how hard a task the drone agent can accomplish and how Claude model tier
-trades latency vs correctness. Distinct from `bench/` (sim/infra throughput).
+Measures how hard a task the drone agent can accomplish and how the selected
+LLM backend/model trades latency vs correctness. Distinct from `bench/`
+(sim/infra throughput).
 
 - **Grading:** sim-state oracle only (`oracle.py`) — every check is a pure function
   over a sampled `WorldTrack`. No LLM-judge.
 - **Tasks:** declarative YAML in `tasks/`, tagged on 4 difficulty axes (plan depth,
   coordination, ambiguity, spatial). Targets are spec-declared coordinates.
-- **Models:** `{opus, sonnet, haiku}` via per-role assignments (`drones=opus`).
+- **Models:** `{opus, sonnet, haiku, kimi, kimi3, codex}` via per-role assignments
+  (`drones=opus`).
   Tier→id: `opus`=claude-opus-4-8, `sonnet`=claude-sonnet-5, `haiku`=claude-haiku-4-5.
+  Kimi tiers use the backend recipe: `kimi`=kimi-for-coding and `kimi3`=k3
+  (design §5.2); `codex`=`gpt-5.6-terra` through the logged-in Codex
+  subscription. The bounded S6 smoke has run; the three-rung M6 ladder and the
+  cross-provider flight smoke remain separate outstanding work. Check
+  `docs/PROJECT-STATE.md` before spending quota.
 - **Repeats:** K per cell → success-rate + latency distribution.
 - **Reset:** RTL soft-reset between cells; health check escalates to a fresh sim.
 - **Flight link:** one MAVSDK `System` + telemetry sub is built once and reused across
-  all cells (`runner.DroneHarness`); each cell gets a *fresh* Claude client so repeats
-  don't share conversation context.
+  all cells (`runner.DroneHarness`); each cell gets a *fresh* backend client so
+  repeats don't share conversation context.
 - **Blocking tools (2026-07-02):** `goto`/`fly` return on ARRIVAL (`wait=false` opts
   out) and `hover(seconds=N)` blocks — fire-and-forget setpoint overrides zeroed
   plan_depth for every tier and inverted c1 (a tooling trap, not a capability gap).
@@ -40,7 +47,7 @@ then trips immediately and the drone never climbs, so navigation tasks fail spur
 Confirmed 2026-07-01: `reach_marker_single` PASSES on `default` (drone reached 0.5 m from
 the marker), FAILS on baylands for that reason.
 
-## Run (verified 2026-07-01, single-drone smoke)
+## Historical Claude run recipe (verified 2026-07-01)
 
 ```bash
 # 1) bring up a single-drone FLAT-world sim in the swarm container (host):
@@ -63,8 +70,16 @@ docker exec evals-sim bash -lc 'source /opt/ros/jazzy/setup.bash; source /opt/px
     --assignments "drones=opus;drones=haiku" --k 5'
 ```
 
-cpu render backend is fine for navigation tasks (no camera needed); use an Intel-GPU
-container (see `scripts/run_swarm_demo.sh`) only for tasks that need `look`/`scan`.
+CPU rendering is suitable only for tasks that do not require the camera. For
+camera/perception tasks, follow the current container setup in
+`docs/RUN-DEMO.md`; do not use the unsupported `run_swarm_demo.sh` agent path.
+
+The provider-switch gate uses the camera-independent flat-world task
+`tasks/smoke/backend_switch.yaml`. Run `--pilot --k 1` first, then one
+`--assignments drones=codex` and one `drones=kimi` cell in fresh containers.
+The task requires exactly `take_off → scan → report → land` and confirms PX4
+disarm. Dated 2026-08-08 evidence, including the currently quota-blocked Kimi
+cell, is in `docs/benchmarks/backend-switch-smoke-2026-08-08.md`.
 
 Outputs `evals/out/<timestamp>/results.jsonl` + `RESULTS.md`. Re-running the same
 command resumes (cells already in `results.jsonl` are skipped).
@@ -88,6 +103,36 @@ built and unit-tested, ready for obstacle tasks once a usable flat-with-building
 exists (fix `city`'s EKF/world-origin config, or add buildings to the `default`/`lawn`
 world). Until then, run only the flat-world ladders (plan-depth / spatial / ambiguity /
 `c1`).
+
+## Perception grading (M5)
+
+- **Deps split (design §3.8):** `Deps.oracle_truth` (GzPoses) feeds the sampler +
+  oracle ONLY. Flight tools read `Deps.flight_contacts` — `VisionContacts` under
+  `--feed vision` (Detector → VisionContacts, the production detect→lock→track
+  path), or GzPoses under `--feed truth` (the explicit truth-fed control).
+  `FleetHarness` never crosses those wires. Per cell, `VisionContacts.reset()`
+  runs at soft_reset — no filter/ID leak across anchored repeats.
+- **Perceive ladder (`tasks/perceive/*`):** the `perceive` world hosts ONE orange
+  rover (`mov_true`) plus visually DISTINCT ground decoys (red tall hauler,
+  blue-grey sled — the blob can't separate same-orange decoys). The
+  `identified_target` oracle check grades the perception act: the first
+  `track`/`goto` aimed at a `vis_*` id logs a `TargetLockEvent`, the harness
+  associates that contact to oracle truth AT that sim moment, and the check
+  compares the truth id (`truth: mov_true`). Report text is never graded.
+  Dual gates as usual: `pilot` (scripted `track_vis` behavior — same contact
+  path as the LLM) must PASS, `pilot_null` (blind) must FAIL.
+- **Offline accuracy (`perceive_eval.accuracy_report`):** recorded frames
+  timestamp-joined to truth by sim_stamp (50 ms tolerance): per-class
+  precision/recall (IoU≥0.5), center error p50/p95 by truth range, ID-switch
+  rate + track fragmentation.
+- **Strategy A/B (§13 item 6):** `--assignments "drones=sonnet;drones=sonnet,strategy=intercept-lead"`
+  appends a validated snippet (`agents/pilot/strategies/*.md`) to the system
+  prompt for the named lane only; `evals/strategy_ab.lift_decision` activates a
+  snippet ONLY on measured lift (snippet Wilson CI-low > base point rate, both
+  lanes ≥3 scored cells).
+- **Primitive statistics (§13 item 7):** `PRIMITIVES.md` per sweep —
+  per-primitive call count, latency p50, stable error-code counts, grouped by
+  model/detector/difficulty. Observational only.
 
 ## Scope
 

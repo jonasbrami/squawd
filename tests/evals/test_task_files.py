@@ -28,3 +28,128 @@ def test_obstacle_tasks_load_and_use_obstacles_world():
         # 2D clearance grading means overflight = collision: every obstacle task
         # must pin the drone below building height.
         assert any(c["check"] == "alt_ceiling" for c in t.oracle), f"{p} needs alt_ceiling"
+
+
+def test_dynamic_tasks_load_with_dual_baselines():
+    import glob
+    from evals.spec import load_task
+
+    paths = sorted(glob.glob("evals/tasks/dynamic/*.yaml"))
+    assert len(paths) == 5   # d1-d5 (dynamic ladder L1-L5, 2026-07-03)
+    for p in paths:
+        t = load_task(p)
+        assert t.setup.world == "dynamic", f"{p} must use the dynamic world"
+        assert t.suite == "dynamic"
+        assert t.pilot, f"{p} needs a must-PASS pilot"
+        checks = {c["check"] for c in t.oracle}
+        assert checks & {"intercept", "dwell_moving", "avoid_moving", "escort"}, \
+            f"{p} must grade against a mover"
+    # every rung above the entry rung carries the must-FAIL naive baseline
+    for p in paths[1:]:
+        assert load_task(p).null_pilot, f"{p} needs a null_pilot"
+
+
+def test_swarm_tasks_load_operator_layer_and_verified_geometry():
+    import glob
+    import math
+    from evals.spec import load_task
+
+    paths = sorted(glob.glob("evals/tasks/swarm/*.yaml"))
+    assert len(paths) == 8   # w1-w5 + w7 n2/n4/n8 (2026-07-05)
+    for p in paths:
+        t = load_task(p)
+        assert t.target_layer == "operator" and t.suite == "swarm"
+        assert t.setup.n_drones in (2, 4, 8)
+        assert t.pilot, f"{p} needs a pilot"
+
+    # w4 uses dynamic world; all others use default
+    assert load_task("evals/tasks/swarm/w4_double_intercept.yaml").setup.world == "dynamic"
+    for name in ["w1_split_reach", "w2_allocation", "w3_crossing", "w5_sync_mark",
+                 "w7_survey_n2", "w7_survey_n4", "w7_survey_n8"]:
+        assert load_task(f"evals/tasks/swarm/{name}.yaml").setup.world == "default"
+
+    # w2 allocation numbers: budget must separate optimal from interleaved+solo
+    A, B, C, D = (120, 20), (140, -30), (-100, 60), (-90, -70)
+    s0, s1 = (0, 0), (0, 3)
+    d = math.dist
+    optimal = d(s0, A) + d(A, B) + d(s1, C) + d(C, D)
+    interleaved = d(s0, A) + d(A, C) + d(s1, B) + d(B, D)
+    solo = d(s0, C) + d(C, D) + d(D, B) + d(B, A)
+    assert optimal < 460 < 500 < min(interleaved, solo), \
+        (optimal, interleaved, solo)
+
+
+def test_w7_scaling_family_loads_and_scales():
+    from evals.spec import load_task
+
+    for n in (2, 4, 8):
+        t = load_task(f"evals/tasks/swarm/w7_survey_n{n}.yaml")
+        assert t.setup.n_drones == n and t.target_layer == "operator"
+        zones = [c["area"] for c in t.oracle if c["check"] == "coverage"]
+        assert zones == [f"zone_{k * (8 // n)}" for k in range(n)]
+        assert t.pilot and (n == 2 or t.null_pilot)
+
+
+def test_step_budget_check_matches_budget_everywhere():
+    """within_step_budget's max_steps must equal budget.max_steps in EVERY task —
+    a drifted pair grades against a budget the prompt never promised."""
+    import glob
+    from evals.spec import load_task
+
+    for p in sorted(glob.glob("evals/tasks/**/*.yaml", recursive=True)):
+        t = load_task(p)
+        for chk in t.oracle:
+            if chk["check"] == "within_step_budget":
+                assert int(chk["max_steps"]) == t.budget.max_steps, p
+
+
+def test_perceive_tasks_load_with_dual_gates_and_identity_check():
+    """Perceive ladder (M5): true target + visually distinct decoys in the
+    perceive world; every rung grades the IDENTIFICATION act (TargetLockEvent
+    path) plus a mover shadow, and carries both pilot baselines. The glob is
+    the p*-RUNGS: s6_kimi_spike is an M6 backend smoke (no baselines by
+    design) with its own loader test below — the dual gate applies to every
+    ladder rung, current and future."""
+    import glob
+    from evals.spec import load_task
+
+    paths = sorted(glob.glob("evals/tasks/perceive/p*.yaml"))
+    assert len(paths) == 2   # p1_identify + p2_crossing (2026-07-22)
+    for p in paths:
+        t = load_task(p)
+        assert t.setup.world == "perceive", f"{p} must use the perceive world"
+        assert t.setup.n_drones == 1 and t.suite == "perceive"
+        assert t.pilot, f"{p} needs a must-PASS pilot"
+        assert t.null_pilot, f"{p} needs a must-FAIL null_pilot"
+        id_checks = [c for c in t.oracle if c["check"] == "identified_target"]
+        assert id_checks and id_checks[0].get("truth") == "mov_true", p
+        assert any(c["check"] == "dwell_moving" and c.get("mover") == "mov_true"
+                   for c in t.oracle), p
+
+
+def test_s6_kimi_spike_loads_as_a_four_step_perceive_smoke():
+    """M6 S6 (design §5.6): the first live Kimi cell — exactly take_off ->
+    scan -> detect -> report on the perceive world, graded alive + the step
+    budget. A backend smoke, NOT a ladder rung (no pilot baselines)."""
+    from evals.spec import load_task
+
+    t = load_task("evals/tasks/perceive/s6_kimi_spike.yaml")
+    assert t.id == "s6_kimi_spike"
+    assert t.setup.world == "perceive" and t.setup.n_drones == 1
+    assert t.target_layer == "single_drone" and t.suite == "perceive"
+    assert t.budget.max_steps == 4
+    assert [c["check"] for c in t.oracle] == ["alive", "within_step_budget"]
+    budget_chk = t.oracle[1]
+    assert int(budget_chk["max_steps"]) == t.budget.max_steps
+
+
+def test_backend_switch_smoke_has_identical_bounded_pilot_sequence():
+    from evals.spec import load_task
+
+    t = load_task("evals/tasks/smoke/backend_switch.yaml")
+    assert t.setup.world == "default" and t.setup.n_drones == 1
+    assert t.budget.max_steps == 4
+    assert [s["tool"] for s in t.pilot] == [
+        "take_off", "scan", "report", "land"]
+    assert [c["check"] for c in t.oracle] == [
+        "alive", "final_pos", "landed", "within_step_budget"]

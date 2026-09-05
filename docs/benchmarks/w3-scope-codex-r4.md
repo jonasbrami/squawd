@@ -1,0 +1,21 @@
+1. **Scoping verdict: marginal—not worth retaining as a hard gate.** A 90-second run may occasionally succeed, but it is not a repeatable integration SLA for COCO nano on this Fuel car. Both run-4 attempts failed near 11 seconds despite legal geometry, with routine 1–3.7-second outages ([w3-run4.md:24](/home/quenouille/drone/docs/benchmarks/w3-run4.md:24), [w3-run4.md:54](/home/quenouille/drone/docs/benchmarks/w3-run4.md:54)). Production systems normally coast, reacquire, and expose degraded vision; they do not equate one uninterrupted detector identity with successful pursuit.
+
+2. **Use the closer geometry.** The camera is fixed level at +0.242 m ([model.sdf:7](/home/quenouille/drone/sim/models/x500_depth/model.sdf:7)); the runtime camera is 640×360 ([swarm_sim.sh:249](/home/quenouille/drone/sim/launch/swarm_sim.sh:249)) with 1.204-rad HFOV ([make_demo_world.py:169](/home/quenouille/drone/sim/worlds/make_demo_world.py:169)), hence VFOV 42.27°. The existing three-degree-margin law gives `R_min(4 m)=12 m` ([projection.py:27](/home/quenouille/drone/agents/perception/projection.py:27)). Default shadow therefore becomes 14 m through the existing `R_min+2` rule ([ops.py:629](/home/quenouille/drone/agents/flight/ops.py:629)). Slant falls from roughly 21–26 m to 14.5 m: about 45–75% more linear pixels, plausibly twice the box area. Trade: only roughly 2.5 m above a car roof and less obstacle clearance; restrict this profile to the open demo loop. ToF remains non-gating.
+
+3. **Still fix stale coast yaw—it defeats the grace period.** At [ops.py:774](/home/quenouille/drone/agents/flight/ops.py:774), for `hold_altitude && geom-positioned`, calculate steering yaw from the already-predicted `tp`:
+   `yaw = deg(atan2(tp.e-me.e, tp.n-me.n))`.
+   Keep position/velocity held and do not feed this prediction into association. Leave ToF and mover branches unchanged. New test beside [test_track_ops.py:1038](/home/quenouille/drone/tests/test_track_ops.py:1038): `test_demo_coast_yaw_follows_predicted_contact_without_translating`, asserting yaw advances for lateral EKF motion while setpoint position and velocity remain fixed.
+
+4. **Replace the W3 duration gate** currently stated at [w3-run4.md:7](/home/quenouille/drone/docs/benchmarks/w3-run4.md:7) with:
+
+   - Three independent click engagements in one 90-second session; every click returns 200 and reaches active pursuit within 2 seconds.
+   - Each engagement supplies at least 20 contiguous seconds of `MEASURED|COASTING`; aggregate active tracking ≥60/90 seconds.
+   - LOST is permitted, but a new click must re-lock the same physical car within 8 seconds of its next eligible detection.
+   - While active: altitude 3.7–4.5 m; horizontal gap 12–20 m for ≥80% of samples; never below 11 m.
+   - Demonstrate shadow, Approach 14 m, Back-off 18 m, Orbit 15 m/8°·s⁻¹, Stop/Resume, and estop, each with acknowledged dispatch and observed state transition.
+
+5. **Operator defaults:** change orbit `20→15` at [index.html:246](/home/quenouille/drone/agents/observatory/static/index.html:246), and Approach/Back-off to ±3 m clamped `[14,20]` at [index.html:850](/home/quenouille/drone/agents/observatory/static/index.html:850). Keep command validation’s broad 8–40 m bounds ([cmd.py:30](/home/quenouille/drone/agents/pilot/cmd.py:30)); FlightOps remains altitude-aware authority. Pin the rendered defaults in `tests/test_cockpit_server.py`.
+
+6. **Do not add edge-confidence relaxation yet.** The logged boxes already exceed the 0.25 detector floor, and even a centered 0.46 car failed; the rejection is NN/NIS consistency ([contacts.py:465](/home/quenouille/drone/agents/vision/contacts.py:465)), not confidence. Relaxing it risks adjacent-car swaps. The onset dip is probably the direct shadow’s immediate velocity feedforward—its nominal speed ramp is ignored by shadow ([track.py:113](/home/quenouille/drone/agents/flight/track.py:113))—but defer an onset ramp until the 4 m gate measures whether it remains relevant.
+
+**Likely layer 5:** during a coast spanning a 90° vehicle corner, constant-velocity EKF yaw predicts straight ahead; cheapest pre-emption is a two-second prediction horizon followed by a bounded yaw search, not broader association.

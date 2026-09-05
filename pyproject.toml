@@ -1,7 +1,7 @@
 [project]
 name = "squawd"
 version = "0.1.0"
-description = "LLM-piloted UAV swarm (simulation)"
+description = "Single-drone LLM-piloted UAV simulation and evaluation system"
 requires-python = ">=3.10"
 dependencies = [
     "mavsdk>=2.0.0",
@@ -9,10 +9,14 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pillow>=10.0",
     "av>=12.0",
+    "openai-codex==0.144.4",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "psutil>=5.9"]
+# Host-GPU deep sidecar (agents/vision/deep; plan §1) — ultralytics pinned per
+# codex F7 (YOLO-World set_classes/SAM one-shot API verified on 8.4.103).
+deep = ["starlette", "uvicorn", "ultralytics==8.4.103", "torch"]
 
 [build-system]
 requires = ["setuptools>=68"]

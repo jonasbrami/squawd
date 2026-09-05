@@ -61,3 +61,24 @@ def test_resolve_drone_target(tmp_path):
     w = _world(tmp_path)
     assert w.resolve_xy("drone_2", FakeBridge(x=4.0, y=1.0, z=-10.0), 3) == (1.0, 10.0)
     assert w.resolve_xy("drone_9", FakeBridge(x=0, y=0, z=-1), 3) is None
+
+
+def test_world_movers_from_sidecar(tmp_path):
+    import json
+    from agents.world import World
+
+    p = tmp_path / "dynamic_boxes.json"
+    p.write_text(json.dumps({
+        "spawn_x": 0.0, "spawn_spacing": 3.0, "spawn_z": 0.5, "buildings": [],
+        "movers": [{"name": "mov_0", "kind": "target", "z": 10.0,
+                    "traj": {"type": "circle", "center": [70, -100],
+                             "radius_m": 35, "speed_mps": 1.5}}]}))
+    w = World(str(p))
+    assert [m["name"] for m in w.movers] == ["mov_0"]
+    assert w.buildings == []
+
+
+def test_world_movers_default_empty():
+    from agents.world import World
+
+    assert World("/nonexistent.json").movers == []

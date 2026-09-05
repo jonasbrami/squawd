@@ -2,21 +2,21 @@
 
 Bundles everything a drone owns: its MAVSDK link, its command inbox
 (/swarm/cmd/drone_<i>), its report outbox (/swarm/report/drone_<i>), its onboard
-Claude client (flight tools via flight.make_drone_options), and its react loop.
-It talks to the Commander ONLY over ROS topics, so a drone can run on separate
-hardware unchanged. Commander-driven: it acts when tasked, holds the last command
-between tasks, and reports back when done.
+Claude client (flight tools via flight.make_pilot_options over its own
+FlightOps), and its react loop. It talks to the Commander ONLY over ROS topics,
+so a drone can run on separate hardware unchanged. Commander-driven: it acts
+when tasked, holds the last command between tasks, and reports back when done.
 """
 import asyncio
 
 from std_msgs.msg import String
 from mavsdk import System
 from px4_msgs.msg import VehicleLocalPosition
-from claude_agent_sdk import ClaudeSDKClient
 
 from agents.core.bus import CHAT_QOS, publish_str
 from agents.core.store import TopicLog
-from agents.flight import make_drone_options
+from agents.flight import FlightOps, make_pilot_options
+from agents.flight.backend import BackendClient
 
 
 class DroneAgent:
@@ -33,8 +33,9 @@ class DroneAgent:
         # Inbox: the Commander dispatches directed tasks here (topic tokens can't
         # start with a digit, so drone_<i>, not <i>).
         self._cmd = TopicLog(bridge, f"/swarm/cmd/drone_{i}", String, CHAT_QOS)
-        self.client = ClaudeSDKClient(options=make_drone_options(
-            i, self._system, world, bridge, n, cameras, self.report, env, model))
+        ops = FlightOps(self._system, world, bridge, i, n)
+        self.client = BackendClient(make_pilot_options(
+            ops, report=self.report, env=env, model=model))
         self._seen = 0
 
     def report(self, message: str) -> None:
@@ -66,9 +67,8 @@ class DroneAgent:
                 await asyncio.sleep(1.0)
                 new, self._seen = self._cmd.since(self._seen)
                 for task in new:
-                    await self.client.query(
-                        f"Task from commander: {task}\n\nCarry it out with your tools, "
-                        "then call report(...) with a short result (what you did and "
-                        "what you saw).")
-                    async for _ in self.client.receive_response():
+                    async for _ev in self.client.query(
+                            f"Task from commander: {task}\n\nCarry it out with "
+                            "your tools, then call report(...) with a short "
+                            "result (what you did and what you saw)."):
                         pass

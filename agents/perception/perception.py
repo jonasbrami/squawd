@@ -15,6 +15,10 @@ drone's heading is within ~half the FOV.
 import math
 
 FOV_HALF_DEG = 35.0
+# Movers beyond this range are silently absent from scan: search tasks need a
+# bounded sensor (unbounded scan makes "find the moving target" a no-op) and
+# distant task-regions' movers would otherwise be pure prompt noise.
+MOVER_SCAN_RANGE_M = 150.0
 
 
 def bearing_word(d_east: float, d_north: float) -> str:
@@ -52,7 +56,9 @@ def yaw_deg_to(east_from: float, north_from: float, east_to: float, north_to: fl
     return math.degrees(math.atan2(east_to - east_from, north_to - north_from))
 
 
-def scan_text(world, bridge, i: int, n_drones: int, k: int = 8) -> str:
+def scan_text(world, bridge, i: int, n_drones: int, k: int = 8,
+              mover_poses: dict | None = None,
+              bearing_only: list | None = None) -> str:
     """Nearest k buildings + other drones, with distance and bearing RELATIVE to
     where the drone faces, flagging what's in the camera's view.
 
@@ -81,6 +87,24 @@ def scan_text(world, bridge, i: int, n_drones: int, k: int = 8) -> str:
         parts.append(f"{b['name']} {edge:.0f}m {word}{tag} "
                      f"(centre E{b['x']:.0f} N{b['y']:.0f}, {b['w']:.0f}x{b['d']:.0f}m, "
                      f"h={b['h']:.0f}m)")
+    for name in sorted(mover_poses or {}):
+        # Live contacts: position + bearing ONLY — no velocity, no trajectory.
+        # Deriving a contact's course by differencing two scans over a known
+        # interval is a deliberate capability probe (see dynamic-scenarios spec);
+        # names stay semantically neutral so the script never leaks.
+        cx, cy, cz = mover_poses[name]
+        dx, dy = cx - mx, cy - my
+        dist = math.hypot(dx, dy)
+        if dist > MOVER_SCAN_RANGE_M:
+            continue
+        word, inview, _ = rel_bearing(dx, dy, hd)
+        tag = " [IN VIEW]" if inview else ""
+        parts.append(f"contact {name} {dist:.0f}m {word}{tag} "
+                     f"(at E{cx:.0f} N{cy:.0f}, alt {cz:.0f}m)")
+    for name in sorted(bearing_only or []):
+        # Vision contacts seen but not yet ranged: honest "alt unk" — never
+        # a fabricated position (M3a scan contract).
+        parts.append(f"contact {name} bearing only, alt unk")
     for j in range(n_drones):
         if j == i:
             continue

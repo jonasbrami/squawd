@@ -1,0 +1,61 @@
+{
+    "north": -0.1,
+    "east": 0.1,
+    "alt": 16.4,
+    "speed": 0.0,
+    "vspeed": 0.0,
+    "heading": 180,
+    "roll": -0.5,
+    "pitch": 0.0,
+    "yaw": 180.0,
+    "armed": true,
+    "mode": "HOLD",
+    "batt_pct": 66,
+    "voltage": 15.3,
+    "warn": 0,
+    "cam": true,
+    "cam_seq": 28702,
+    "cam_stamp": 2973.7,
+    "sim_stamp": 2973.6,
+    "detector": {
+        "healthy": true,
+        "latency_ms": 42.9
+    },
+    "beam": {
+        "status": "IDLE",
+        "target": null,
+        "range_m": null
+    },
+    "track": {
+        "state": "IDLE",
+        "target": null,
+        "gap_m": null
+    },
+    "contacts": [],
+    "annotations": [],
+    "pinpoint_mask": null,
+    "slowlane": {
+        "active": true,
+        "note": "default (non-nvidia)",
+        "hz": 0.3,
+        "vocab": [
+            "building",
+            "house",
+            "tree",
+            "pole",
+            "tower"
+        ],
+        "conf": 0.05,
+        "last_error": null,
+        "ticks": 124,
+        "calls": 124,
+        "ok": 124,
+        "dropped_busy": 0,
+        "dropped_unavailable": 0,
+        "dropped_error": 0,
+        "skipped_gate": 0,
+        "skipped_no_frame": 0,
+        "fp_checked": 124
+    },
+    "banner": null
+}

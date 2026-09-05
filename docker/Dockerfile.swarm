@@ -62,8 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends cppzmq-dev \
 # Source ROS + px4_msgs for every shell. profile.d covers login shells
 # (`bash -lc`, which does NOT read /etc/bash.bashrc); bash.bashrc covers
 # interactive non-login shells (`docker exec -it`).
-# --- Node + Claude Code CLI (claude-agent-sdk drives the `claude` CLI; OAuth
-# creds are bind-mounted at runtime to /root/.claude). ---
+# --- Provider runtimes. openai-codex and its pinned CLI binary are installed
+# from requirements-swarm.txt. Claude/Kimi use the external Claude Code CLI;
+# the launcher mounts only the selected provider's isolated login artifact. ---
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \

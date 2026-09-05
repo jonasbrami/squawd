@@ -19,6 +19,9 @@ class DronePose:
 class Snapshot:
     t: float
     poses: dict[int, "DronePose"]
+    # scripted-mover positions captured in the SAME tick as the drone poses,
+    # so dynamic checks are within-snapshot geometry (no time-base drift)
+    movers: dict[str, tuple[float, float, float]] = field(default_factory=dict)
 
 
 @dataclass
