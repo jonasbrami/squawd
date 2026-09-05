@@ -1,3 +1,0 @@
-deep perception online (sam2.1_t,yolov8s-worldv2)
-drone_0 connected
-pilot online: drone_0 — waiting for commands on /pilot/user_input.

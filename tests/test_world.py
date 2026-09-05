@@ -46,8 +46,8 @@ def test_baylands_default_has_no_buildings(monkeypatch):
 
 def test_resolve_building_and_unknown(tmp_path):
     w = _world(tmp_path)
-    assert w.resolve_xy("bldg_0", FakeBridge(0, 0, -10), 3) == (50.0, 20.0)
-    assert w.resolve_xy("bldg_404", FakeBridge(0, 0, -10), 3) is None
+    assert w.resolve_xy("bldg_0") == (50.0, 20.0)
+    assert w.resolve_xy("bldg_404") is None
 
 
 def test_drone_state_maps_ned_to_world_enu(tmp_path):
@@ -55,12 +55,6 @@ def test_drone_state_maps_ned_to_world_enu(tmp_path):
     # drone_1 spawns at world north = 1*spacing = 3; PX4 NED x=north, y=east, z=down
     east, north, alt, _ = w.drone_state(FakeBridge(x=5.0, y=2.0, z=-10.0), 1)
     assert (east, north, alt) == (2.0, 8.0, 10.0)
-
-
-def test_resolve_drone_target(tmp_path):
-    w = _world(tmp_path)
-    assert w.resolve_xy("drone_2", FakeBridge(x=4.0, y=1.0, z=-10.0), 3) == (1.0, 10.0)
-    assert w.resolve_xy("drone_9", FakeBridge(x=0, y=0, z=-1), 3) is None
 
 
 def test_world_movers_from_sidecar(tmp_path):

@@ -21,7 +21,7 @@ PX4_QOS = QoSProfile(
     depth=5,
 )
 
-# Swarm chat: reliable + transient_local so late joiners (e.g. the observatory)
+# Pilot chat: reliable + transient_local so late joiners (e.g. the observatory)
 # replay the conversation so far.
 CHAT_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
@@ -50,7 +50,7 @@ STATE_QOS = QoSProfile(
 
 
 class RosBridge:
-    def __init__(self, node_name: str = "swarm_bridge") -> None:
+    def __init__(self, node_name: str = "squawd_bridge") -> None:
         rclpy.init()
         self._node: Node = rclpy.create_node(node_name)
         self._store = LatestStore()
@@ -92,11 +92,7 @@ class RosBridge:
 
 
 def publish_str(bridge: RosBridge, topic: str, text: str) -> None:
-    """Publish a plain string on `topic` as std_msgs/String over CHAT_QOS.
-
-    The swarm's command/report/chat topics are all latched String channels, so
-    both agents wrap their text the same way; this keeps that one-liner in one place.
-    """
+    """Publish a plain string on `topic` as std_msgs/String over CHAT_QOS."""
     m = String()
     m.data = text
     bridge.publish(topic, String, m, CHAT_QOS)

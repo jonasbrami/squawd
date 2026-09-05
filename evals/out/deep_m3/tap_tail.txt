@@ -1,6 +1,0 @@
-2026-08-03T11:58:29.129+00:00 172.17.0.2 POST /v1/detect 921778B prompts=['building', 'house', 'tree', 'pole', 'tower'] conf=0.05 seq=3869 -> 200 16ms
-2026-08-03T11:58:32.472+00:00 172.17.0.2 POST /v1/detect 921778B prompts=['building', 'house', 'tree', 'pole', 'tower'] conf=0.05 seq=3902 -> 200 25ms
-2026-08-03T11:58:35.798+00:00 172.17.0.2 POST /v1/detect 921778B prompts=['building', 'house', 'tree', 'pole', 'tower'] conf=0.05 seq=3935 -> 200 19ms
-2026-08-03T11:58:39.136+00:00 172.17.0.2 POST /v1/detect 921778B prompts=['building', 'house', 'tree', 'pole', 'tower'] conf=0.05 seq=3968 -> 200 22ms
-2026-08-03T11:58:42.473+00:00 172.17.0.2 POST /v1/detect 921778B prompts=['building', 'house', 'tree', 'pole', 'tower'] conf=0.05 seq=4001 -> 200 25ms
-2026-08-03T11:58:45.797+00:00 172.17.0.2 POST /v1/detect 921778B prompts=['building', 'house', 'tree', 'pole', 'tower'] conf=0.05 seq=4034 -> 200 19ms

@@ -44,7 +44,7 @@ class FakeWorld:
             return self.positions.pop(0)
         return self.positions[0]
 
-    def resolve_xy(self, target, bridge, n):
+    def resolve_xy(self, target):
         return None
 
     def drone_state(self, bridge, i):
@@ -52,7 +52,7 @@ class FakeWorld:
 
 
 def _ops(positions):
-    return FlightOps(FakeDrone(), FakeWorld(positions), bridge=None, i=0, n=1)
+    return FlightOps(FakeDrone(), FakeWorld(positions), bridge=None)
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +102,7 @@ def test_fly_waits_for_relative_arrival():
 
 
 def test_goto_tool_schema_and_prompt_state_blocking_semantics():
-    opts = make_pilot_options(FlightOps(None, None, None, 0, 1),
+    opts = make_pilot_options(FlightOps(None, None, None),
                               report=lambda m: None)
     assert "ARRIVE" in opts.system_prompt          # prompt states goto returns on arrival
     assert "wait=false" in opts.system_prompt.lower()
@@ -124,7 +124,7 @@ def test_hover_seconds_blocks_then_reports(monkeypatch):
             super().__init__()
             self.action = HoldAction()
 
-    ops = FlightOps(D(), FakeWorld([(0.0, 0.0, 10.0)]), bridge=None, i=0, n=1)
+    ops = FlightOps(D(), FakeWorld([(0.0, 0.0, 10.0)]), bridge=None)
 
     slept = []
 
@@ -145,7 +145,7 @@ def test_goto_refuses_target_inside_building_below_its_top():
     class BW(FakeWorld):
         buildings = [{"name": "obs_4", "x": 110.0, "y": 0.0, "w": 15.0, "d": 15.0, "h": 18.0}]
 
-    ops = FlightOps(FakeDrone(), BW([(0.0, 0.0, 10.0)]), bridge=None, i=0, n=1)
+    ops = FlightOps(FakeDrone(), BW([(0.0, 0.0, 10.0)]), bridge=None)
     with pytest.raises(ValueError, match="obs_4"):
         asyncio.run(ops.goto(east=110, north=0, up=12))
     # above the roof (+ margin) is legal

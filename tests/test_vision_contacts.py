@@ -62,7 +62,7 @@ _seq = [0]
 
 def result(t, dets, hit=None):
     _seq[0] += 1
-    return InferenceResult(Frame(_seq[0], t, W, H, b""), list(dets), 0.0, 0, hit)
+    return InferenceResult(Frame(_seq[0], t, W, H, b""), list(dets), 0.0, hit)
 
 
 def make_vc(rangefinder=None, config=None):

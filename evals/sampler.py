@@ -9,22 +9,19 @@ import time
 from evals.worldstate import DronePose, Snapshot, WorldTrack
 
 
-def snapshot_now(world, bridge, n_drones: int, t: float, gzposes=None) -> Snapshot:
-    poses: dict[int, DronePose] = {}
-    for i in range(n_drones):
-        st = world.drone_state(bridge, i)
-        if st is not None:
-            poses[i] = DronePose(e=st[0], n=st[1], alt=st[2], heading=st[3])
+def snapshot_now(world, bridge, t: float, gzposes=None) -> Snapshot:
+    st = world.drone_state(bridge, 0)
+    poses = ({0: DronePose(e=st[0], n=st[1], alt=st[2], heading=st[3])}
+             if st is not None else {})
     movers = gzposes.poses() if gzposes is not None else {}
     return Snapshot(t=t, poses=poses, movers=movers)
 
 
 class Sampler:
-    def __init__(self, world, bridge, n_drones, objects, geofence_m, interval=0.5,
+    def __init__(self, world, bridge, objects, geofence_m, interval=0.5,
                  gzposes=None):
         self._world = world
         self._bridge = bridge
-        self._n = n_drones
         self._objects = dict(objects)
         self._geofence_m = geofence_m
         self._interval = interval
@@ -37,7 +34,7 @@ class Sampler:
         self._running = True
         t0 = time.monotonic()
         while self._running:
-            self._snaps.append(snapshot_now(self._world, self._bridge, self._n,
+            self._snaps.append(snapshot_now(self._world, self._bridge,
                                             time.monotonic() - t0, self._gzposes))
             await asyncio.sleep(self._interval)
 
@@ -46,5 +43,5 @@ class Sampler:
 
     def track(self) -> WorldTrack:
         return WorldTrack(snapshots=list(self._snaps), objects=dict(self._objects),
-                          n_drones=self._n, geofence_m=self._geofence_m,
+                          geofence_m=self._geofence_m,
                           buildings=list(self._buildings))

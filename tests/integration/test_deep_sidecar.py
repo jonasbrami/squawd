@@ -80,7 +80,7 @@ def test_hung_sidecar_estop_latency():
     client = DeepClient(base_url=f"http://127.0.0.1:{port}", token="t",
                         read_timeout_detect=30.0)
     look, pinpoint = make_deep_tools(_World(), None, None, _frame, client)
-    opts = make_pilot_options(FlightOps(None, None, None, 0, 1),
+    opts = make_pilot_options(FlightOps(None, None, None),
                               deep_tools=(look, pinpoint),
                               report=lambda m: None)
     instance = opts.mcp_servers["pilot"]["instance"]

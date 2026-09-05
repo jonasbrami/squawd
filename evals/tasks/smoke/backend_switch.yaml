@@ -1,12 +1,10 @@
 # Provider-neutral, quota-gated smoke. Run the scripted pilot first; only then
 # spend one Codex and one Kimi cell on the identical prompt and simulator.
 id: backend_switch
-target_layer: single_drone
 suite: smoke
 difficulty: {plan_depth: 1, coordination: 1, ambiguity: 1, spatial: 1}
 setup:
   world: default
-  n_drones: 1
   spawn: home
   seed_objects:
     - {kind: marker, id: home, east: 0, north: 0}

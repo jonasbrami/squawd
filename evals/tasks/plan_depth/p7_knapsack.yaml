@@ -4,12 +4,10 @@
 # order manages 2. min_visited >= 4 therefore demands near-optimal subset
 # selection AND routing — the sharpest opus/sonnet discriminator in the suite.
 id: p7_knapsack
-target_layer: single_drone
 suite: plan_depth
 difficulty: {plan_depth: 5, coordination: 1, ambiguity: 2, spatial: 4}
 setup:
   world: default
-  n_drones: 1
   spawn: home
   seed_objects:
     - {id: a, east: 5, north: 115}

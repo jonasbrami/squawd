@@ -1,14 +1,13 @@
-"""Agent task-eval orchestrator (single_drone layer only — operator/commander
-layers were dropped in the single-drone rebuild, design §3.9).
+"""Single-drone task-eval orchestrator.
 
 For each (task x model-assignment x repeat) cell: soft-reset the world, run the drone
 agent on the task under its budget, grade the sampled WorldTrack, append a row to
 results.jsonl (infra failures retried once, never scored as task fails). Then render
-RESULTS.md. Runs SEQUENTIALLY against ONE already-running sim (launch it first with
-sim/launch/swarm_sim.sh, SWARM_N=1) — parallel sims would confound the latency metric.
+RESULTS.md. Runs sequentially against one already-running sim (launch it first with
+sim/launch/swarm_sim.sh) — parallel sims would confound the latency metric.
 
 Usage:
-  # 1) bring up a single-drone sim in the swarm container (separate shell)
+  # 1) bring up a single-drone sim in the container (separate shell)
   # 2) inside that container/venv:
   python -m evals.run_evals \\
       --tasks evals/tasks/reach_marker_single.yaml \\
@@ -17,9 +16,8 @@ Usage:
 
 Note: imports of RosBridge, GzCameras, and World are deferred inside main() so that
 the module and its pure helpers (parse_assignments, run_with_retry) are importable
-without a live ROS2 environment. This matches the pattern established in runner.py
-(DroneAgent deferred inside run_cell). At actual runtime (inside the sim container)
-all imports resolve normally.
+without a live ROS2 environment. At runtime inside the sim container all imports
+resolve normally.
 """
 import argparse
 import asyncio
@@ -29,7 +27,7 @@ import time
 
 from evals.matrix import expand, done_keys, shuffled
 from evals.report import aggregate, render_markdown
-from evals.runner import Deps, FleetHarness, run_cell
+from evals.runner import Deps, DroneHarness, run_cell
 from evals.spec import load_task
 
 
@@ -45,16 +43,6 @@ def parse_assignments(spec_str: str) -> list[dict]:
             d[role.strip()] = tier.strip()
         out.append(d)
     return out
-
-
-def apply_layer_override(assignments: list[dict], layer: str) -> list[dict]:
-    """--layer spec (default) honors each task's own target_layer, so assignments
-    pass through untouched. Any other value rides along in assignment["_layer"] —
-    expand()/assignment_label() carry it verbatim, so cells/rows/resume keys pick
-    it up automatically; run_cell reads it as an override of spec.target_layer."""
-    if layer == "spec":
-        return assignments
-    return [{**a, "_layer": layer} for a in assignments]
 
 
 class InfraFuse:
@@ -114,8 +102,6 @@ async def main(args) -> None:
             print(f"pilot: null-baseline lane for {with_null}", flush=True)
     else:
         assignments = parse_assignments(args.assignments)
-    assignments = apply_layer_override(assignments, args.layer)
-
     out_dir = args.out or os.path.join(
         os.path.dirname(__file__), "out", time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(out_dir, exist_ok=True)
@@ -125,15 +111,13 @@ async def main(args) -> None:
     done = done_keys(_load_rows(jsonl))
     cells = expand(list(specs), assignments, args.k)
     if args.pilot:
-        null_assignments = apply_layer_override([{"drones": "pilot_null"}], args.layer)
         cells += expand([t for t, s in specs.items() if s.null_pilot],
-                        null_assignments, args.k)
+                        [{"drones": "pilot_null"}], args.k)
     cells = shuffled(cells, seed=args.seed)
 
     bridge = RosBridge(node_name="evals_runner")
     world = World()
-    n_max = max(s.setup.n_drones for s in specs.values())
-    cameras = GzCameras(n_max)
+    cameras = GzCameras(1)
     gzposes = None
     if world.movers:
         from agents.core.gzposes import GzPoses
@@ -189,7 +173,7 @@ async def main(args) -> None:
         gz_world_name = os.environ.get("GZ_WORLD") or os.environ.get("PX4_GZ_WORLD") or "dynamic"
         recorder = FrameDump(args.record, gz_world_name, deps=deps)
         print(f"recording frames -> {args.record}", flush=True)
-    harness = FleetHarness(deps, n=n_max)  # shared flight links, fresh client per cell
+    harness = DroneHarness(deps)
     if args.pilot:
         from evals.pilot import pilot_client_builder
         harness._client_builder = pilot_client_builder(harness, deps)
@@ -261,8 +245,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", default=None, help="output dir (default evals/out/<ts>)")
     ap.add_argument("--seed", type=int, default=0,
                     help="cell-order shuffle seed (logged; resume-safe)")
-    ap.add_argument("--layer", default="spec", choices=["spec"],
-                    help="kept for CLI compat; only 'spec' survives the rebuild")
     ap.add_argument("--pilot", action="store_true",
                     help="fly each task's declared ideal script with NO LLM (trap "
                          "gate): a task the pilot can't pass is a harness bug")

@@ -11,7 +11,7 @@ def _snap(t, drone_xy, mover_xy=None, name="mov_0"):
 
 
 def _track(snaps, objects=None):
-    return WorldTrack(snaps, objects or {}, n_drones=1, geofence_m=300.0)
+    return WorldTrack(snaps, objects or {}, geofence_m=300.0)
 
 
 class TestIntercept:

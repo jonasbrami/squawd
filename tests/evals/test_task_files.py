@@ -11,7 +11,6 @@ def test_all_flat_world_tasks_load_and_are_flat():
     for p in paths:
         t = load_task(p)
         assert t.setup.world in ("default", "lawn"), f"{p} must use a flat world"
-        assert t.setup.n_drones == 1
         assert t.suite in ("plan_depth", "spatial", "ambiguity", "capstone")
         assert t.difficulty.get(t.suite) is not None, f"{p} missing difficulty[{t.suite}]"
 
@@ -22,7 +21,6 @@ def test_obstacle_tasks_load_and_use_obstacles_world():
     for p in paths:
         t = load_task(p)
         assert t.setup.world == "obstacles", f"{p} must use the obstacles world"
-        assert t.setup.n_drones == 1
         assert t.suite == "obstacle"
         assert t.pilot, f"{p} must declare a pilot (trap gate)"
         # 2D clearance grading means overflight = collision: every obstacle task
@@ -47,47 +45,6 @@ def test_dynamic_tasks_load_with_dual_baselines():
     # every rung above the entry rung carries the must-FAIL naive baseline
     for p in paths[1:]:
         assert load_task(p).null_pilot, f"{p} needs a null_pilot"
-
-
-def test_swarm_tasks_load_operator_layer_and_verified_geometry():
-    import glob
-    import math
-    from evals.spec import load_task
-
-    paths = sorted(glob.glob("evals/tasks/swarm/*.yaml"))
-    assert len(paths) == 8   # w1-w5 + w7 n2/n4/n8 (2026-07-05)
-    for p in paths:
-        t = load_task(p)
-        assert t.target_layer == "operator" and t.suite == "swarm"
-        assert t.setup.n_drones in (2, 4, 8)
-        assert t.pilot, f"{p} needs a pilot"
-
-    # w4 uses dynamic world; all others use default
-    assert load_task("evals/tasks/swarm/w4_double_intercept.yaml").setup.world == "dynamic"
-    for name in ["w1_split_reach", "w2_allocation", "w3_crossing", "w5_sync_mark",
-                 "w7_survey_n2", "w7_survey_n4", "w7_survey_n8"]:
-        assert load_task(f"evals/tasks/swarm/{name}.yaml").setup.world == "default"
-
-    # w2 allocation numbers: budget must separate optimal from interleaved+solo
-    A, B, C, D = (120, 20), (140, -30), (-100, 60), (-90, -70)
-    s0, s1 = (0, 0), (0, 3)
-    d = math.dist
-    optimal = d(s0, A) + d(A, B) + d(s1, C) + d(C, D)
-    interleaved = d(s0, A) + d(A, C) + d(s1, B) + d(B, D)
-    solo = d(s0, C) + d(C, D) + d(D, B) + d(B, A)
-    assert optimal < 460 < 500 < min(interleaved, solo), \
-        (optimal, interleaved, solo)
-
-
-def test_w7_scaling_family_loads_and_scales():
-    from evals.spec import load_task
-
-    for n in (2, 4, 8):
-        t = load_task(f"evals/tasks/swarm/w7_survey_n{n}.yaml")
-        assert t.setup.n_drones == n and t.target_layer == "operator"
-        zones = [c["area"] for c in t.oracle if c["check"] == "coverage"]
-        assert zones == [f"zone_{k * (8 // n)}" for k in range(n)]
-        assert t.pilot and (n == 2 or t.null_pilot)
 
 
 def test_step_budget_check_matches_budget_everywhere():
@@ -118,7 +75,7 @@ def test_perceive_tasks_load_with_dual_gates_and_identity_check():
     for p in paths:
         t = load_task(p)
         assert t.setup.world == "perceive", f"{p} must use the perceive world"
-        assert t.setup.n_drones == 1 and t.suite == "perceive"
+        assert t.suite == "perceive"
         assert t.pilot, f"{p} needs a must-PASS pilot"
         assert t.null_pilot, f"{p} needs a must-FAIL null_pilot"
         id_checks = [c for c in t.oracle if c["check"] == "identified_target"]
@@ -135,8 +92,7 @@ def test_s6_kimi_spike_loads_as_a_four_step_perceive_smoke():
 
     t = load_task("evals/tasks/perceive/s6_kimi_spike.yaml")
     assert t.id == "s6_kimi_spike"
-    assert t.setup.world == "perceive" and t.setup.n_drones == 1
-    assert t.target_layer == "single_drone" and t.suite == "perceive"
+    assert t.setup.world == "perceive" and t.suite == "perceive"
     assert t.budget.max_steps == 4
     assert [c["check"] for c in t.oracle] == ["alive", "within_step_budget"]
     budget_chk = t.oracle[1]
@@ -147,7 +103,7 @@ def test_backend_switch_smoke_has_identical_bounded_pilot_sequence():
     from evals.spec import load_task
 
     t = load_task("evals/tasks/smoke/backend_switch.yaml")
-    assert t.setup.world == "default" and t.setup.n_drones == 1
+    assert t.setup.world == "default"
     assert t.budget.max_steps == 4
     assert [s["tool"] for s in t.pilot] == [
         "take_off", "scan", "report", "land"]

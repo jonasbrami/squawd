@@ -3,8 +3,7 @@
 
 - LatestStore: most recent value per key (written by the rclpy thread, read by
   the asyncio loop; whole-object reference, no torn reads).
-- TopicLog: append-only history of a std_msgs/String topic. Replaces the
-  hand-rolled list+lock+callback the swarm and observatory each used. It calls
+- TopicLog: append-only history of a std_msgs/String topic. It calls
   bridge.subscribe but imports no ROS itself, so a fake bridge is enough to test.
 """
 import threading

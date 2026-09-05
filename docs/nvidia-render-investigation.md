@@ -1,5 +1,9 @@
 # NVIDIA headless ogre2 camera render — investigation
 
+> Historical 2026-06 evidence. Commands using the removed
+> `scripts/run_swarm_demo.sh` are not current instructions; use
+> `scripts/run_single_demo.sh` via `docs/RUN-DEMO.md`.
+
 **Date:** 2026-06-26
 **Question:** Can Gazebo Harmonic camera *sensors* (ogre2 / EGL) render on the
 **NVIDIA RTX 3070 Ti Laptop GPU** inside `dronebot-swarm:dev`, headless? If so,

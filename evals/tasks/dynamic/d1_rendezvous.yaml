@@ -3,12 +3,10 @@
 # lag-immune winning strategy (fly ahead of it, hover, let it come to you) is
 # deliberately available; k << 1. Entry rung of the dynamic ladder.
 id: d1_rendezvous
-target_layer: single_drone
 suite: dynamic
 difficulty: {plan_depth: 2, coordination: 1, ambiguity: 1, spatial: 2, dynamic: 1}
 setup:
   world: dynamic
-  n_drones: 1
   spawn: home
   seed_objects: []
 prompt: "A courier drone (contact mov_0) departed E-40 N100 at mission start,

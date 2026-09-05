@@ -1,9 +1,6 @@
-"""Run ONE eval cell (task x model x repeat) against a live sim: single_drone,
-operator, or commander layer (per spec.target_layer, or a --layer override carried
-in assignment["_layer"]).
+"""Run one eval cell (task x model x repeat) against a live single-drone sim.
 
-Builds the fleet of DroneAgents with the chosen model, soft-resets the world, starts
-the sampler, injects the task prompt at the (single- or fleet-scoped) Claude client,
+Connects the drone, soft-resets the world, starts the sampler, injects the task prompt,
 and bounds the run by the spec's wall-clock + step budget. Captures latency +
 tool-call trace, then grades the sampled WorldTrack. Infra failures (no fix, RTL/
 connection errors) are flagged, not scored as task failures."""
@@ -87,7 +84,7 @@ class Trace:
         self.ttfa_s: float | None = None
         self.gap_p50_s: float | None = None
         self.wall_ms: int | None = None
-        self.meta: dict = {}   # first-class side-channel; e.g. commander's drone_steps
+        self.meta: dict = {}
 
     def observe(self, ev, now: float) -> None:
         model = getattr(ev, "model", None)
@@ -147,8 +144,6 @@ class CellResult:
     difficulty: dict = field(default_factory=dict)
     suite: str | None = None
     transcript: dict = field(default_factory=dict)
-    layer: str = ""            # effective layer this cell ran under (spec/CLI override)
-    drone_steps: int = 0       # commander layer only: total tool calls across dispatched drones
 
     def to_transcript_row(self) -> dict:
         """One transcripts.jsonl line, keyed by the same triple as to_row so a cell
@@ -170,8 +165,6 @@ class CellResult:
             "suite": self.suite,
             "checks": [{"name": c.name, "passed": c.passed, "detail": c.detail}
                        for c in self.checks],
-            "layer": self.layer,
-            "drone_steps": self.drone_steps,
         }
 
 
@@ -194,64 +187,43 @@ class Deps:
     detector: object = None
     pipeline: object = None        # VisionPipeline — detect tool feed (M6)
 
-    @property
-    def gzposes(self):
-        """Back-compat read alias (pre-M5 name) — the oracle truth feed."""
-        return self.oracle_truth
+class DroneHarness:
+    """Reuse one MAVSDK connection while creating a fresh model client per cell."""
 
-
-class FleetHarness:
-    """Owns the persistent MAVSDK links for drones 0..n-1, built ONCE and reused
-    across every cell — this is the fix for the per-cell subscription/System leak
-    (building a DroneAgent per cell re-subscribed the non-idempotent RosBridge and
-    spun a new System each time, growing linearly over a sweep), generalized from
-    one drone to a fleet of n.
-
-    It hands out a FRESH Claude client per cell (bound to the shared Systems with the
-    cell's model), because the SDK model is fixed at client construction AND each
-    cell/repeat must run an independent agent session — a reused client would bleed
-    one cell's conversation into the next and poison the accuracy numbers. So: cache
-    the model-independent flight links, rebuild only the cheap per-cell client.
-    single_drone specs (n_drones==1) get the classic one-drone options; operator
-    specs get make_operator_options (one client, all n drones).
-
-    The `agent_factory`/`client_builder` hooks exist so the caching lifecycle is
-    unit-testable without ROS; production paths default to the real deferred imports."""
-
-    def __init__(self, deps: Deps, n: int = 1, agent_factory=None,
+    def __init__(self, deps: Deps, system_factory=None,
                 client_builder=None) -> None:
         self._deps = deps
-        self._n = n
-        self._agent_factory = agent_factory
+        self._system_factory = system_factory
         self._client_builder = client_builder
-        self._agents: list | None = None  # cached DroneAgents; we use only their connected _system
+        self._system = None
         # Strategy-snippet A/B (design §13 item 6): run_cell sets this per cell
         # from the assignment's `strategy` key; appended to the system prompt.
         self.prompt_append: str | None = None
 
-    def _make_agent(self, i: int):
-        if self._agent_factory is not None:
-            return self._agent_factory(i)
-        from agents.swarm.drone import DroneAgent  # deferred: rclpy/mavsdk at runtime only
-        return DroneAgent(i, self._deps.world, self._deps.bridge, self._n,
-                          self._deps.cameras, model=None)
-
-    async def _ensure(self) -> list:
-        if self._agents is None:
-            agents = [self._make_agent(i) for i in range(self._n)]
-            for a in agents:
-                await a.connect()  # connects the MAVSDK link + arms PX4 geofence, once
-            self._agents = agents
-        return self._agents
-
-    async def systems_list(self) -> list:
-        """The shared, connected MAVSDK Systems for drones 0..n-1 (built + connected
-        once)."""
-        return [a._system for a in await self._ensure()]
-
     async def system(self):
-        """Back-compat accessor: the shared System for drone 0."""
-        return (await self.systems_list())[0]
+        if self._system is not None:
+            return self._system
+        if self._system_factory is not None:
+            system = self._system_factory()
+        else:
+            from mavsdk import System
+            from px4_msgs.msg import VehicleLocalPosition
+            self._deps.bridge.subscribe(
+                "/px4_0/fmu/out/vehicle_local_position", VehicleLocalPosition)
+            system = System(mavsdk_server_address="127.0.0.1", port=50051)
+        await system.connect()
+        if self._system_factory is None:
+            async for state in system.core.connection_state():
+                if state.is_connected:
+                    break
+        try:
+            await system.param.set_param_float("GF_MAX_HOR_DIST", 300.0)
+            await system.param.set_param_float("GF_MAX_VER_DIST", 80.0)
+            await system.param.set_param_int("GF_ACTION", 1)
+        except Exception:
+            pass
+        self._system = system
+        return system
 
     def _make_ops(self):
         """A fresh FlightOps for one cell, wired to `deps.flight_contacts` —
@@ -264,24 +236,14 @@ class FleetHarness:
         fake agents in place."""
         from agents.flight.envelope import Envelope
         from agents.flight.ops import FlightOps
-        return FlightOps(self._agents[0]._system, self._deps.world,
-                         self._deps.bridge, 0, 1,
+        return FlightOps(self._system, self._deps.world,
+                         self._deps.bridge,
                          contacts=self._deps.flight_contacts,
                          envelope=Envelope())
 
-    def client_for(self, model, n_drones: int = 1):
-        """A fresh BackendClient (the §6.5 seam) bound to the shared System(s),
-        with `model`. Caller drives it under `async with` so each cell gets an
-        independent session. n_drones<=1 gets the classic single-drone options;
-        n_drones>1 gets the operator layer (one client, all n drones).
-        Kimi tiers (KIMI_MODELS) get the §5.2 env recipe here; make_pilot_options
-        enforces cli_path=which("claude") on that tier (R5) — a missing CLI is a
-        hard error, never a silent fall-back to the bundled one."""
+    def client_for(self, model):
         if self._client_builder is not None:
             return self._client_builder(model)
-        if n_drones > 1:
-            raise ValueError("operator/commander eval layers were dropped "
-                             "(single-drone rebuild); use n_drones=1")
         from agents.flight.backend import kimi_recipe, make_backend_client
         from agents.pilot.detect_text import make_detect_text
         # detect wired exactly like the production pilot (agents/pilot/run.py):
@@ -298,9 +260,6 @@ class FleetHarness:
             backend=backend,
             env=(kimi_recipe() if backend == "kimi" else None), model=model,
             extra_prompt=self.prompt_append)
-
-
-DroneHarness = FleetHarness  # back-compat alias for older imports/tests
 
 
 async def _drive(client, prompt: str, deadline_s: float, max_steps: int,
@@ -340,46 +299,24 @@ def client_failed(trace: Trace) -> bool:
     return trace.model is None or trace.model == "<synthetic>"
 
 
-def require_layer_supported(spec, layer: str | None = None) -> None:
-    """single_drone cells must be n==1; operator/commander layers were dropped
-    in the single-drone rebuild (design §3.9) and are rejected loudly, never
-    silently. `layer` (a --layer CLI override) takes precedence over
-    spec.target_layer when given."""
-    effective = layer or getattr(spec, "target_layer", "single_drone")
-    if effective != "single_drone":
-        raise ValueError(f"target_layer {effective!r} was dropped in the "
-                         f"single-drone rebuild (task {spec.id})")
-    if spec.setup.n_drones != 1:
-        raise ValueError(
-            f"single_drone runner requires n_drones==1, got {spec.setup.n_drones} "
-            f"(task {spec.id})")
-
-
-require_single_drone = require_layer_supported  # back-compat alias for older imports/tests
-
-
-async def _settle(world, bridge, n: int, deadline: float,
+async def _settle(world, bridge, deadline: float,
                   still_speed: float = 0.8, poll: float = 1.0) -> None:
     """Wait for in-flight, fire-and-forget moves to finish after the agent's turn.
 
     The flight tools (`goto`/`fly`) issue a movement and return BEFORE the drone
     arrives, so grading the instant the agent stops talking scores the drone mid-flight.
-    Poll every `poll` s until every drone's horizontal speed is below `still_speed` m/s
+    Poll every `poll` s until the drone's horizontal speed is below `still_speed` m/s
     (arrived/holding) or `deadline` (monotonic clock) passes. The Sampler keeps running,
     so the final WorldTrack reflects where the drone actually ends up — not where it was
     when the agent finished. A drone with no fix counts as still-moving (don't settle on
     a blind sample)."""
     prev = None
     while time.monotonic() < deadline:
-        cur = {i: world.world_xy(bridge, i) for i in range(n)}
+        cur = world.world_xy(bridge, 0)
         if prev is not None:
-            moving = False
-            for i in range(n):
-                a, b = prev.get(i), cur.get(i)
-                if a is None or b is None:
-                    moving = True
-                elif math.hypot(b[0] - a[0], b[1] - a[1]) / poll > still_speed:
-                    moving = True
+            moving = (prev is None or cur is None
+                      or math.hypot(cur[0] - prev[0], cur[1] - prev[1]) / poll
+                      > still_speed)
             if not moving:
                 return
         prev = cur
@@ -433,24 +370,19 @@ def _detector_tag(deps: Deps) -> str | None:
 
 
 async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
-                   harness: "FleetHarness") -> CellResult:
-    effective_layer = assignment.get("_layer") or spec.target_layer
-    require_layer_supported(spec, effective_layer)
+                   harness: "DroneHarness") -> CellResult:
     label = assignment_label(assignment)
     base = CellResult(spec.id, label, repeat, passed=False)
     base.difficulty = dict(spec.difficulty)
     base.suite = spec.suite
-    base.layer = effective_layer
-    n = spec.setup.n_drones  # 1 for single_drone tasks; >1 for operator tasks
-
     try:
-        systems = await harness.systems_list()  # built + connected once, reused across cells
+        system = await harness.system()
     except Exception as e:
         base.infra_fail = True
         base.failure_reason = f"connect failed: {e}"
         return base
 
-    rr = await soft_reset(systems, deps.world, deps.bridge, n)
+    rr = await soft_reset(system, deps.world, deps.bridge)
     if not rr.ok:
         base.infra_fail = True
         base.failure_reason = f"reset unclean: {rr.reason}"
@@ -461,7 +393,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         # random mover phases and confound pass rates across K
         deps.oracle_truth.anchor()
 
-    sampler = Sampler(deps.world, deps.bridge, n, spec.objects_map(),
+    sampler = Sampler(deps.world, deps.bridge, spec.objects_map(),
                       geofence_m=300.0, gzposes=deps.oracle_truth)
     samp_task = asyncio.create_task(sampler.run())
     t_start = time.monotonic()
@@ -485,7 +417,7 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
             def lock_hook(trace, _msg, _now):
                 note_target_lock(trace, deps.flight_contacts, deps.oracle_truth)
 
-        client = harness.client_for(model_for(assignment, "drones"), n_drones=n)
+        client = harness.client_for(model_for(assignment, "drones"))
         async with client:  # fresh session per cell — no context bleed between cells
             trace, crashed, reason = await _drive(
                 client, render_task_prompt(spec),
@@ -498,19 +430,17 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         # armed in LOITER (caught by the backend-switch smoke, 2026-08-08).
         landed = False
         if _completed_land(trace):
-            landed = all([await _wait_disarmed(s) for s in systems])
+            landed = await _wait_disarmed(system)
         else:
-            # Per-system isolation: one dead link must not skip the others.
-            for s in systems:
-                try:
-                    await asyncio.wait_for(s.action.hold(), timeout=5)
-                except Exception:
-                    pass
+            try:
+                await asyncio.wait_for(system.action.hold(), timeout=5)
+            except Exception:
+                pass
         # Settle gets its OWN allowance, not the tail of the turn budget: sharing one
         # deadline gave slower-thinking tiers less real-time flight before grading —
         # a structural bias against exactly the tiers being compared. With blocking
         # goto/fly this is normally near-instant (a safety net for wait=false moves).
-        await _settle(deps.world, deps.bridge, n,
+        await _settle(deps.world, deps.bridge,
                       deadline=time.monotonic() + SETTLE_S)
     except Exception as e:
         base.infra_fail = True
@@ -525,7 +455,6 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
         base.infra_fail = True
         base.failure_reason = f"client never ran the model: {first[:120]}"
         base.transcript = trace.transcript(t0_epoch)
-        base.drone_steps = trace.meta.get("drone_steps", 0)
         if _detector_tag(deps):
             base.transcript["detector"] = _detector_tag(deps)
         return base
@@ -544,7 +473,6 @@ async def run_cell(spec, assignment: dict, repeat: int, deps: Deps,
     base.latency_s = trace.first_action_t
     base.failure_reason = reason
     base.transcript = trace.transcript(t0_epoch)
-    base.drone_steps = trace.meta.get("drone_steps", 0)
     if _detector_tag(deps):
         base.transcript["detector"] = _detector_tag(deps)
     return base

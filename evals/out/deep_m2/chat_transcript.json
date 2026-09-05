@@ -1,8 +1,0 @@
-{
-    "lines": [
-        "pilot: Ahead (facing E at 2m): deep look found no buildings in frame \u2014 only a low-conf tree hit (0.15, ahead-left, likely pine_tree_1 at 21m). Known map: gas_station 84m ahead-left (in view), pine_tree_1 21m ahead; houses ~58-60m off to the right (not in view).",
-        "pilot: Orbited the truck's detected position (E97 N-6) at 20m radius, 15m alt. The truck was moving \u2014 it relocated to ~E121 N-40 then E87 N-19; attempted station-keeping track but contact IDs churned and tracking failed to acquire. Searched its last known position at 20m alt: no truck or any moving contact in view. Truck appears to have left the area; holding at E87 N-19, alt 20m.",
-        "pilot: Truck re-acquired (vis_truck_0, conf 0.50, ~74m ahead at E90 N55, I'm facing N from E87 N-19, alt 20m). Pinpointed it at pixel (330,300): mask is a compact 51x32px blob (box [296,271]-[347,303], area ~1398px, score 0.93) \u2014 size consistent with a truck at 74m. Mask is UNLABELED by SAM but paired with the detect hit it's the truck. Two earlier attempts at upper-frame pixels grabbed degenerate full-frame sky/ground masks (216k/168k px), so I aim low-center for ground vehicles."
-    ],
-    "next": 3
-}

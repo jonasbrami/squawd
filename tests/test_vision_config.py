@@ -1,5 +1,4 @@
-"""VisionConfig validation (ICD §0.5/Codex-M8): explicit selections fail
-CLOSED, only auto falls back; tracker/backend pairing is enforced."""
+"""VisionConfig validation (ICD §0.5/Codex-M8)."""
 import pytest
 
 from agents.vision.config import VisionConfig, VisionConfigError
@@ -24,25 +23,10 @@ def test_blob_needs_no_model():
     VisionConfig(backend="blob").validate()
 
 
-def test_unknown_tracker_rejected():
-    with pytest.raises(VisionConfigError, match="VISION_TRACKER"):
-        VisionConfig(tracker="magic").validate()
-
-
-def test_dnn_tracker_with_blob_fails_closed():
-    with pytest.raises(VisionConfigError, match="supports_track"):
-        VisionConfig(backend="blob", tracker="botsort").validate()
-
-
-def test_template_tracker_with_blob_is_fine():
-    VisionConfig(backend="blob", tracker="csrt").validate()
-
-
 def test_from_env_reads_vars(tmp_path):
     cfg = VisionConfig.from_env({"VISION_BACKEND": "blob",
-                                 "VISION_TRACKER": "none",
                                  "VISION_DEVICE": "cpu"})
-    assert cfg.backend == "blob" and cfg.tracker == "none"
+    assert cfg.backend == "blob"
 
 
 # ---- W2: admission floors (design 2026-07-28 §4) ----

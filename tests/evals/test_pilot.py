@@ -76,10 +76,9 @@ def test_spec_parses_optional_pilot(tmp_path):
     p = tmp_path / "t.yaml"
     p.write_text("""
 id: t
-target_layer: single_drone
 suite: spatial
 difficulty: {spatial: 1}
-setup: {world: default, n_drones: 1, spawn: home, seed_objects: []}
+setup: {world: default, spawn: home, seed_objects: []}
 prompt: "x"
 budget: {wall_clock_s: 60, max_steps: 5}
 oracle:
@@ -98,10 +97,9 @@ def test_spec_pilot_defaults_to_none(tmp_path):
     p = tmp_path / "t.yaml"
     p.write_text("""
 id: t
-target_layer: single_drone
 suite: spatial
 difficulty: {spatial: 1}
-setup: {world: default, n_drones: 1, spawn: home, seed_objects: []}
+setup: {world: default, spawn: home, seed_objects: []}
 prompt: "x"
 budget: {wall_clock_s: 60, max_steps: 5}
 oracle:
@@ -130,13 +128,12 @@ class FakeGz:
 
 class BehaviorOps:
     def __init__(self, gz, pos=(0.0, 0.0)):
-        self.gzposes = gz
+        self.contacts = gz
         self.calls = []
         self._pos = pos
         self._speed = 5.0
         self.world = self
         self.bridge = None
-        self.i = 0
 
     def drone_state(self, bridge, i):
         return (self._pos[0], self._pos[1], 12.0, 0.0)
@@ -305,11 +302,8 @@ def test_track_vis_times_out_without_locking_when_class_absent():
     assert "no vis_target_* contact" in steps[-1][2]
 
 
-def test_scripted_client_behavior_binds_ops_with_drone_ATTRIBUTE():
-    """Regression (found live at the M5 perceive gate): single-drone FlightOps
-    has a `.drone` ATTRIBUTE (the MAVSDK System), not a drone(i) method — the
-    fleet-routing heuristic must bind behavior steps to the ops itself instead
-    of calling the System ('System' object is not callable)."""
+def test_scripted_client_behavior_binds_ops():
+    """Behavior steps run against the single FlightOps instance."""
     import asyncio
     from evals.pilot import ScriptedClient
 

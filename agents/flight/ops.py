@@ -4,7 +4,7 @@ One instance per drone, over its MAVSDK `System` + the shared `World`/`RosBridge
 Each method performs the maneuver and returns a short status string; it raises on
 bad input or SDK failure (the tool layer turns that into an error result). No
 Claude-Agent-SDK coupling lives here, so the flight logic reads on its own and is
-reusable outside the swarm.
+reusable outside the pilot assembly.
 
 Frames: world is ENU (east/north/up); MAVSDK goto_location takes lat/lon/AMSL +
 yaw (deg, 0=N, +clockwise). World points are converted to GPS via the drone's
@@ -67,42 +67,30 @@ def _result_text(logs, body):
 
 
 class FlightOps:
-    def __init__(self, drone, world, bridge, i: int, n: int, contacts=None,
-                 envelope=None, gzposes=None) -> None:
+    def __init__(self, drone, world, bridge, contacts=None,
+                 envelope=None) -> None:
         self.drone = drone
         self.world = world
         self.bridge = bridge
-        self.i = i
-        self.n = n
         # O1: `contacts` is any mover-contact provider (poses/sim_time and
         # friends — VisionContacts in the pilot, GzPoses in eval tooling);
-        # the gzposes kwarg survives as the pre-M3a back-compat name.
-        self.contacts = contacts if contacts is not None else gzposes
+        self.contacts = contacts
         self.envelope = envelope
-        self.name = f"drone_{i}"
+        self.name = "drone_0"
         self._speed = 5.0            # last commanded cruise speed (PX4 default)
 
-    @property
-    def gzposes(self):
-        """Back-compat alias (pre-M3a name) — the contact provider."""
-        return self.contacts
-
-    @gzposes.setter
-    def gzposes(self, v):
-        self.contacts = v
-
     def _alt(self):
-        p = self.bridge.latest(f"/px4_{self.i}/fmu/out/vehicle_local_position")
+        p = self.bridge.latest(f"/px4_{0}/fmu/out/vehicle_local_position")
         return None if p is None else -p.z
 
     def _keep_yaw(self) -> float:
-        st = self.world.drone_state(self.bridge, self.i)
+        st = self.world.drone_state(self.bridge, 0)
         return math.degrees(st[3]) if st else 0.0
 
     async def _world_to_geo(self, east, north, up) -> GeoPoint:
         """Convert a world ENU point to a GeoPoint, relative to the drone's live GPS fix.
         Params are named east/north/up so authored missions can call it by keyword."""
-        me = self.world.world_xy(self.bridge, self.i)
+        me = self.world.world_xy(self.bridge, 0)
         pos = await anext(self.drone.telemetry.position())
         origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
         if me is None:
@@ -114,12 +102,12 @@ class FlightOps:
         ARRIVE_ALT_TOL_M of t_u when given), or a distance-scaled timeout. Returns a
         status suffix; NEVER raises — a timeout reads 'still enroute' so the caller
         can wait again or re-command rather than see a hard error."""
-        me = self.world.world_xy(self.bridge, self.i)
+        me = self.world.world_xy(self.bridge, 0)
         dist = math.hypot(t_e - me[0], t_n - me[1]) if me else 100.0
         t_max = max(ARRIVE_MIN_TIMEOUT_S, ARRIVE_MARGIN * dist / max(self._speed, 0.5))
         for _ in range(max(1, int(t_max / ARRIVE_POLL_S))):
             await asyncio.sleep(ARRIVE_POLL_S)
-            me = self.world.world_xy(self.bridge, self.i)
+            me = self.world.world_xy(self.bridge, 0)
             if me is None:
                 continue
             d = math.hypot(t_e - me[0], t_n - me[1])
@@ -131,9 +119,9 @@ class FlightOps:
     def _resolve_xy(self, target, east=None, north=None):
         """(east, north) for a symbolic target name, explicit east/north, or None."""
         if target:
-            return self.world.resolve_xy(target, self.bridge, self.n)
+            return self.world.resolve_xy(target)
         if east is not None or north is not None:
-            me = self.world.world_xy(self.bridge, self.i)
+            me = self.world.world_xy(self.bridge, 0)
             return (float(east if east is not None else (me[0] if me else 0.0)),
                     float(north if north is not None else (me[1] if me else 0.0)))
         return None
@@ -225,8 +213,8 @@ class FlightOps:
         t0 = _t.monotonic()
         try:
             from mavsdk.offboard import PositionNedYaw, VelocityNedYaw
-            me0 = self.world.drone_state(self.bridge, self.i)
-            lp = self.bridge.latest(f"/px4_{self.i}/fmu/out/vehicle_local_position")
+            me0 = self.world.drone_state(self.bridge, 0)
+            lp = self.bridge.latest(f"/px4_{0}/fmu/out/vehicle_local_position")
             off_n, off_e, off_d = lp.x - me0[1], lp.y - me0[0], lp.z + me0[2]
             # pre-start stream MUST hold the CURRENT heading: a yaw=0.0 init
             # slams the nose to north when offboard engages and the box is
@@ -253,7 +241,7 @@ class FlightOps:
                 if _locked():
                     return alt
                 obs = obs_fn(name) if callable(obs_fn) else None
-                me = self.world.drone_state(self.bridge, self.i)
+                me = self.world.drone_state(self.bridge, 0)
                 if me is None:
                     await asyncio.sleep(0.5)
                     continue
@@ -277,7 +265,7 @@ class FlightOps:
                 fp = (fp_raw if fp_raw is not None
                       and getattr(obs, "age_s", 99.0) < 0.5 else None)
                 lp = self.bridge.latest(
-                    f"/px4_{self.i}/fmu/out/vehicle_local_position")
+                    f"/px4_{0}/fmu/out/vehicle_local_position")
                 if lp is None:
                     # a telemetry hiccup must not crash the acquisition
                     # (fable-R3): both branches below dereference lp
@@ -411,7 +399,7 @@ class FlightOps:
 
     async def fly(self, north=0.0, east=0.0, up=0.0, wait=True) -> str:
         north, east, up = float(north), float(east), float(up)
-        me = self.world.world_xy(self.bridge, self.i)     # for the arrival gate
+        me = self.world.world_xy(self.bridge, 0)     # for the arrival gate
         pos = await anext(self.drone.telemetry.position())
         origin = GeoPoint(pos.latitude_deg, pos.longitude_deg, pos.absolute_altitude_m)
         tgt = offset_point(origin, north, east, up)
@@ -425,7 +413,7 @@ class FlightOps:
 
     async def goto(self, target="", east=None, north=None, up=None, heading="travel",
                    wait=True) -> str:
-        me = self.world.world_xy(self.bridge, self.i)
+        me = self.world.world_xy(self.bridge, 0)
         target = str(target or "").strip().lower()
         xy = self._resolve_xy(target, east, north)
         if xy is None:
@@ -465,7 +453,7 @@ class FlightOps:
         xy = self._resolve_xy(target, east, north)
         if xy is None:
             raise ValueError("can't resolve orbit center")
-        me = self.world.world_xy(self.bridge, self.i)
+        me = self.world.world_xy(self.bridge, 0)
         radius = abs(float(radius))
         speed = abs(float(speed))
         alt_v = float(alt) if alt is not None else (me[2] if me else 12.0)
@@ -563,7 +551,7 @@ class FlightOps:
             raise ValueError("track needs a contact provider (no mover feed)")
         name = str(target or "").strip()
         if alt is None:
-            me_now = self.world.world_xy(self.bridge, self.i)
+            me_now = self.world.world_xy(self.bridge, 0)
             alt = me_now[2] if me_now else 12.0
         poses = self.contacts.poses()
         if name not in poses:
@@ -654,8 +642,8 @@ class FlightOps:
         orb = trk.OrbitPhase(radius_m, rate_dps)
 
         # world ENU -> PX4 local NED: constant offset from one simultaneous read
-        me = self.world.world_xy(self.bridge, self.i)
-        lp = self.bridge.latest(f"/px4_{self.i}/fmu/out/vehicle_local_position")
+        me = self.world.world_xy(self.bridge, 0)
+        lp = self.bridge.latest(f"/px4_{0}/fmu/out/vehicle_local_position")
         if me is None or lp is None:
             raise ValueError("no position fix yet — take off first")
         off_n, off_e, off_d = lp.x - me[1], lp.y - me[0], lp.z + me[2]
@@ -703,7 +691,7 @@ class FlightOps:
         try:
             while _time.monotonic() - wall0 < dur:
                 tp = self.contacts.poses().get(name)
-                me = self.world.world_xy(self.bridge, self.i)
+                me = self.world.world_xy(self.bridge, 0)
                 sim_now = self.contacts.sim_time()
                 if tp is not None:
                     t_last_seen = sim_now
@@ -927,7 +915,7 @@ class FlightOps:
                         # runs here) — in_fusion_envelope admits orbit under
                         # its own speed clause (beam.py, W3a).
                         lp = self.bridge.latest(
-                            f"/px4_{self.i}/fmu/out/vehicle_local_position")
+                            f"/px4_{0}/fmu/out/vehicle_local_position")
                         own_sp = (math.hypot(getattr(lp, "vx", 0.0),
                                              getattr(lp, "vy", 0.0))
                                   if lp else 0.0)
@@ -1024,7 +1012,7 @@ class FlightOps:
                 # measured speed (codex-R3: this carried the TARGET's estimate
                 # — a wrong gate input that also raced the eval collector).
                 lp = self.bridge.latest(
-                    f"/px4_{self.i}/fmu/out/vehicle_local_position")
+                    f"/px4_{0}/fmu/out/vehicle_local_position")
                 own_sp = (math.hypot(getattr(lp, "vx", 0.0),
                                      getattr(lp, "vy", 0.0))
                           if lp else 0.0)
@@ -1063,8 +1051,8 @@ class FlightOps:
         if tgt in COMPASS:
             yaw = COMPASS[tgt]
         else:
-            me = self.world.world_xy(self.bridge, self.i)
-            txy = self.world.resolve_xy(tgt, self.bridge, self.n)
+            me = self.world.world_xy(self.bridge, 0)
+            txy = self.world.resolve_xy(tgt)
             if me is None or txy is None:
                 raise ValueError(f"can't resolve target '{tgt}'")
             yaw = perception.yaw_deg_to(me[0], me[1], txy[0], txy[1])
@@ -1136,7 +1124,7 @@ class FlightOps:
                                     in (None, "none")]
                 except Exception:
                     bearing_only = []
-        return perception.scan_text(self.world, self.bridge, self.i, self.n,
+        return perception.scan_text(self.world, self.bridge,
                                     mover_poses=movers,
                                     bearing_only=bearing_only)
 

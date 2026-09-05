@@ -2,9 +2,8 @@
 
 Turns a World (ground-truth buildings + spawn layout) plus live ROS telemetry
 into VLM-friendly readouts:
-- scan_text(i):  nearest buildings + other drones with distance and bearing
+- scan_text():  nearest buildings and mover contacts with distance and bearing
                  RELATIVE to where the drone faces, flagging what's in view.
-- situation_text(): commander-level overview of every drone + its nearest building.
 
 The live camera image (`look`) is served separately by core.GzCameras.
 
@@ -56,7 +55,7 @@ def yaw_deg_to(east_from: float, north_from: float, east_to: float, north_to: fl
     return math.degrees(math.atan2(east_to - east_from, north_to - north_from))
 
 
-def scan_text(world, bridge, i: int, n_drones: int, k: int = 8,
+def scan_text(world, bridge, k: int = 8,
               mover_poses: dict | None = None,
               bearing_only: list | None = None) -> str:
     """Nearest k buildings + other drones, with distance and bearing RELATIVE to
@@ -66,9 +65,9 @@ def scan_text(world, bridge, i: int, n_drones: int, k: int = 8,
     perfect route around the four buildings it was told about and flew into the
     fifth (obs_4 was #5-nearest from spawn). If a world ever exceeds k, the
     truncation must be announced in the text, never silent."""
-    st = world.drone_state(bridge, i)
+    st = world.drone_state(bridge, 0)
     if st is None:
-        return f"drone_{i}: position not yet available"
+        return "drone_0: position not yet available"
     mx, my, alt, hd = st
     parts = []
     ranked = []
@@ -105,36 +104,7 @@ def scan_text(world, bridge, i: int, n_drones: int, k: int = 8,
         # Vision contacts seen but not yet ranged: honest "alt unk" — never
         # a fabricated position (M3a scan contract).
         parts.append(f"contact {name} bearing only, alt unk")
-    for j in range(n_drones):
-        if j == i:
-            continue
-        oj = world.world_xy(bridge, j)
-        if oj is None:
-            continue
-        dx, dy = oj[0] - mx, oj[1] - my
-        word, inview, _ = rel_bearing(dx, dy, hd)
-        tag = " [IN VIEW]" if inview else ""
-        parts.append(f"drone_{j} {math.hypot(dx, dy):.0f}m {word}{tag}")
-    head = (f"drone_{i} at world (E{mx:.0f}, N{my:.0f}), alt {alt:.0f}m, facing "
+    head = (f"drone_0 at world (E{mx:.0f}, N{my:.0f}), alt {alt:.0f}m, facing "
             f"{heading_word(hd)}. Your camera shows what's 'ahead' / [IN VIEW]; "
             f"turn (face) to bring other things into view. Nearby:")
     return head + (" " + " | ".join(parts) if parts else " nothing close")
-
-
-def situation_text(world, bridge, n_drones: int) -> str:
-    """Commander-level overview: each drone's position + its single nearest building."""
-    lines = []
-    for i in range(n_drones):
-        st = world.drone_state(bridge, i)
-        if st is None:
-            lines.append(f"drone_{i}: (no telemetry)")
-            continue
-        mx, my, alt, hd = st
-        facing = heading_word(hd)
-        nearest = ""
-        if world.buildings:
-            b = min(world.buildings, key=lambda b: math.hypot(b["x"] - mx, b["y"] - my))
-            dx, dy = b["x"] - mx, b["y"] - my
-            nearest = f"; nearest {b['name']} {math.hypot(dx, dy):.0f}m {bearing_word(dx, dy)} (h={b['h']:.0f}m)"
-        lines.append(f"drone_{i}: world E{mx:.0f} N{my:.0f} alt {alt:.0f}m facing {facing}{nearest}")
-    return "\n".join(lines)

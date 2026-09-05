@@ -1,8 +1,8 @@
 # Architecture — current single-drone system
 
 This document describes the active `rebuild-single-drone` implementation. The
-older Commander-led swarm architecture is historical: the simulator retains
-multi-PX4 support, but the Commander and swarm assembly modules no longer exist.
+older Commander-led swarm architecture is historical and has been removed from
+the active tree.
 
 ## 1. Runtime topology
 
@@ -47,9 +47,8 @@ flowchart LR
     PX4 <--> GZ
 ```
 
-`sim/launch/swarm_sim.sh` can start multiple PX4 instances, but the active pilot
-and cockpit use drone index 0. There is no supported Commander or N-agent
-assembly above them.
+`sim/launch/swarm_sim.sh` retains its historical filename, but the supported
+path starts one PX4 instance and the active pilot and cockpit use drone index 0.
 
 ## 2. Construction and ownership
 
@@ -146,7 +145,7 @@ or vehicle control.
 
 ### `agents.vision`
 
-- `config.py` validates environment-selected detector/tracker configuration.
+- `config.py` validates environment-selected detector configuration.
 - `backends.py` adapts color-blob, ONNX segmentation, and Ultralytics models.
 - `detector.py` owns the camera-to-inference worker.
 - `pipeline.py` converts detector output into atomic perception snapshots.
@@ -164,7 +163,6 @@ change without rewriting pursuit, fusion, or the cockpit.
 
 - `ops.py` is the MAVSDK-facing async control façade.
 - `track.py` contains target estimation and 10 Hz shadow/intercept references.
-- `contacts.py` defines protocols between flight and contact providers.
 - `envelope.py` defines altitude, speed, and radial-geofence checks.
 - `tools.py` owns provider-neutral tool specifications (name, description,
   JSON schema, async handler) and adapts them to Claude/Kimi's in-process MCP.
@@ -190,12 +188,13 @@ The cockpit is a web adapter over camera and ROS state. It shapes telemetry,
 encodes/fans out H.264, relays perception snapshots, performs freshness-aware
 hit testing, and publishes operator commands. It is not a control authority.
 
-### `evals` and `bench`
+### `evals`
 
 `evals/` measures agent/task behavior. YAML tasks declare setup, budgets,
 scripted baselines, and pure oracle checks. The runner records tool-level
 transcripts and simulator truth, while truth is isolated from the production
-contact lane. `bench/` is the historical simulator/render-capacity harness.
+contact lane. Generated results go under the git-ignored `evals/out/`; dated
+summaries belong in `docs/benchmarks/`.
 
 ## 4. Application interfaces
 
@@ -309,13 +308,13 @@ Current:
 - `agents/pilot/run.py` and one `PilotAgent`;
 - `/pilot/*` application topics;
 - single-drone cockpit and perception authority;
-- single-drone evals plus retained research tasks.
+- single-drone evals.
 
 Historical or unsupported:
 
 - Commander-led task decomposition;
-- `agents/swarm/run.py` and `agents/swarm/commander.py`;
-- the root `scripts/run_swarm_demo.sh` agent path;
+- the removed Commander/swarm runtime and tasks;
+- the removed `run_swarm_demo.sh` agent path;
 - claims that N autonomous LLM agents currently launch end to end.
 
 Historical benchmarks and design records remain useful evidence, but they are

@@ -587,8 +587,8 @@ class VisionContacts:
         pairs = []
         for mi, m in enumerate(meas):
             if m.designated_for is not None and m.designated_for in self._tracks:
-                # the designated contact's hit (registry tracker or detector
-                # association) still passes the world-space NN/NIS gates (§6.8);
+                # the designated contact's detector association still passes
+                # the world-space NN/NIS gates (§6.8);
                 # on rejection it must NOT be consumed — let it feed the
                 # candidate/rebind logic below instead (codex-R2)
                 if self._apply_to_track(self._tracks[m.designated_for], m, t):
@@ -897,7 +897,7 @@ class VisionContacts:
         if rf is None or assoc is None or pose is None:
             return
         heading_deg = math.degrees(pose[3])
-        # the reserved designated det in THIS frame: the fresh tracker hit's
+        # the reserved designated det in THIS frame: the detector hit's
         # index first, else the track's last accepted index (stale by one)
         dets = result.detections
         hit = result.designated_hit

@@ -68,7 +68,7 @@ async def main() -> int:
         detector = Detector(cameras, ColorBlobBackend(), i=0, hz=10.0, conf=0.2)
     else:
         contacts = gz
-    ops = FlightOps(system, world, bridge, 0, 1, contacts=contacts)
+    ops = FlightOps(system, world, bridge, contacts=contacts)
 
     await system.connect()
     async for s in system.core.connection_state():

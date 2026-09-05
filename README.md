@@ -12,10 +12,9 @@ moving contacts continuously; an optional host-GPU sidecar adds open-vocabulary
 `look` and prompted `pinpoint` tools.
 
 > **Project scope:** the Commander-led multi-drone system is historical. The
-> simulator can still start multiple PX4 instances, and swarm benchmarks remain
-> in the repository, but the active pilot, cockpit, and supported demo path are
-> single-drone. The old `scripts/run_swarm_demo.sh` path is not runnable because
-> its Commander/assembler modules were removed during the rebuild.
+> active pilot, cockpit, simulator configuration, and supported demo path are
+> single-drone. Dated swarm evidence remains under `docs/`; its code and raw
+> generated outputs are not part of the active tree.
 
 ## Start here
 
@@ -173,10 +172,8 @@ agents/
   flight/        MAVSDK operations, pursuit controller, tools, safety envelope
   pilot/         active single-drone assembly, LLM loop, estop, operator arbiter
   observatory/   cockpit server, video, state shaping, overlays, static UI
-  swarm/         legacy residue; no supported Commander assembly
 sim/             PX4/Gazebo launcher, models, worlds, mover plug-in
 evals/           task specs, runners, truth sampler/oracle, reports
-bench/           historical simulator/render-capacity benchmark
 models/          manifests and local git-ignored model weights
 docs/            current guides plus design and benchmark evidence
 gpt-review/      2026-08-01 static review and prioritized engineering findings
@@ -202,8 +199,7 @@ For the complete list, rationale, and recommended remediations, see
 
 ## Historical swarm material
 
-The repository name, `agents/swarm/`, `bench/`, several task files, and older
-benchmark reports preserve the earlier Commander-plus-N-drones research path.
-They remain useful evidence, but they are not current run instructions. Restore
-or redesign the missing Commander and assembly entry point before presenting
-the swarm launcher as supported again.
+The repository name and dated documents preserve the earlier
+Commander-plus-N-drones research path. Its runtime, tasks, capacity harness,
+and generated outputs were removed from the active tree; Git history retains
+them if that research is resumed.

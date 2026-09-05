@@ -75,7 +75,7 @@ async def main() -> int:
     gz = GzPoses(os.environ.get("GZ_WORLD", "perceive"), sorted(movers))
     rec = Px4StateRecorder(bridge, world, i=0, sim_time_ref=gz.sim_time)
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
-    ops = FlightOps(system, world, bridge, 0, 1)
+    ops = FlightOps(system, world, bridge)
     bridge.start()
     rec.start()
     await system.connect()

@@ -9,7 +9,7 @@ M1_TOOLS = ["take_off", "fly", "goto", "orbit", "hover", "set_speed", "face",
 
 
 def _opts(**kw):
-    return make_pilot_options(FlightOps(None, None, None, 0, 1),
+    return make_pilot_options(FlightOps(None, None, None),
                               report=lambda m: None, **kw)
 
 

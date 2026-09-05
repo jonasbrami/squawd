@@ -13,12 +13,10 @@
 # LLM cells additionally need the detect tool wired in evals (M6 tier work);
 # the pilot gate below is the scripted perception path (track_vis).
 id: p1_identify
-target_layer: single_drone
 suite: perceive
 difficulty: {plan_depth: 1, coordination: 1, ambiguity: 3, spatial: 2, dynamic: 2, perceive: 1}
 setup:
   world: perceive
-  n_drones: 1
   spawn: home
   seed_objects: []
 prompt: "Several utility vehicles are working the plaza southeast of you.

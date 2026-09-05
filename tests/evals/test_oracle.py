@@ -8,7 +8,7 @@ def _track(reach=True):
         Snapshot(0.0, {0: DronePose(0.0, 0.0, 0.0, 0.0)}),
         Snapshot(1.0, {0: DronePose(e, -40.0, 12.0, 0.0)}),
     ]
-    return WorldTrack(snaps, {"tgt_a": (120.0, -40.0)}, n_drones=1, geofence_m=300.0)
+    return WorldTrack(snaps, {"tgt_a": (120.0, -40.0)}, geofence_m=300.0)
 
 
 META_OK = {"steps": 5, "crashed": False}
@@ -45,7 +45,7 @@ def test_coverage_counts_overflown_cells():
     # Drone visits two cell centers of ne_quadrant; min_pct low enough to pass.
     snaps = [Snapshot(float(i), {0: DronePose(e, n, 12.0, 0.0)})
              for i, (e, n) in enumerate([(10, 10), (30, 10)])]
-    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, {}, geofence_m=300.0)
     spec = [{"check": "coverage", "area": "ne_quadrant", "min_pct": 1, "radius_m": 15, "cell_m": 20}]
     assert grade(t, spec, META_OK).passed
 
@@ -65,7 +65,7 @@ def _route_track(reach_c=True):
         Snapshot(3.0, {0: DronePose(0.0 if reach_c else 40.0, 10.0, 12.0, 0.0)}),
     ]
     objs = {"a": (10.0, 0.0), "b": (10.0, 10.0), "c": (0.0, 10.0)}
-    return WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    return WorldTrack(snaps, objs, geofence_m=300.0)
 
 
 def test_visited_all_pass_and_fail():
@@ -101,7 +101,7 @@ def test_ordering_pass_when_final_waypoint_is_home():
         Snapshot(4.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),   # back to d (home)
     ]
     objs = {"a": (10.0, 0.0), "b": (10.0, 10.0), "c": (0.0, 10.0), "d": (0.0, 0.0)}
-    track = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    track = WorldTrack(snaps, objs, geofence_m=300.0)
     spec = [{"check": "ordering", "sequence": ["a", "b", "c", "d"], "tol_m": 3}]
     assert grade(track, spec, ok).passed
 
@@ -115,7 +115,7 @@ def test_ordering_fails_when_intermediate_waypoint_skipped():
         Snapshot(1.0, {0: DronePose(0.0, 10.0, 12.0, 0.0)}),  # jumps straight to c
     ]
     objs = {"a": (10.0, 0.0), "b": (10.0, 10.0), "c": (0.0, 10.0)}
-    track = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    track = WorldTrack(snaps, objs, geofence_m=300.0)
     spec = [{"check": "ordering", "sequence": ["a", "b", "c"], "tol_m": 3}]
     assert not grade(track, spec, ok).passed
 
@@ -129,7 +129,7 @@ def test_altitude_band_at_target():
         Snapshot(1.0, {0: DronePose(50.0, 0.0, 20.0, 0.0)}),
         Snapshot(2.0, {0: DronePose(100.0, 0.0, 20.0, 0.0)}),
     ]
-    t = WorldTrack(snaps, {"tgt": (100.0, 0.0)}, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, {"tgt": (100.0, 0.0)}, geofence_m=300.0)
     ok = {"steps": 5, "crashed": False}
     assert grade(t, [{"check": "altitude", "target": "tgt", "min_m": 18, "max_m": 22}], ok).passed
     assert not grade(t, [{"check": "altitude", "target": "tgt", "min_m": 25, "max_m": 30}], ok).passed
@@ -146,7 +146,7 @@ def test_dwell_holds_long_enough():
         Snapshot(3.0, {0: DronePose(1.0, 0.0, 12.0, 0.0)}),
         Snapshot(4.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
     ]
-    t = WorldTrack(snaps, {"tgt": (0.0, 0.0)}, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, {"tgt": (0.0, 0.0)}, geofence_m=300.0)
     ok = {"steps": 5, "crashed": False}
     assert grade(t, [{"check": "dwell", "target": "tgt", "tol_m": 3, "hold_s": 2.5}], ok).passed
     assert not grade(t, [{"check": "dwell", "target": "tgt", "tol_m": 3, "hold_s": 5}], ok).passed
@@ -158,7 +158,7 @@ def test_clearance_passes_when_far_and_no_buildings():
     ok = {"steps": 5, "crashed": False}
     snaps = [Snapshot(0.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)})]
     # No buildings -> inf clearance -> passes.
-    assert grade(WorldTrack(snaps, {}, 1, 300.0), [{"check": "clearance", "margin_m": 5}], ok).passed
+    assert grade(WorldTrack(snaps, {}, 300.0), [{"check": "clearance", "margin_m": 5}], ok).passed
 
 
 def test_clearance_fails_on_near_miss():
@@ -169,7 +169,7 @@ def test_clearance_fails_on_near_miss():
     # Drone passes at e=13.5 -> clearance ~0.5m < margin 5 -> fail (true near-miss, outside the box).
     b = [{"name": "b0", "x": 10.0, "y": 0.0, "w": 6.0, "d": 6.0}]
     snaps = [Snapshot(0.0, {0: DronePose(13.5, 0.0, 12.0, 0.0)})]
-    t = WorldTrack(snaps, {}, 1, 300.0, buildings=b)
+    t = WorldTrack(snaps, {}, 300.0, buildings=b)
     assert not grade(t, [{"check": "clearance", "margin_m": 5}], ok).passed
 
 
@@ -180,7 +180,7 @@ def test_clearance_passes_when_routed_around():
     b = [{"name": "b0", "x": 10.0, "y": 0.0, "w": 6.0, "d": 6.0}]
     # Drone passes at n=20 -> far from the box -> clearance ~17m >= 5 -> pass.
     snaps = [Snapshot(0.0, {0: DronePose(10.0, 20.0, 12.0, 0.0)})]
-    t = WorldTrack(snaps, {}, 1, 300.0, buildings=b)
+    t = WorldTrack(snaps, {}, 300.0, buildings=b)
     assert grade(t, [{"check": "clearance", "margin_m": 5}], ok).passed
 
 
@@ -197,7 +197,7 @@ def test_not_reached_passes_when_kept_clear_and_fails_on_approach():
         Snapshot(1.0, {0: DronePose(10.0, 0.0, 12.0, 0.0)}),
     ]
     objs = {"far_decoy": (100.0, 100.0), "near_decoy": (12.0, 0.0)}
-    t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, objs, geofence_m=300.0)
     assert grade(t, [{"check": "not_reached", "target": "far_decoy", "tol_m": 25}], _ok_meta()).passed
     assert not grade(t, [{"check": "not_reached", "target": "near_decoy", "tol_m": 25}], _ok_meta()).passed
 
@@ -208,8 +208,8 @@ def test_avoid_area_fails_on_incursion_and_passes_outside():
               Snapshot(1.0, {0: DronePose(50.0, 50.0, 12.0, 0.0)})]
     outside = [Snapshot(0.0, {0: DronePose(-5.0, -5.0, 12.0, 0.0)}),
                Snapshot(1.0, {0: DronePose(-50.0, -50.0, 12.0, 0.0)})]
-    t_in = WorldTrack(inside, {}, n_drones=1, geofence_m=300.0)
-    t_out = WorldTrack(outside, {}, n_drones=1, geofence_m=300.0)
+    t_in = WorldTrack(inside, {}, geofence_m=300.0)
+    t_out = WorldTrack(outside, {}, geofence_m=300.0)
     spec = [{"check": "avoid_area", "area": "ne_quadrant"}]
     assert not grade(t_in, spec, _ok_meta()).passed
     assert grade(t_out, spec, _ok_meta()).passed
@@ -219,7 +219,7 @@ def test_avoid_area_grace_skips_spawn_samples():
     # Spawn is inside the area; grace_s excuses the early samples only.
     snaps = [Snapshot(0.0, {0: DronePose(50.0, 50.0, 0.0, 0.0)}),
              Snapshot(5.0, {0: DronePose(-50.0, -50.0, 12.0, 0.0)})]
-    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, {}, geofence_m=300.0)
     spec = [{"check": "avoid_area", "area": "ne_quadrant", "grace_s": 2.0}]
     assert grade(t, spec, _ok_meta()).passed
 
@@ -231,7 +231,7 @@ def test_path_length_sums_2d_legs():
         Snapshot(1.0, {0: DronePose(30.0, 0.0, 12.0, 0.0)}),
         Snapshot(2.0, {0: DronePose(30.0, 40.0, 12.0, 0.0)}),
     ]
-    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, {}, geofence_m=300.0)
     assert grade(t, [{"check": "path_length", "max_m": 80}], _ok_meta()).passed
     assert not grade(t, [{"check": "path_length", "max_m": 60}], _ok_meta()).passed
 
@@ -243,7 +243,7 @@ def test_alt_ceiling_binds_whole_flight():
         Snapshot(1.0, {0: DronePose(10.0, 0.0, 18.0, 0.0)}),
         Snapshot(2.0, {0: DronePose(20.0, 0.0, 10.0, 0.0)}),
     ]
-    t = WorldTrack(snaps, {}, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, {}, geofence_m=300.0)
     assert not grade(t, [{"check": "alt_ceiling", "max_m": 15}], _ok_meta()).passed
     assert grade(t, [{"check": "alt_ceiling", "max_m": 20}], _ok_meta()).passed
 
@@ -256,7 +256,7 @@ def test_final_pos_grades_where_the_flight_ends():
         Snapshot(2.0, {0: DronePose(0.0, 0.0, 12.0, 0.0)}),
     ]
     objs = {"home_pt": (0.0, 0.0), "away": (50.0, 0.0)}
-    t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, objs, geofence_m=300.0)
     assert grade(t, [{"check": "final_pos", "target": "home_pt", "tol_m": 15}], _ok_meta()).passed
     assert not grade(t, [{"check": "final_pos", "target": "away", "tol_m": 15}], _ok_meta()).passed
 
@@ -270,7 +270,7 @@ def test_min_visited_counts_targets_within_tol():
         Snapshot(2.0, {0: DronePose(50.0, 50.0, 12.0, 0.0)}),
     ]
     objs = {"a": (50.0, 0.0), "b": (50.0, 50.0), "c": (200.0, 200.0), "d": (-200.0, 0.0)}
-    t = WorldTrack(snaps, objs, n_drones=1, geofence_m=300.0)
+    t = WorldTrack(snaps, objs, geofence_m=300.0)
     ok = {"steps": 5, "crashed": False}
     spec2 = [{"check": "min_visited", "targets": ["a", "b", "c", "d"], "tol_m": 10, "min_count": 2}]
     spec3 = [{"check": "min_visited", "targets": ["a", "b", "c", "d"], "tol_m": 10, "min_count": 3}]

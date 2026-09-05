@@ -50,7 +50,7 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
     try:
         if cfg.backend == "ultralytics" or (
                 cfg.backend == "auto" and cfg.model and
-                UltralyticsBackend.supports_track):
+                UltralyticsBackend.available):
             backend = UltralyticsBackend(cfg.weights_dir, cfg.model,
                                          cfg.device, cfg.half)
         elif cfg.backend == "onnx" or (cfg.backend == "auto" and cfg.model):
@@ -58,8 +58,7 @@ def build_perception(bridge, cameras, world=None, sim_clock=None):
             backend = OnnxBackend(base, base.rsplit(".", 1)[0] + ".json")
         else:
             backend = ColorBlobBackend()
-        detector = Detector(cameras, backend, i=0, hz=10.0, conf=cfg.conf,
-                            tracker=cfg.tracker)
+        detector = Detector(cameras, backend, i=0, hz=10.0, conf=cfg.conf)
         # conf 0.25 default for production tracking: the blob's far-range
         # scores (0.35–0.45) would starve the CV-EKF at the 0.45 default;
         # measurement quality lives in the contacts' NN/NIS gates (design
@@ -210,7 +209,7 @@ async def main() -> None:
                               lambda: flight["armed"])
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
     envelope = Envelope()
-    ops = FlightOps(system, world, bridge, 0, 1, contacts=contacts,
+    ops = FlightOps(system, world, bridge, contacts=contacts,
                     envelope=envelope)
     backend = os.environ.get("SQUAWD_BACKEND", "claude")
     agent = PilotAgent(

@@ -1,8 +1,8 @@
 # Rendering & GPU
 
-Camera rendering is the expensive part of the swarm, so the launcher lets you choose
-**which GPU (or no GPU) renders the cameras** via `RENDER_BACKEND`. For everyday use
-the default (Intel iGPU) just works — see the [README quickstart](../README.md#quickstart).
+Camera rendering is the expensive part of the simulation, so the launcher lets you
+choose the renderer via `RENDER_BACKEND`. For everyday use the default Intel iGPU
+path is supported; see the [demo runbook](RUN-DEMO.md).
 
 ## The three backends
 
@@ -12,12 +12,11 @@ the default (Intel iGPU) just works — see the [README quickstart](../README.md
 | Camera POV tiles | ✅ real-time | ✅ real-time, most headroom | ❌ disabled (sim can't even ready) |
 | Drone model | `gz_x500_depth` (camera) | `gz_x500_depth` (camera) | `gz_x500` (no camera) |
 | Needs | `/dev/dri` (out of the box) | `nvidia-container-toolkit` + driver | nothing |
-| Use it when | the everyday default | pushing near the capacity ceiling | flight + chat only, no cameras |
+| Use it when | the everyday default | more camera headroom | camera-free eval work |
 
 ```bash
-RENDER_BACKEND=intel  ./scripts/run_swarm_demo.sh 3   # default; GPU=1 is an alias
-RENDER_BACKEND=nvidia ./scripts/run_swarm_demo.sh 3   # dGPU (auto-adds --gpus all)
-RENDER_BACKEND=cpu    ./scripts/run_swarm_demo.sh 3   # software GL; GPU=0 is an alias
+RENDER_BACKEND=intel  ./scripts/run_single_demo.sh demo
+RENDER_BACKEND=nvidia ./scripts/run_single_demo.sh demo
 ```
 
 ## Resolution & rate knobs
@@ -25,15 +24,14 @@ RENDER_BACKEND=cpu    ./scripts/run_swarm_demo.sh 3   # software GL; GPU=0 is an
 | Var | Values | Default | What it does |
 |-----|--------|---------|--------------|
 | `RENDER_BACKEND` | `intel` · `nvidia` · `cpu` | `intel` | Which GPU (or none) renders cameras |
-| `CAM_W` × `CAM_H` | px | `640` × `360` | Per-drone camera resolution |
+| `CAM_W` × `CAM_H` | px | `640` × `360` | Camera resolution |
 | `CAM_FPS` | Hz | `10` | Camera update rate |
 
 ## How to choose (measured)
 
-- **Both GPUs cap at the same drone count** on a given box — the high-end limiter is
-  single-thread Gazebo physics, not the renderer. The dGPU's win is *graceful
-  degradation* near the limit, not a higher count. Measured ceilings + how to
-  re-benchmark your own hardware: **[benchmarks/RESULTS.md](benchmarks/RESULTS.md)**.
+- Historical multi-instance measurements found single-thread Gazebo physics was
+  the high-end limiter; the retained evidence is in
+  [benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 - **`cpu`/llvmpipe is flight-only** — software camera render is too slow for the sim
   to reach "ready," so cameras are disabled (`gz_x500`, no camera model).
 

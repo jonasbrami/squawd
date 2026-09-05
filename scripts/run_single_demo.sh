@@ -67,7 +67,7 @@ esac
 VISION_MODEL_DEFAULT="mover-nano-seg-v1.onnx"
 [ "$WORLD" = "demo" ] && VISION_MODEL_DEFAULT="coco-nano-seg-v1-640.onnx"
 
-ENV_ARGS=(-e SWARM_N=1 -e PX4_GZ_WORLD="$WORLD" -e GZ_WORLD="$WORLD"
+ENV_ARGS=(-e PX4_GZ_WORLD="$WORLD" -e GZ_WORLD="$WORLD"
           -e CAM_W="${CAM_W:-640}" -e CAM_H="${CAM_H:-360}" -e CAM_FPS="${CAM_FPS:-10}"
           -e SQUAWD_BACKEND="$SQUAWD_BACKEND"
           -e VISION_BACKEND="${VISION_BACKEND:-onnx}"
@@ -100,7 +100,7 @@ for v in DEEP_SLOWLANE DEEP_SLOWLANE_HZ DEEP_SLOWLANE_VOCAB DEEP_SLOWLANE_CONF; 
   [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}")
 done
 
-echo "Launching pilot-sim (N=1, world=$WORLD, backend=$SQUAWD_BACKEND, render=$RENDER_BACKEND)…"
+echo "Launching pilot-sim (world=$WORLD, backend=$SQUAWD_BACKEND, render=$RENDER_BACKEND)…"
 docker rm -f pilot-sim >/dev/null 2>&1 || true
 docker run -d --name pilot-sim -p 8000:8000 \
   --dns 8.8.8.8 --dns 1.1.1.1 \
@@ -127,10 +127,10 @@ if ! docker exec pilot-sim bash -lc 'bash scripts/doctor_sim.sh'; then
 fi
 
 echo "Starting pilot agent…"
-# --with onnxruntime: the M2.5 nano-seg detector (VISION_BACKEND=onnx) — the
-# production perception, not the interim blob (which merges the box's
+# The M2.5 nano-seg detector (VISION_BACKEND=onnx) is the production
+# perception, not the interim blob (which merges the box's
 # shadowed face with its ground shadow at low level view).
-docker exec -d pilot-sim bash -lc "cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH PYTHONUNBUFFERED=1 uv run --no-project --with onnxruntime python agents/pilot/run.py > /tmp/pilot.log 2>&1"
+docker exec -d pilot-sim bash -lc "cd /workspace && PYTHONPATH=/workspace:\$PYTHONPATH PYTHONUNBUFFERED=1 uv run --no-project python agents/pilot/run.py > /tmp/pilot.log 2>&1"
 
 # Deep sidecar hint (M2): probe /v1/health from INSIDE the container (token
 # via env, never printed). Advisory only — the pilot boots regardless.

@@ -192,7 +192,7 @@ async def test_non_quota_exception_is_not_counted():
 # ---------- ② cli_path honored / REQUIRED on the Kimi tier ----------
 
 def _make(**kw):
-    return make_pilot_options(FlightOps(None, None, None, 0, 1),
+    return make_pilot_options(FlightOps(None, None, None),
                               report=lambda _m: None, **kw)
 
 

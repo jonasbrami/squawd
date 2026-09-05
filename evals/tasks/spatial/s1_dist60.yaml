@@ -1,10 +1,8 @@
 id: s1_dist60
-target_layer: single_drone
 suite: spatial
 difficulty: {plan_depth: 1, coordination: 1, ambiguity: 1, spatial: 1}
 setup:
   world: default
-  n_drones: 1
   spawn: home
   seed_objects:
     - {id: tgt, east: 60, north: 0}

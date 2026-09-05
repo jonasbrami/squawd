@@ -3,12 +3,10 @@
 # obs_4 (both dead-on at north 0); the south corridor pilot runs 150m with
 # 7.5m clearance. Budget 240m allows honest detours, not circumnavigation.
 id: c4_obstacle_run
-target_layer: single_drone
 suite: obstacle
 difficulty: {plan_depth: 4, coordination: 1, ambiguity: 2, spatial: 4, obstacle: 4}
 setup:
   world: obstacles
-  n_drones: 1
   spawn: home
   seed_objects:
     - {id: farpad, east: 130, north: 0}

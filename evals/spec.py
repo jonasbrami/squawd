@@ -1,8 +1,7 @@
 """TaskSpec: load + validate a task YAML into typed objects.
 
 Validation fails fast (SpecError) on missing fields or unknown oracle checks, so a
-sweep never wastes sim time on a malformed scenario. Layer-agnostic: target_layer
-selects where the runner injects the prompt; the rest is shared."""
+sweep never wastes sim time on a malformed scenario."""
 from dataclasses import dataclass
 
 import yaml
@@ -24,7 +23,6 @@ class SeedObject:
 @dataclass(frozen=True)
 class SetupSpec:
     world: str
-    n_drones: int
     spawn: str
     seed_objects: list[SeedObject]
 
@@ -38,7 +36,6 @@ class BudgetSpec:
 @dataclass(frozen=True)
 class TaskSpec:
     id: str
-    target_layer: str
     difficulty: dict
     setup: SetupSpec
     prompt: str
@@ -74,7 +71,6 @@ def load_task(path: str) -> TaskSpec:
                         n=float(_require(o, "north", "seed_object")))
              for o in s.get("seed_objects", [])]
     setup = SetupSpec(world=_require(s, "world", "setup"),
-                      n_drones=int(_require(s, "n_drones", "setup")),
                       spawn=s.get("spawn", "home"),
                       seed_objects=seeds)
 
@@ -109,7 +105,6 @@ def load_task(path: str) -> TaskSpec:
 
     return TaskSpec(
         id=_require(raw, "id", path),
-        target_layer=_require(raw, "target_layer", path),
         difficulty=_require(raw, "difficulty", path),
         setup=setup,
         prompt=_require(raw, "prompt", path),

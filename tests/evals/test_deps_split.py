@@ -3,20 +3,20 @@ flight_contacts — NEVER to oracle_truth — and the tier map carries the Kimi
 entries (§5.2, map only; no Kimi runs before M6)."""
 import asyncio
 
-from evals.runner import Deps, FleetHarness, model_for
+from evals.runner import Deps, DroneHarness, model_for
 
 
-class FakeAgent:
+class FakeSystem:
     def __init__(self, i):
-        self._system = f"sys{i}"
+        self.param = None
 
     async def connect(self):
         pass
 
 
 def _harness(deps):
-    h = FleetHarness(deps, n=1, agent_factory=lambda i: FakeAgent(i))
-    asyncio.run(h.systems_list())
+    h = DroneHarness(deps, system_factory=lambda: FakeSystem(0))
+    asyncio.run(h.system())
     return h
 
 
@@ -29,7 +29,6 @@ def test_tier_map_gains_kimi_entries():
 def test_deps_gzposes_alias_reads_oracle_truth():
     truth = object()
     deps = Deps(world=None, bridge=None, cameras=None, oracle_truth=truth)
-    assert deps.gzposes is truth            # back-compat read alias
     assert deps.flight_contacts is None and deps.detector is None
 
 

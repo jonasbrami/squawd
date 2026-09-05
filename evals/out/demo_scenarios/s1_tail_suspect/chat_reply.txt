@@ -1,2 +1,0 @@
-data: 'pilot: Took off to 10m, located the car (vis_car_8) via onboard vision and shadowed it for ~45s, following it ~130m NE (min gap ...'
----

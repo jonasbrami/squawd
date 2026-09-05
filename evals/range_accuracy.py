@@ -41,7 +41,7 @@ async def main() -> int:
         world=os.environ.get("GZ_WORLD", "dynamic")), impair=SimImpairment())
     rf.connect()
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
-    ops = FlightOps(system, world, bridge, 0, 1)
+    ops = FlightOps(system, world, bridge)
     await system.connect()
     async for s in system.core.connection_state():
         if s.is_connected:

@@ -20,7 +20,7 @@ class FakeDetector:
         if self._n == 1:
             return InferenceResult(Frame(7, 42.5, 64, 48, bytes(64 * 48 * 3)),
                                    [Detection("target", 0.9, (1, 2, 3, 4))],
-                                   1.0, 0, None)
+                                   1.0, None)
         return None
 
     def healthy(self):

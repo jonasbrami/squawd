@@ -130,7 +130,7 @@ class FakeBridge:
 
 
 def _ops(contacts, headings=()):
-    return FlightOps(FakeDrone(headings), FakeWorld(), FakeBridge(), 0, 1,
+    return FlightOps(FakeDrone(headings), FakeWorld(), FakeBridge(),
                      contacts=contacts)
 
 
@@ -323,7 +323,7 @@ class _ScanWorld:
 
 
 def test_scan_renders_alt_unk_for_bearing_only_contacts():
-    txt = scan_text(_ScanWorld(), None, 0, 1,
+    txt = scan_text(_ScanWorld(), None,
                     mover_poses={"mov_1": (10.0, 0.0, 1.2)},
                     bearing_only=["vis_target_3"])
     assert "mov_1" in txt and "alt 1m" in txt
@@ -361,7 +361,7 @@ def test_pipeline_keeps_publishing_while_the_agent_turn_is_held_open():
                 self._cond.wait(timeout=min(timeout, 0.05))
             self._seq += 1
             f = Frame(self._seq, 100.0 + self._seq, 4, 4, bytes(4 * 4 * 3))
-            return InferenceResult(f, [], time.monotonic(), self._seq, None)
+            return InferenceResult(f, [], time.monotonic(), None)
 
     async def run():
         pipe = VisionPipeline(SpinDetector(), contacts=None, bridge=None)
@@ -599,7 +599,7 @@ def test_truth_shadow_preserves_direct_reference_and_altitude(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="shadow", alt=12.0,
                               duration_s=10.0, within_m=15.0,
@@ -654,7 +654,7 @@ def test_beam_capable_shadow_keeps_shaper_and_altitude_profile():
     contacts = BeamContacts(poses={"vis_t": (35.0, 0.0)})
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_t", mode="shadow", alt=12.0,
                               duration_s=1.0))
     assert "shadowed" in r
@@ -678,7 +678,7 @@ def test_intercept_lane_keeps_shaper_without_observation():
     contacts = FakeContacts(poses={"mov_1": (35.0, 0.0)})   # no observation()
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="intercept", alt=12.0,
                               duration_s=1.0))
     assert "did NOT close" in r
@@ -778,7 +778,7 @@ def test_orbit_first_setpoint_takes_the_current_relative_bearing():
     contacts = FakeContacts(poses={"mov_1": (50.0, 0.0)})
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="orbit", alt=6.0, duration_s=1.0,
                               radius_m=15.0, rate_dps=15.0))
     assert "orbited" in r
@@ -799,7 +799,7 @@ def test_orbit_and_standoff_clamp_to_the_keep_out_margin():
         contacts = FakeContacts(poses={"mov_1": (50.0, 0.0)})
         drone = FakeDrone()
         drone.offboard = TaggingOffboard()
-        ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1,
+        ops = FlightOps(drone, FakeWorld(), FakeBridge(),
                         contacts=contacts)
         asyncio.run(ops.track("mov_1", mode=mode, alt=6.0, duration_s=1.0,
                               **kw))
@@ -840,7 +840,7 @@ def test_truth_orbit_streams_sane_setpoints(monkeypatch):
     direct lane, at the commanded alt — and the point-mass PX4 cascade
     converges onto the circle and actually sweeps around the target."""
     from agents.flight import track as trk
-    hz = 900.0                                 # dt = 1/900 > 1e-3 (EMA alive)
+    hz = 300.0                                 # dt > 1e-3; leaves scheduler headroom
     monkeypatch.setattr(trk, "CTRL_HZ", hz)
     radius, rate = 12.0, 30.0                  # tangential 6.3 m/s, < VMAX
     omega = math.radians(rate)
@@ -849,7 +849,7 @@ def test_truth_orbit_streams_sane_setpoints(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="orbit", alt=12.0,
                               duration_s=30.0, radius_m=radius,
@@ -904,7 +904,7 @@ def test_truth_standoff_range_m_holds_radial_distance(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="shadow", alt=12.0,
                               duration_s=20.0, range_m=12.0))
@@ -1017,7 +1017,7 @@ def test_coco_vehicle_shadow_holds_commanded_altitude():
     contacts = BeamContacts(poses={"vis_car_1": (35.0, 0.0)})
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=12.0,
                               duration_s=1.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1051,7 +1051,7 @@ def test_demo_shadow_default_has_two_metre_transient_reserve(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="shadow", alt=6.0,
                               duration_s=20.0, hold_altitude=True))
@@ -1076,7 +1076,7 @@ def test_r2_standoff_below_the_floor_clamps_to_r_min(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="shadow", alt=6.0,
                               duration_s=20.0, range_m=12.0,
@@ -1103,7 +1103,7 @@ def test_r2_orbit_radius_clamps_before_the_phase_is_built(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="orbit", alt=6.0,
                               duration_s=30.0, radius_m=15.0, rate_dps=8.0,
@@ -1130,7 +1130,7 @@ def test_r2_default_path_keeps_the_keep_out_only(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="shadow", alt=6.0,
                               duration_s=20.0))
@@ -1150,7 +1150,7 @@ def test_r2_default_path_keeps_the_keep_out_only(monkeypatch):
     offboard = TruthOffboard(clock)
     drone = FakeDrone()
     drone.offboard = offboard
-    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(), 0, 1,
+    ops = FlightOps(drone, TruthWorld(offboard), TruthBridge(),
                     contacts=contacts)
     r = asyncio.run(ops.track("mov_1", mode="orbit", alt=6.0,
                               duration_s=30.0, radius_m=12.0, rate_dps=8.0))
@@ -1227,7 +1227,7 @@ def test_hold_altitude_camera_shadow_uses_direct_reference_through_right_angle_c
     contacts = CornerBeamContacts()
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=2.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1255,7 +1255,7 @@ def test_demo_radial_barrier_commands_outward_relative_velocity(monkeypatch):
     contacts = CornerBeamContacts()
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=2.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1295,7 +1295,7 @@ def test_direct_lane_prefers_measured_bearing_then_falls_back_to_lead():
     contacts = BearingContacts(poses={"vis_car_1": (50.0, 0.0)}, obs=obs)
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=1.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1307,7 +1307,7 @@ def test_direct_lane_prefers_measured_bearing_then_falls_back_to_lead():
     contacts = BearingContacts(poses={"vis_car_1": (50.0, 0.0)}, obs=None)
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=1.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1339,7 +1339,7 @@ class EdgeBeamContacts(CornerBeamContacts):
 
 def test_demo_image_edge_barrier_expands_radius_and_backs_off(monkeypatch):
     """R8 pin: on the demo direct lane a FRESH bbox ramps
-    q=clamp((y2-300)/40,0,1) as the box bottom nears the 360-row frame
+    q=clamp((y2-300)/40) as the box bottom nears the 360-row frame
     floor, the guard grows R_vis = R_guard+4q (19 -> 21 -> 23 m at a 6 m
     hold), the radial reference projects out from the 20 m ring to R_vis,
     and every sub-R_vis tick adds the outward visibility feedforward
@@ -1354,7 +1354,7 @@ def test_demo_image_edge_barrier_expands_radius_and_backs_off(monkeypatch):
         contacts = EdgeBeamContacts(y2=y2)
         drone = FakeDrone()
         drone.offboard = TaggingOffboard()
-        ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1,
+        ops = FlightOps(drone, FakeWorld(), FakeBridge(),
                         contacts=contacts)
         r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                                   duration_s=2.0, hold_altitude=True))
@@ -1411,7 +1411,7 @@ def test_demo_image_edge_barrier_ff_never_exceeds_the_cap(monkeypatch):
     contacts = EdgeBeamContacts(corner=(-10.0, 0.0), y2=345.0)   # q=1.0
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=2.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1453,7 +1453,7 @@ def test_image_edge_barrier_ignores_stale_views_and_the_mover_default(
     contacts = EdgeBeamContacts(y2=345.0, age_s=0.5)   # stale -> q=0
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=2.0, hold_altitude=True))
     assert "shadowed" in r
@@ -1478,7 +1478,7 @@ def test_image_edge_barrier_ignores_stale_views_and_the_mover_default(
     contacts = EdgeBeamContacts(y2=345.0)
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=6.0,
                               duration_s=2.0))
     assert "shadowed" in r
@@ -1564,7 +1564,7 @@ def test_coast_latches_current_vehicle_position_not_engagement_start(
     contacts = CoastBeamContacts(range_src=range_src)
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, MovedCoastWorld(), FakeBridge(), 0, 1,
+    ops = FlightOps(drone, MovedCoastWorld(), FakeBridge(),
                     contacts=contacts)
 
     result = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=4.0,
@@ -1597,7 +1597,7 @@ def test_demo_coast_yaw_follows_predicted_contact_without_translating(
     contacts = CoastBeamContacts()
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=4.0,
                               duration_s=0.6, hold_altitude=True))
     assert "shadowed" in r
@@ -1633,7 +1633,7 @@ def test_mover_default_coast_yaw_keeps_stale_measured_bearing(monkeypatch):
     contacts = CoastBeamContacts()
     drone = FakeDrone()
     drone.offboard = TaggingOffboard()
-    ops = FlightOps(drone, FakeWorld(), FakeBridge(), 0, 1, contacts=contacts)
+    ops = FlightOps(drone, FakeWorld(), FakeBridge(), contacts=contacts)
     r = asyncio.run(ops.track("vis_car_1", mode="shadow", alt=4.0,
                               duration_s=0.6))
     assert "shadowed" in r

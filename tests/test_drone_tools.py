@@ -2,7 +2,7 @@ from agents.flight import FlightOps, make_pilot_options
 
 
 def _opts():
-    return make_pilot_options(FlightOps(None, None, None, 0, 1),
+    return make_pilot_options(FlightOps(None, None, None),
                               report=lambda m: None)
 
 

@@ -94,7 +94,7 @@ def test_association_gate_rejects_far_truth():
 
 
 def _grade_lock(lock_meta, truth_name):
-    track = WorldTrack(snapshots=[], objects={}, n_drones=1, geofence_m=300.0)
+    track = WorldTrack(snapshots=[], objects={}, geofence_m=300.0)
     run_meta = {"steps": 3, "crashed": False}
     if lock_meta is not None:
         run_meta["target_lock"] = lock_meta

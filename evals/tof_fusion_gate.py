@@ -114,7 +114,7 @@ async def main() -> int:
     rf.connect()
     system = System(mavsdk_server_address="127.0.0.1", port=50051)
     contacts = VisionContacts(world, rangefinder=rf)
-    ops = FlightOps(system, world, bridge, 0, 1, contacts=contacts)
+    ops = FlightOps(system, world, bridge, contacts=contacts)
     # the M2.5 nano-seg artifact, NOT the interim blob: at low level view the
     # blob merges the box's shadowed face with its ground shadow into one
     # component (v16: every elevation/footprint reference contaminated,
